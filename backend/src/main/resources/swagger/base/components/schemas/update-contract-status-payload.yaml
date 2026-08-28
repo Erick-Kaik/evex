@@ -1,0 +1,7 @@
+type: object
+description: Corpo da atualização de status de um contrato monitorado.
+required:
+  - status
+properties:
+  status:
+    $ref: "../enum/contract-status.yaml"

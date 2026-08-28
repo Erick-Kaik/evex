@@ -1,0 +1,30 @@
+get:
+  tags:
+    - BalanceMonitors
+  operationId: getBalanceMonitor
+  summary: Consulta uma configuração de monitoramento de saldo pelo id
+  parameters:
+    - $ref: "../base/components/param/path/balance-monitor-id.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/balance-monitor-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+put:
+  tags:
+    - BalanceMonitors
+  operationId: updateBalanceMonitor
+  summary: Atualiza uma configuração de monitoramento de saldo
+  parameters:
+    - $ref: "../base/components/param/path/balance-monitor-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-balance-monitor-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/balance-monitor-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

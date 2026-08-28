@@ -1,0 +1,5 @@
+description: Lista de versões de ABI de um contrato monitorado.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/contract-abi-list.yaml"

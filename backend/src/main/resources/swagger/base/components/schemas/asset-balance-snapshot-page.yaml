@@ -1,0 +1,11 @@
+description: Página de saldos consolidados numa data específica.
+allOf:
+  - $ref: "./page-metadata.yaml"
+  - type: object
+    required:
+      - content
+    properties:
+      content:
+        type: array
+        items:
+          $ref: "./asset-balance-snapshot.yaml"

@@ -1,0 +1,35 @@
+type: object
+description: Saldo consolidado de uma carteira numa data específica (`asset_balance_snapshots`, doc §4.4).
+required:
+  - walletAddress
+  - contractAddress
+  - network
+  - balance
+  - snapshotDate
+  - blockNumber
+properties:
+  walletAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço da carteira.
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato do ativo.
+  network:
+    $ref: "../enum/network.yaml"
+  tokenId:
+    type: string
+    nullable: true
+    description: "Identificador do token (ex.: ERC1155/ERC721). `null` = não aplicável (ex.: ERC20)."
+  balance:
+    type: string
+    description: "Saldo consolidado nesta data, como string decimal (assinada) — ver `AssetBalance.balance`."
+  snapshotDate:
+    type: string
+    format: date
+    description: Data a que este snapshot se refere.
+  blockNumber:
+    type: integer
+    format: int64
+    description: Último bloco ingerido no momento em que este snapshot foi gerado.

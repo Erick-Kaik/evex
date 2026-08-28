@@ -1,0 +1,62 @@
+type: object
+description: Um log da rede EVM indexado pelo Evex — raw e decodificado unificados.
+required:
+  - id
+  - contractAddress
+  - network
+  - blockNumber
+  - blockHash
+  - txHash
+  - logIndex
+  - decoded
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato que emitiu o evento.
+  network:
+    $ref: "../enum/network.yaml"
+  blockNumber:
+    type: integer
+    format: int64
+    description: Número do bloco em que o evento foi emitido.
+  blockHash:
+    type: string
+    description: Hash do bloco em que o evento foi emitido.
+  txHash:
+    type: string
+    description: Hash da transação que emitiu o evento.
+  logIndex:
+    type: integer
+    format: int64
+    description: Índice do log dentro do bloco.
+  topic0:
+    type: string
+    nullable: true
+    description: Primeiro tópico do log (assinatura do evento) — `null` só em eventos anônimos sem `topic0`.
+  decoded:
+    type: boolean
+    description: "`true` quando havia ABI vigente pro contrato/bloco e o `topic0` foi reconhecido; `false` = log cru (regra \"nenhum evento é descartado\")."
+  eventName:
+    type: string
+    nullable: true
+    description: Nome do evento decodificado (`null` quando `decoded = false`).
+  decodedParameters:
+    type: object
+    additionalProperties: true
+    nullable: true
+    description: Parâmetros do evento decodificado, nomeados (`null` quando `decoded = false`).
+  blockTimestamp:
+    type: string
+    format: date-time
+    nullable: true
+    description: Timestamp do bloco em que o evento foi emitido.
+  createdAt:
+    type: string
+    format: date-time
+    description: Momento em que este registro foi ingerido pelo Evex.

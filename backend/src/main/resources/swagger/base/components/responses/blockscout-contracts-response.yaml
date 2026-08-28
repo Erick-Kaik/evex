@@ -1,0 +1,5 @@
+description: Contratos verificados listados pelo Blockscout.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/blockscout-contract-list.yaml"

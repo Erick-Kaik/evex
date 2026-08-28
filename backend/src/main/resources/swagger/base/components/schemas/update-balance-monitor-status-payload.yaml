@@ -1,0 +1,8 @@
+type: object
+description: Corpo da atualização de status (ativar/pausar) de uma configuração de monitoramento de saldo.
+required:
+  - active
+properties:
+  active:
+    type: boolean
+    description: "`true` = ativa (projeta saldo); `false` = pausada (evento decodificado não gera delta)."

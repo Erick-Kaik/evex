@@ -1,0 +1,37 @@
+type: object
+description: Log de 1 tentativa de entrega de um webhook — sempre gravado, sucesso ou falha.
+required:
+  - id
+  - deliveryId
+  - attemptNumber
+  - attemptedAt
+  - success
+properties:
+  id:
+    type: string
+    format: uuid
+  deliveryId:
+    type: string
+    format: uuid
+  attemptNumber:
+    type: integer
+    format: int32
+    description: Número sequencial da tentativa (1-indexed) dentro desta entrega.
+  attemptedAt:
+    type: string
+    format: date-time
+  success:
+    type: boolean
+  httpStatus:
+    type: integer
+    format: int32
+    nullable: true
+    description: "Status HTTP da resposta, quando a chamada chegou a ter resposta (mesmo 4xx/5xx). `null` se a falha foi antes disso (timeout, conexão recusada)."
+  responseBody:
+    type: string
+    nullable: true
+    description: Corpo da resposta (truncado), quando houve resposta HTTP.
+  errorMessage:
+    type: string
+    nullable: true
+    description: Motivo da falha quando não houve resposta HTTP (timeout, conexão recusada, etc.).

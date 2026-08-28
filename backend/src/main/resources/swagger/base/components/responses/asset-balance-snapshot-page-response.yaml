@@ -1,0 +1,5 @@
+description: Página de saldos consolidados numa data específica.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/asset-balance-snapshot-page.yaml"

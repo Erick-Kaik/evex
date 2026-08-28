@@ -1,0 +1,6 @@
+type: string
+description: "Onde o conteúdo bruto da ABI é armazenado (ex.: DATABASE, LOCAL, HYBRID)."
+enum:
+  - DATABASE
+  - LOCAL
+  - HYBRID

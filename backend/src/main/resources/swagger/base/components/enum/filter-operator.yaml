@@ -1,0 +1,9 @@
+type: string
+description: Operador de comparação de uma condição de filtro de webhook.
+enum:
+  - GT
+  - GTE
+  - LT
+  - LTE
+  - EQ
+  - NEQ

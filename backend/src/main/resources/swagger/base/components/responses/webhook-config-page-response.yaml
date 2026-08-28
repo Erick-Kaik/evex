@@ -1,0 +1,5 @@
+description: Página de webhooks.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-config-page.yaml"

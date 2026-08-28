@@ -1,0 +1,6 @@
+type: string
+description: Situação operacional do contrato monitorado. Transição livre entre estados.
+enum:
+  - ACTIVE
+  - PAUSED
+  - ARCHIVED

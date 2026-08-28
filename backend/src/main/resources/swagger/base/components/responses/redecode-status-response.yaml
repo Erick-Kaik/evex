@@ -1,0 +1,5 @@
+description: Snapshot do estado da reindexação assíncrona.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/redecode-status.yaml"

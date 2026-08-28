@@ -1,0 +1,42 @@
+type: object
+description: "Uma entrega enfileirada de um webhook pra um evento decodificado — inclui o log de tentativas já realizadas."
+required:
+  - id
+  - webhookConfigId
+  - blockchainEventId
+  - payload
+  - status
+  - attemptCount
+  - createdAt
+  - attempts
+properties:
+  id:
+    type: string
+    format: uuid
+  webhookConfigId:
+    type: string
+    format: uuid
+  blockchainEventId:
+    type: string
+    format: uuid
+  payload:
+    type: string
+    description: Corpo `POST` já renderizado no momento do match (não recalculado no dispatch).
+  status:
+    $ref: "../enum/webhook-delivery-status.yaml"
+  attemptCount:
+    type: integer
+    format: int32
+  nextAttemptAt:
+    type: string
+    format: date-time
+    nullable: true
+    description: Próximo horário agendado de retry (backoff exponencial) — `null` quando não há retry pendente.
+  createdAt:
+    type: string
+    format: date-time
+  attempts:
+    type: array
+    description: Log de todas as tentativas já realizadas pra esta entrega, em ordem cronológica.
+    items:
+      $ref: "./webhook-delivery-attempt.yaml"

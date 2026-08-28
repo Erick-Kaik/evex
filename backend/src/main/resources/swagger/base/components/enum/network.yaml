@@ -1,0 +1,5 @@
+type: string
+description: Rede em que o contrato monitorado está implantado.
+enum:
+  - MAINNET
+  - TESTNET

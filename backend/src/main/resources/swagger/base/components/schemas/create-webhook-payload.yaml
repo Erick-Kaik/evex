@@ -1,0 +1,36 @@
+type: object
+description: >-
+  Corpo do cadastro de um novo webhook. `filters` ausente/vazio = sem filtro, sempre dispara.
+  `payloadTemplate` ausente = usa o envelope JSON padrão. `active` não faz parte deste payload — todo
+  webhook novo nasce ativo no servidor.
+required:
+  - contractAddress
+  - network
+  - eventName
+  - url
+properties:
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato monitorado cujos eventos disparam este webhook.
+  network:
+    $ref: "../enum/network.yaml"
+  eventName:
+    type: string
+    minLength: 1
+    description: "Nome do evento decodificado que dispara este webhook (ex.: Transfer)."
+  url:
+    type: string
+    format: uri
+    description: URL de destino do `POST` disparado quando um evento bate no filtro.
+  filters:
+    type: array
+    description: "Condições de filtro opcionais — ausente/vazio = sem filtro, sempre dispara."
+    items:
+      $ref: "./filter-condition.yaml"
+  payloadTemplate:
+    type: string
+    nullable: true
+    description: >-
+      Template JSON opcional com placeholders `{{campo}}`/`{{decodedParameters.nome}}`. Validado no
+      cadastro: precisa renderizar como JSON válido, senão a requisição é rejeitada com 400.

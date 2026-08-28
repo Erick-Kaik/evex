@@ -1,0 +1,97 @@
+# Consolida em um único compose tudo que antes exigia comandos separados: Blockscout real (build +
+# fix de permissão + subir) e o Postgres do Evex. Reaproveita as definições oficiais do Blockscout via
+# `extends` (mesmo mecanismo que `hardhat-network.yml` já usa internamente) — não duplica/reescreve
+# nada, só referencia. Ver `README.md` seção 3 e `docs/decisions.md` DEC-052/DEC-053/DEC-056/DEC-057/DEC-059.
+#
+# Blockscout fica atrás do profile "blockscout" (DEC-059) — é a parte mais pesada do ambiente inteiro
+# (Elixir + Postgres próprio + Redis) e só é necessária pra testar discovery/E6 especificamente.
+# `docker compose up -d` (sem profile) sobe só `evex-postgres`; `scripts/blockscout-up.sh`/
+# `blockscout-down.sh` sobem/derrubam o resto sob demanda.
+#
+# NÃO sobe (de propósito, ver README):
+#   - Nó Hardhat (`yarn chain`) + deploy dos contratos — roda antes disso, direto no host (gera os
+#     endereços que o resto depende; misturar com Docker só complicaria a rede 127.0.0.1 vs. o nó).
+#   - Backend do Evex — sobe pela IDE (IntelliJ/`./gradlew bootRun`), pra manter debug/hot-reload.
+#   - Seed/emissão de eventos e verificação de contratos — scripts Node de uso pontual, não serviços
+#     de fundo (rodar à parte, `npx tsx seed/register-contracts.ts` / `seed/emit-events.ts` /
+#     `blockscout/verify-contracts.ts`).
+#   - Frontends (Evex e scaffold-eth-2) — dev server local (`npm run dev`/`yarn start`), sem ganho em
+#     dockerizar um servidor de desenvolvimento com hot-reload.
+#
+# IMPORTANTE: não rodar `backend/docker-compose.yml` (Postgres do Evex avulso) ao mesmo tempo que este
+# arquivo — os dois publicam a porta 5432 do host, colidem. Use só este daqui pra frente.
+
+services:
+  # ---------- Blockscout real (v11.2.8, buildado do source — ver DEC-055/DEC-056), opt-in ----------
+
+  redis-db:
+    profiles: ["blockscout"]
+    extends:
+      file: ./local-env-blockscout/docker-compose/services/redis.yml
+      service: redis-db
+
+  db-init:
+    profiles: ["blockscout"]
+    extends:
+      file: ./local-env-blockscout/docker-compose/services/db.yml
+      service: db-init
+
+  db:
+    profiles: ["blockscout"]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./local-env-blockscout/docker-compose/services/db.yml
+      service: db
+
+  # Fix do 2º bug da DEC-056: os volumes dets/logs são criados como root pelo Docker, mas o processo
+  # do Blockscout roda como usuário não-root (uid 10001) — sem isso, o indexer falha com `eacces`.
+  dets-logs-init:
+    profiles: ["blockscout"]
+    image: alpine
+    volumes:
+      - ./local-env-blockscout/docker-compose/services/dets:/fix-dets
+      - ./local-env-blockscout/docker-compose/services/logs:/fix-logs
+    entrypoint: ["sh", "-c", "mkdir -p /fix-dets /fix-logs && chown -R 10001:10001 /fix-dets /fix-logs"]
+
+  blockscout-backend:
+    profiles: ["blockscout"]
+    build:
+      context: ./local-env-blockscout
+      dockerfile: docker/Dockerfile
+      args:
+        RELEASE_VERSION: "11.2.8"
+        BLOCKSCOUT_VERSION: "v11.2.8"
+    image: local-env-blockscout:11.2.8
+    pull_policy: never
+    depends_on:
+      db:
+        condition: service_started
+      redis-db:
+        condition: service_started
+      dets-logs-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./local-env-blockscout/docker-compose/services/backend.yml
+      service: backend
+    links:
+      - db:database
+    environment:
+      ETHEREUM_JSONRPC_VARIANT: "geth"
+      ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8545/
+      INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "true"
+      INDEXER_INTERNAL_TRANSACTIONS_TRACER_TYPE: "opcode"
+      CHAIN_ID: "31337"
+    ports:
+      - "4001:4000" # API real — é pra cá que EVEX_BLOCKSCOUT_URL do backend do Evex aponta
+
+  # ---------- Postgres do Evex (mesma definição de ../backend/docker-compose.yml) ----------
+
+  evex-postgres:
+    extends:
+      file: ../backend/docker-compose.yml
+      service: postgres
+
+volumes:
+  evex-postgres-data:

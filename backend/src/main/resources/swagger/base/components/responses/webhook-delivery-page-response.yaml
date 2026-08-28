@@ -1,0 +1,5 @@
+description: Página de entregas de um webhook, com log de tentativas por entrega.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-delivery-page.yaml"

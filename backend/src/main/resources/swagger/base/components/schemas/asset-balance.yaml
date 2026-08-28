@@ -1,0 +1,32 @@
+type: object
+description: Saldo atual de uma carteira para um contrato/tokenId (doc de produto §4.4).
+required:
+  - walletAddress
+  - contractAddress
+  - network
+  - balance
+  - updatedAt
+properties:
+  walletAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço da carteira.
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato do ativo.
+  network:
+    $ref: "../enum/network.yaml"
+  tokenId:
+    type: string
+    nullable: true
+    description: "Identificador do token (ex.: ERC1155/ERC721). `null` = não aplicável (ex.: ERC20)."
+  balance:
+    type: string
+    description: >-
+      Saldo atual, como string decimal (assinada) — inteiros de 256 bits (uint256/int256) excedem a
+      precisão segura de `number` em JSON, por isso o tipo é `string`, não `integer`.
+  updatedAt:
+    type: string
+    format: date-time
+    description: Momento da última atualização deste saldo.

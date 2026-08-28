@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de cadastro de uma configuração de monitoramento de saldo.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/create-balance-monitor-payload.yaml"

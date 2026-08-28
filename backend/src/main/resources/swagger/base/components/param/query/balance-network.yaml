@@ -1,0 +1,6 @@
+name: network
+in: query
+required: false
+description: Filtra saldos pela rede.
+schema:
+  $ref: "../../enum/network.yaml"

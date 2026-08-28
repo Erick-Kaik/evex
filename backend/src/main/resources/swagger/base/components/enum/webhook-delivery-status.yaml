@@ -1,0 +1,6 @@
+type: string
+description: "Status de uma entrega de webhook. `FAILED` = esgotou o número máximo de tentativas."
+enum:
+  - PENDING
+  - DELIVERED
+  - FAILED

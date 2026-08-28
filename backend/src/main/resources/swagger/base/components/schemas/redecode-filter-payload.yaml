@@ -1,0 +1,20 @@
+type: object
+description: >-
+  Filtro opcional da reindexação assíncrona (doc §4.3). Todos os campos omitidos = redecodifica tudo
+  que está pendente globalmente (`decoded=false`).
+properties:
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Restringe o redecode a este endereço de contrato.
+  topic0:
+    type: string
+    description: "Restringe o redecode a eventos com este `topic0` (assinatura do evento) — pode afetar múltiplos contratos ao mesmo tempo."
+  fromBlock:
+    type: integer
+    format: int64
+    description: Restringe o redecode a eventos a partir deste número de bloco (inclusive).
+  toBlock:
+    type: integer
+    format: int64
+    description: Restringe o redecode a eventos até este número de bloco (inclusive).

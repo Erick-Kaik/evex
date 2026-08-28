@@ -1,0 +1,38 @@
+type: object
+description: Uma versão de ABI cadastrada para um contrato monitorado (doc de produto §4.1/§4.8).
+required:
+  - id
+  - contractAddress
+  - network
+  - source
+  - storageType
+  - validFromBlock
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato monitorado a que esta versão de ABI pertence.
+  network:
+    $ref: "../enum/network.yaml"
+  source:
+    $ref: "../enum/abi-source.yaml"
+  storageType:
+    $ref: "../enum/abi-storage-type.yaml"
+  validFromBlock:
+    type: integer
+    format: int64
+    description: Primeiro bloco (inclusive) em que esta versão de ABI é válida.
+  validToBlock:
+    type: integer
+    format: int64
+    nullable: true
+    description: "Último bloco (inclusive) em que esta versão é válida; `null` = ainda vigente."
+  createdAt:
+    type: string
+    format: date-time
+    description: Momento em que esta versão foi cadastrada.

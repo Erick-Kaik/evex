@@ -1,0 +1,68 @@
+openapi: 3.1.0
+info:
+  title: Evex — EVM Event Indexer API
+  description: API de indexação de eventos EVM genérica e configurável (PoC).
+  version: "0.1.0"
+servers:
+  - url: /
+tags:
+  - name: Contracts
+    description: Cadastro e consulta de contratos monitorados.
+  - name: Events
+    description: Consulta dos eventos indexados pelo poller.
+  - name: Redecode
+    description: Reindexação assíncrona (redecode) de eventos raw pendentes.
+  - name: Discovery
+    description: Discovery de contratos verificados via Blockscout (doc §7).
+  - name: BalanceMonitors
+    description: Configuração de monitoramento de saldo (behaviors CREDIT/DEBIT/TRANSFER/DELTA, doc §4.4).
+  - name: Balances
+    description: Consulta de saldo atual e histórico (snapshots diários, doc §4.4).
+  - name: Webhooks
+    description: Configuração de webhooks, fila de entregas e log de tentativas (doc §4.6).
+
+paths:
+  /v1/contracts:
+    $ref: "../paths/contracts.yaml"
+  /v1/contracts/{address}:
+    $ref: "../paths/contract-detail.yaml"
+  /v1/contracts/{address}/status:
+    $ref: "../paths/contract-status.yaml"
+  /v1/contracts/{address}/abi:
+    $ref: "../paths/contract-abi.yaml"
+  /v1/contracts/{address}/abi/suggestions:
+    $ref: "../paths/contract-abi-suggestions.yaml"
+  /v1/events:
+    $ref: "../paths/events.yaml"
+  /v1/redecode:
+    $ref: "../paths/redecode.yaml"
+  /v1/redecode/status:
+    $ref: "../paths/redecode-status.yaml"
+  /v1/discovery/blockscout/contracts:
+    $ref: "../paths/blockscout-contracts.yaml"
+  /v1/balance-monitors:
+    $ref: "../paths/balance-monitors.yaml"
+  /v1/balance-monitors/{id}:
+    $ref: "../paths/balance-monitor-detail.yaml"
+  /v1/balance-monitors/{id}/status:
+    $ref: "../paths/balance-monitor-status.yaml"
+  /v1/balances:
+    $ref: "../paths/balances.yaml"
+  /v1/balances/history:
+    $ref: "../paths/balances-history.yaml"
+  /v1/webhooks:
+    $ref: "../paths/webhooks.yaml"
+  /v1/webhooks/{id}:
+    $ref: "../paths/webhook-detail.yaml"
+  /v1/webhooks/{id}/status:
+    $ref: "../paths/webhook-status.yaml"
+  /v1/webhooks/{id}/deliveries:
+    $ref: "../paths/webhook-deliveries.yaml"
+
+# Sem seção `components:` manual aqui de propósito (ver docs/decisions.md DEC-012 / nota do bundle
+# em openapi-first-workflow.md): os arquivos de paths/ já referenciam os componentes diretamente por
+# caminho relativo, e o Redocly deduplica pelo arquivo físico, nomeando cada componente pelo nome do
+# arquivo (kebab-case → o openapi-generator converte para PascalCase sozinho: `contract-page.yaml` →
+# schema `ContractPage`). Registrar os mesmos componentes aqui de novo, sob um nome diferente, geraria
+# entradas duplicadas no bundle (uma via este `components:`, outra via a referência direta nos paths)
+# — já aconteceu numa primeira tentativa, revertido.

@@ -1,0 +1,279 @@
+# local-env — passo a passo
+
+> Ver [`CLAUDE.md`](CLAUDE.md) para o contexto e a stack. Este arquivo é o guia operacional (execução
+> manual pelo desenvolvedor), não contexto de agente.
+
+## Status
+
+Ambiente completo e validado ponta a ponta (ver `docs/decisions.md` DEC-052 a DEC-057 e
+`docs/roadmap.md` E12) — núcleo do Evex (poller→decode→redecode→API) **e as 3 integrações da E6**
+(discovery, ABI via Blockscout, fallback de detecção de interface) testados com sucesso contra um
+Blockscout **real** (não stub). A investigação encontrou e corrigiu 2 bugs reais no `BlockscoutClient.kt`
+do backend (DEC-057) — não só coisa do ambiente de teste.
+
+## 1. Clonar o scaffold-eth-2 (fora deste repositório do Evex)
+
+Repositório: https://github.com/scaffold-eth/scaffold-eth-2
+
+Clonado dentro deste módulo, para centralizar tudo relacionado ao ambiente de teste num único lugar
+(`local-env/local-env-scaffold-eth-2/`) — **não é vendorizado** (não faz parte do histórico do Evex,
+ver `.gitignore` deste módulo e `CLAUDE.md`):
+
+```bash
+cd local-env
+git clone https://github.com/scaffold-eth/scaffold-eth-2.git local-env-scaffold-eth-2
+cd local-env-scaffold-eth-2
+yarn install
+```
+
+Depois de clonado, seguir o `README.md` do próprio scaffold-eth-2 para instalar dependências
+(`yarn install`).
+
+## 2. Como o scaffold-eth-2 funciona por dentro (levantado nesta etapa)
+
+- **Deploy usa `rocketh`** (não `hardhat-deploy` puro, apesar de listado como dependência). Scripts em
+  `packages/hardhat/deploy/NN_deploy_<nome>.ts`, formato `deployScript(fn, { tags: [...] })` (import de
+  `../rocketh/deploy.js`). Rodar um script específico: `yarn deploy --tags <Tag>`.
+- **Depois de `yarn deploy`**, endereço + ABI de cada contrato deployado são escritos automaticamente
+  em `packages/nextjs/contracts/deployedContracts.ts` — é esse arquivo que o script de seed
+  (`../seed/register-contracts.ts`, a criar) deve ler pra registrar o contrato no Evex, em vez de
+  reprocessar artifacts do Hardhat na mão.
+- **Rede local**: `chains.hardhat`, chainId **31337** (`packages/nextjs/scaffold.config.ts`,
+  `targetNetworks`). RPC padrão em `http://127.0.0.1:8545` (`yarn chain`).
+- **UI de disparo de eventos**: aba `/debug` (Next.js, `packages/nextjs/app/debug`) — gera botões para
+  cada função da ABI automaticamente. Cogitada como caminho principal na DEC-052, mas o dia a dia
+  passou a usar `seed/emit-events.ts` em vez dela (DEC-059, mais leve — sem subir o dev server Next.js
+  só pra clicar em botões); a UI continua disponível pra quem preferir interagir manualmente.
+- **Atenção**: o repo também tem um block explorer próprio embutido em `/blockexplorer` — **não**
+  substitui o Blockscout pro nosso caso (a integração de discovery do Evex, E6, fala a API específica
+  do Blockscout, não a desse explorer embutido).
+- O próprio clone traz um `AGENTS.md` com uma skill `openzeppelin`
+  (`.agents/skills/openzeppelin/SKILL.md`) — vale ler antes de escrever os contratos de teste baseados
+  em OpenZeppelin (próxima etapa).
+
+## 3. Passo a passo (ponta a ponta)
+
+### 3.0 Caminho rápido (recomendado) — `scripts/up.sh`
+
+Desde a DEC-059, `up.sh` sobe só o essencial (contratos + eventos de teste + Postgres do Evex +
+frontend do Evex) — Blockscout e a UI do scaffold-eth-2 ficam de fora de propósito (seção "Máquina com
+pouco fôlego" abaixo explica por quê). Depois da primeira vez (clone do scaffold-eth-2 feito), o dia a
+dia é só:
+
+**Terminal 1** — nó Hardhat, sempre manual (ver por quê na seção 3.1):
+```bash
+cd local-env/local-env-scaffold-eth-2 && yarn chain
+```
+
+**Terminal 2** — o resto (copia contratos, deploya, dispara eventos de teste via script, sobe Postgres
+do Evex via `docker-compose.yml`, sobe o frontend do Evex em background):
+```bash
+cd local-env && ./scripts/up.sh
+```
+Falha cedo com mensagem clara se o Terminal 1 não estiver rodando (em vez de travar). Logs do frontend
+em `local-env/.logs/`.
+
+**Depois**: suba o backend do Evex pela IDE (seção 3.5) e rode o seed de contratos (seção 3.6) — esses
+dois continuam manuais de propósito (debug/hot-reload no backend; seed é um script pontual, não um
+serviço de fundo). Pra derrubar tudo que o `up.sh` subiu: `./scripts/down.sh` (não mexe no nó Hardhat,
+no backend nem no Blockscout — pare/derrube esses à parte).
+
+Precisa testar discovery/E6 contra Blockscout real? `./scripts/blockscout-up.sh` /
+`blockscout-down.sh` (seção 3.3) — separado do `up.sh` de propósito, sobe/derruba sob demanda.
+
+`local-env/docker-compose.yml` (perfil `blockscout` opt-in, ver seção 3.3) consolida Blockscout (real,
+buildado do source) + Postgres do Evex num único arquivo, via `extends:` das definições oficiais (não
+duplica nada, só referencia — ver comentário no topo do arquivo). **Não** rode
+`backend/docker-compose.yml` separado ao mesmo tempo — os dois publicam a porta 5432, colidem.
+
+### 3.1 Por que o nó Hardhat fica fora do script/compose
+
+```bash
+cd local-env/local-env-scaffold-eth-2
+yarn chain
+```
+Estado é in-memory, zera a cada restart — e é o único pedaço que faz sentido ver rodando/interagir
+direto (logs de bloco, Ctrl+C manual). Dockerizar exigiria resolver `127.0.0.1` (host) vs.
+`host.docker.internal` (containers) na config do Hardhat, sem ganho real.
+
+### 3.2 O que o `up.sh` faz por baixo (detalhamento manual, se precisar depurar)
+
+```bash
+# Copia contratos + deploy script pro clone (se ainda não tiver copiado, ou se reclonou)
+cp ../contracts/*.sol packages/hardhat/contracts/
+cp ../deploy/01_deploy_test_contracts.ts packages/hardhat/deploy/
+# Deploy
+yarn deploy --tags TestContracts
+```
+Confirma que `packages/nextjs/contracts/deployedContracts.ts` ganhou os 4 contratos. Em seguida,
+`up.sh` roda `npx tsx seed/emit-events.ts` — dispara `mint`/`safeMint`/`mintBatch`/`createWidget`/etc.
+direto via ethers, assinando com a conta deployer padrão do Hardhat (ver cabeçalho do script para as
+env vars). Substitui o uso da UI `/debug` do scaffold-eth-2 para esse fim (DEC-059).
+
+### 3.3 Blockscout real (opt-in, sob demanda) — `scripts/blockscout-up.sh`/`blockscout-down.sh`
+
+Fica **fora** do `up.sh` de propósito (DEC-059) — é a parte mais pesada do ambiente inteiro (Elixir +
+Postgres próprio + Redis) e só é necessária pra testar discovery/E6. Sobe/derruba quando precisar:
+```bash
+cd local-env
+./scripts/blockscout-up.sh    # profile "blockscout" do docker-compose.yml — builda a imagem localmente
+                               # na primeira vez (só uma vez por máquina; a imagem publicada tem um bug
+                               # conhecido, ver seção 5), o fix de permissão do volume já roda sozinho
+./scripts/blockscout-down.sh  # derruba só o Blockscout, sem mexer no Postgres do Evex
+```
+API real fica em `http://localhost:4001`. Detalhes/receita manual completa (sem o compose consolidado)
+em [`blockscout/README.md`](blockscout/README.md).
+
+### 3.4 Postgres do Evex
+
+Já incluído em `local-env/docker-compose.yml` (seção 3.0) — não precisa mais subir
+`backend/docker-compose.yml` separado.
+
+### 3.5 Backend do Evex
+
+Sempre manual, de propósito (debug/hot-reload) — via `./gradlew bootRun` ou pela IDE (IntelliJ etc.).
+Garanta estas env vars na run configuration (ou em `application-local.yml`):
+- `EVEX_RPC_URL=http://localhost:8545`
+- `EVEX_BLOCKSCOUT_URL=http://localhost:4001` — só importa se você também subiu o Blockscout
+  (`./scripts/blockscout-up.sh`, seção 3.3); sem ele, discovery/E6 simplesmente fica indisponível, o
+  resto do pipeline funciona normal.
+- `EVEX_POLLING_ENABLED=true` (pipeline normal) — só use `false` pra isolar o teste do fallback de
+  discovery sem o poller "atropelar" com eventos já observados (ver seção 4).
+
+### 3.6 Registrar contratos no Evex + disparar mais eventos
+
+Scripts pontuais, não são serviço de fundo — rodam depois que o backend (3.5) estiver de pé:
+```bash
+cd local-env
+EVEX_API_URL=http://localhost:8080 npx tsx seed/register-contracts.ts   # cadastra os 4 contratos + ABI
+npx tsx seed/emit-events.ts                                             # dispara mais um round de eventos
+```
+(`8080` é a porta padrão do Spring Boot — ajuste se você configurou outra). `up.sh` já roda o
+`emit-events.ts` uma vez durante o deploy (seção 3.2) — rodar de novo manualmente gera mais eventos
+(útil pra testar paginação, por exemplo; `ROUNDS=N` dispara N rounds de uma vez — ver cabeçalho do
+script pras demais env vars).
+
+### 3.7 Frontends
+
+O frontend do Evex já sobe sozinho via `up.sh` (seção 3.0), em background. Se quiser rodar
+manualmente/ver o output direto no terminal:
+
+**Frontend do Evex** (produto, `frontend/`):
+```bash
+cd frontend && npm run dev
+```
+Sobe em `http://localhost:5173` (Vite). Já aponta pro backend em `http://localhost:8080` por padrão
+(`VITE_API_BASE_URL`, ver `frontend/src/api/config.ts`) — só ajustar se você mudou a porta do backend.
+Telas de contratos/eventos/saldos/webhooks (E9/E10) consomem a mesma API que os exemplos da seção 5.
+
+**Frontend do scaffold-eth-2** (UI de debug/disparo de eventos, opcional):
+```bash
+cd local-env/local-env-scaffold-eth-2 && yarn start
+```
+Fica fora do `up.sh` de propósito (DEC-059) — `seed/emit-events.ts` (seção 3.6) já cobre o disparo de
+eventos sem precisar desse dev server no ar. Sobe em `http://localhost:3000` se quiser mesmo assim; a
+aba `/debug` gera botões automáticos pra cada função da ABI — `mint`/`safeMint`/`createWidget` etc. em
+qualquer um dos 4 contratos.
+
+### Máquina com pouco fôlego pra tudo isso junto?
+
+Mesmo com Blockscout e a UI do scaffold-eth-2 fora do dia a dia (DEC-059), `yarn chain` + Gradle/Kotlin
++ Docker (Postgres do Evex) + dev server do frontend do Evex já pesa. Se for testar discovery/E6 e
+somar o Blockscout (`blockscout-up.sh` — Elixir + Postgres próprio + Redis) ao mesmo tempo, pesa bem
+mais — vale derrubar (`blockscout-down.sh`) assim que terminar esse teste específico. Se notar tudo
+muito lento (`uptime`/`load average` bem acima do número de cores), pode valer aumentar os limites do
+WSL (`%UserProfile%\.wslconfig` no Windows, `wsl --shutdown` depois pra aplicar — reinicia a VM inteira,
+mata qualquer coisa rodando nela, inclusive uma sessão do
+Claude Code se estiver de pé). Não é obrigatório — o ambiente funciona mesmo sob carga alta, só mais
+devagar.
+
+## 4. Como testar
+
+**Pipeline principal (poller→decode→redecode→API, E4/E5):**
+```bash
+curl "http://localhost:8080/v1/events?contractAddress=<endereço>"
+```
+ou pelo Swagger UI (`http://localhost:8080/swagger-ui.html`). Validado nesta sessão com `Transfer`
+(ERC20) e `WidgetCreated` (evento customizado do `TestEventEmitter`, com `string`/`uint256` não
+indexados) — inclusive o cenário de ingestão **antes** da ABI existir, com redecode automático (E5)
+assim que a ABI é cadastrada.
+
+**Discovery via Blockscout real (E6):**
+```bash
+curl "http://localhost:8080/v1/contracts/<endereço do TestERC721 ou TestERC1155>/abi/suggestions"
+```
+Se o contrato ainda não tiver evento observado pelo Evex, essa chamada cai no fallback real contra
+`http://localhost:4001/api/v2/addresses/{address}/logs`. Validado nesta sessão: `safeMint` real no
+`TestERC721`, sugestão retornou `ERC721`/`ERC20` como `PARTIAL` (só `Transfer` observado até então —
+ambíguo entre os dois templates, comportamento correto).
+
+Pra testar `GET /v1/discovery/blockscout/contracts`/`source=BLOCKSCOUT` (exemplos completos na
+seção 5), o contrato precisa estar **verificado** no Blockscout primeiro — ver
+[`blockscout/verify-contracts.ts`](blockscout/verify-contracts.ts) (`npx tsx blockscout/verify-contracts.ts`
+de dentro de `local-env/`, verifica `TestERC20`/`TestEventEmitter` via API v2 real, sem depender do
+`rocketh-verify` — ver `docs/decisions.md` DEC-057).
+
+## 5. Exemplos de uso da API
+
+Três fluxos de cadastro de contrato, do jeito que a UI (frontend do Evex) exercita por baixo dos panos.
+
+### 5.1 Cadastro via discovery (Blockscout)
+
+Requer o contrato já **verificado** no Blockscout (seção 4 acima):
+```bash
+# 1. Descobrir contratos verificados
+curl "http://localhost:8080/v1/discovery/blockscout/contracts"
+
+# 2. Cadastrar o contrato encontrado
+curl -X POST "http://localhost:8080/v1/contracts" \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0x5fbdb2315678afecb367f032d93f642f64180aa3","name":"TestERC20 (via discovery)","network":"TESTNET"}'
+
+# 3. Buscar a ABI direto do Blockscout (não precisa colar nada)
+curl -X POST "http://localhost:8080/v1/contracts/0x5fbdb2315678afecb367f032d93f642f64180aa3/abi" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"BLOCKSCOUT"}'
+```
+
+### 5.2 Cadastro via ABI (upload/texto)
+
+Sem depender do Blockscout — cola o JSON da ABI direto:
+```bash
+curl -X POST "http://localhost:8080/v1/contracts" \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9","name":"TestEventEmitter (ABI manual)","network":"TESTNET"}'
+
+curl -X POST "http://localhost:8080/v1/contracts/0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9/abi" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "UPLOAD_TEXT",
+    "abi": "[{\"type\":\"event\",\"name\":\"WidgetCreated\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true},{\"name\":\"creator\",\"type\":\"address\",\"indexed\":true},{\"name\":\"name\",\"type\":\"string\",\"indexed\":false},{\"name\":\"value\",\"type\":\"uint256\",\"indexed\":false}]}]"
+  }'
+```
+("Upload de arquivo" na UI é o mesmo endpoint — o frontend só lê o arquivo local e manda o conteúdo
+neste mesmo campo `abi`, como texto.)
+
+### 5.3 Configurar um webhook
+
+Dispara um `POST` toda vez que o evento indicado bate no contrato indicado:
+```bash
+curl -X POST "http://localhost:8080/v1/webhooks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contractAddress": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+    "network": "TESTNET",
+    "eventName": "Transfer",
+    "url": "https://webhook.site/<seu-endpoint-de-teste>"
+  }'
+```
+`filters`/`payloadTemplate` são opcionais (sem eles: sem filtro adicional, payload no envelope JSON
+padrão). Gere uma URL de teste em https://webhook.site pra ver a entrega chegando de verdade.
+
+## 6. Encerrar
+
+```bash
+cd local-env
+./scripts/down.sh              # frontend do Evex + Postgres do Evex (o que o up.sh subiu)
+./scripts/blockscout-down.sh   # só se tiver subido o Blockscout (seção 3.3)
+# + parar os processos yarn chain / gradlew bootRun (ou IDE) / yarn start (scaffold-eth-2, se tiver subido) — Ctrl+C
+```

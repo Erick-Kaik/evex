@@ -1,0 +1,43 @@
+{
+  "name": "evex-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "predev": "npm run generate:api",
+    "build": "tsc -b && vite build",
+    "prebuild": "npm run generate:api",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "bundle:api": "redocly bundle ../backend/src/main/resources/swagger/base/base.yaml -o openapi/evex-api.bundled.yaml",
+    "generate:api": "npm run bundle:api && openapi-generator-cli generate -i openapi/evex-api.bundled.yaml -g typescript-axios -o src/api --additional-properties=supportsES6=true,withInterfaces=true --global-property=apiTests=false,apiDocs=false,modelTests=false,modelDocs=false && rm -rf src/api/git_push.sh src/api/.gitignore src/api/.npmignore src/api/.openapi-generator-ignore src/api/.openapi-generator"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^9.4.0",
+    "@mui/material": "^9.4.0",
+    "@tanstack/react-query": "^5.102.2",
+    "axios": "^1.19.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^7.18.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@openapitools/openapi-generator-cli": "^2.40.1",
+    "@redocly/cli": "^2.47.0",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.65.0",
+    "vite": "^8.2.0"
+  }
+}

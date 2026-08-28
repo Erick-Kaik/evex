@@ -1,0 +1,6 @@
+name: eventName
+in: query
+required: false
+description: "Filtra eventos decodificados pelo nome do evento (ex.: `Transfer`)."
+schema:
+  type: string

@@ -1,0 +1,17 @@
+get:
+  tags:
+    - Balances
+  operationId: listBalances
+  summary: Consulta saldos atuais
+  parameters:
+    - $ref: "../base/components/param/query/wallet-address.yaml"
+    - $ref: "../base/components/param/query/balance-contract-address.yaml"
+    - $ref: "../base/components/param/query/token-id.yaml"
+    - $ref: "../base/components/param/query/balance-network.yaml"
+    - $ref: "../base/components/param/query/page.yaml"
+    - $ref: "../base/components/param/query/size.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/asset-balance-page-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"

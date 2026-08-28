@@ -1,0 +1,25 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Bundle Redocly (gerado por `npm run bundle:api`, a partir do .yaml do backend) — nunca commitado,
+# mesmo espírito de backend/build/swagger-bundle (DEC-012).
+openapi/
+
+# Cliente typescript-axios gerado por `npm run generate:api` — nunca editado à mão, nunca
+# commitado. Exceção: config.ts é o único arquivo handwritten deste diretório (configura o
+# `basePath` do cliente gerado — ver src/api/config.ts).
+src/api/*
+!src/api/config.ts
+
+.env
+.env.local
+
+# IDE
+.idea/
+*.iml
+
+logs
+*.log
+npm-debug.log*

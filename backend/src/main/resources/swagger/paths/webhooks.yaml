@@ -1,0 +1,25 @@
+get:
+  tags:
+    - Webhooks
+  operationId: listWebhooks
+  summary: Lista configurações de webhook
+  parameters:
+    - $ref: "../base/components/param/query/page.yaml"
+    - $ref: "../base/components/param/query/size.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/webhook-config-page-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+post:
+  tags:
+    - Webhooks
+  operationId: createWebhook
+  summary: Cadastra um novo webhook
+  requestBody:
+    $ref: "../base/components/requests/create-webhook-request.yaml"
+  responses:
+    "201":
+      $ref: "../base/components/responses/webhook-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"

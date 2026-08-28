@@ -1,0 +1,28 @@
+post:
+  tags:
+    - Contracts
+  operationId: registerContractAbi
+  summary: Cadastra uma nova versão de ABI para um contrato monitorado
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  requestBody:
+    $ref: "../base/components/requests/register-abi-request.yaml"
+  responses:
+    "201":
+      $ref: "../base/components/responses/contract-abi-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+get:
+  tags:
+    - Contracts
+  operationId: listContractAbiVersions
+  summary: Lista as versões de ABI cadastradas para um contrato monitorado
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-abi-list-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

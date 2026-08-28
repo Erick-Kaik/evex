@@ -1,0 +1,10 @@
+/*
+ * Estilização global via MUI (Emotion, ver DEC-060) — Tailwind removido nesta etapa (E13).
+ * `CssBaseline` (montado em `main.tsx`) já cuida de reset/normalização; este arquivo só ajusta o
+ * que o `CssBaseline` não cobre (altura de tela cheia pro layout raiz).
+ */
+html,
+body,
+#root {
+  height: 100%;
+}

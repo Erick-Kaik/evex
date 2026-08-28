@@ -1,0 +1,35 @@
+type: object
+description: >-
+  Corpo da atualização de um webhook — substitui todos os campos editáveis. `active` não faz parte
+  deste payload — use `PATCH /v1/webhooks/{id}/status` para ativar/pausar.
+required:
+  - contractAddress
+  - network
+  - eventName
+  - url
+properties:
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato monitorado cujos eventos disparam este webhook.
+  network:
+    $ref: "../enum/network.yaml"
+  eventName:
+    type: string
+    minLength: 1
+    description: "Nome do evento decodificado que dispara este webhook (ex.: Transfer)."
+  url:
+    type: string
+    format: uri
+    description: URL de destino do `POST` disparado quando um evento bate no filtro.
+  filters:
+    type: array
+    description: "Condições de filtro opcionais — ausente/vazio = sem filtro, sempre dispara."
+    items:
+      $ref: "./filter-condition.yaml"
+  payloadTemplate:
+    type: string
+    nullable: true
+    description: >-
+      Template JSON opcional com placeholders `{{campo}}`/`{{decodedParameters.nome}}`. Validado na
+      edição: precisa renderizar como JSON válido, senão a requisição é rejeitada com 400.

@@ -1,0 +1,5 @@
+type: string
+description: "Nível de confiança da detecção automática de interface (doc §4.5): FULL = match total (nível 1), PARTIAL = match parcial (nível 2, só sugestão, nunca aplicado automaticamente)."
+enum:
+  - FULL
+  - PARTIAL

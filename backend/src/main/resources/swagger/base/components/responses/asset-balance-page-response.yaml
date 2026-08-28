@@ -1,0 +1,5 @@
+description: Página de saldos atuais.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/asset-balance-page.yaml"

@@ -1,0 +1,17 @@
+get:
+  tags:
+    - Contracts
+  operationId: suggestInterface
+  summary: Sugere interfaces padrão (ERC20/ERC721/ERC1155) pra um contrato monitorado
+  description: >-
+    Detecção automática de interface (doc §4.5) — compara os `topic0`s já observados do contrato
+    (ou, se ainda não houver nenhum ingerido, um fallback via Blockscout) contra os templates built-in.
+    Só informativo: nível `PARTIAL` nunca é aplicado automaticamente, é preciso `POST .../abi` com
+    `source=AUTO_DETECTED` (que só aceita `FULL`) ou cadastro manual.
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/interface-suggestions-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

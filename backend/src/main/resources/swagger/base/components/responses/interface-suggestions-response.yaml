@@ -1,0 +1,5 @@
+description: Sugestões de interface padrão pro contrato, ordenadas por nível de confiança.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/interface-suggestion-list.yaml"

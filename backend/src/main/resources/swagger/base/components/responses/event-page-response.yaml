@@ -1,0 +1,5 @@
+description: Página de eventos indexados.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/event-page.yaml"

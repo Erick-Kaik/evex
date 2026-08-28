@@ -1,0 +1,113 @@
+spring:
+  application:
+    name: evex-indexer
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/evex}
+    username: ${SPRING_DATASOURCE_USERNAME:evex}
+    password: ${SPRING_DATASOURCE_PASSWORD:evex}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.postgresql.Driver}
+  jpa:
+    hibernate:
+      # Padrão da PoC (DEC-006): ddl-auto no dia a dia + Flyway usado pontualmente quando necessário
+      # (ex.: ajuste de sequence, dado de seed) — não Flyway puro.
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # E8.1/DEC-041: `spring-boot-flyway` (build.gradle.kts) estava ausente até esta etapa — Flyway
+    # nunca rodou de fato antes disso, apesar de `enabled: true` já estar aqui desde E0 (a
+    # autoconfiguração correspondente simplesmente não existia no classpath, mesma modularização por
+    # tecnologia de DEC-019/DEC-020/DEC-028). A ordem real de execução (Flyway depois do Hibernate
+    # criar o schema via ddl-auto, não antes) é controlada por
+    # config/PostSchemaFlywayMigrator.kt, não pelo hook automático padrão do Spring Boot — ver DEC-041.
+    #
+    # DEC-022: 1ª migration real do projeto (V1__contract_abis_unique_open_version.sql) — o schema já
+    # existe via ddl-auto: update (DEC-006) em qualquer banco rodando desde antes desta etapa, então o
+    # baseline explícito é necessário: sem baseline-version: 0, o baseline default (versão 1)
+    # empataria com V1 e a "pularia" sem executar de fato (ver
+    # backend/docs/performance-and-ops-notes.md).
+    baseline-on-migrate: true
+    baseline-version: 0
+
+server:
+  error:
+    include-stacktrace: never
+    include-exception: false
+
+logging:
+  level:
+    br.com.bbchain.evex.indexer: ${EVEX_LOG_LEVEL:INFO}
+    org.hibernate.SQL: ${SQL_LOG_LEVEL:WARN}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+indexer:
+  # MAINNET | TESTNET — tag de rede aplicada a todo BlockchainEvent ingerido por esta instância
+  # (decisão da E4: "instância por rede", não deriva de MonitoredContract porque a ingestão é da rede
+  # inteira, DEC-001 — a maioria dos logs é de endereço não cadastrado).
+  network: ${EVEX_NETWORK:TESTNET}
+  # Intervalo mínimo entre 2 logs WARN consecutivos pra uma mesma config de saldo/webhook mal
+  # configurada (E11, resíduo de DEC-035) — WarnLogDeduper, usado por BalanceProjectionService e
+  # WebhookMatchingService. Aceita formato Spring (ex.: 5m, 30s, PT5M).
+  warn-log-dedupe-interval: ${EVEX_WARN_LOG_DEDUPE_INTERVAL:5m}
+  abi-storage:
+    # database | local | hybrid — usado quando POST /v1/contracts/{address}/abi não informa `storage`
+    # explicitamente. Trocar aqui não exige mudança de código (AbiStorageResolver).
+    default: database
+    local-path: ${EVEX_ABI_LOCAL_STORAGE_PATH:./data/abis}
+  blockchain:
+    rpc-url: ${EVEX_RPC_URL:http://localhost:8545}
+    # Besu IBFT2/QBFT é determinístico por bloco (DEC-005) — default baixo, revisar quando houver
+    # rede Besu real (E12).
+    confirmations: ${EVEX_CONFIRMATIONS:0}
+    batch-size: ${EVEX_POLL_BATCH_SIZE:1000}
+    min-batch-size: ${EVEX_POLL_MIN_BATCH_SIZE:1}
+    poll-interval-ms: ${EVEX_POLL_INTERVAL_MS:5000}
+    # false em testes — setado via @DynamicPropertySource em AbstractIntegrationTest, nunca em
+    # src/test/resources/application.yml (DEC-024: esse arquivo faz shadow deste application.yml no
+    # classpath de teste). Evita o @Scheduled bater em RPC inexistente durante @SpringBootTest.
+    polling-enabled: ${EVEX_POLLING_ENABLED:true}
+  redecode:
+    # Tamanho do lote da reindexação assíncrona (ingestion-pipeline-reference.md §4) — orquestrador
+    # RedecodeOrchestrator/RedecodeRunner/RedecodeBatchProcessor (E5).
+    batch-size: ${EVEX_REDECODE_BATCH_SIZE:100}
+  blockscout:
+    # Vazio (default) = discovery/origem BLOCKSCOUT/fallback de detecção de interface desabilitados —
+    # BlockscoutClient lança BlockscoutUnavailableException (503) direto, sem tentar HTTP. Nenhuma
+    # instância Blockscout de teste disponível ainda (mesma classe de pendência de E12/DEC-010).
+    base-url: ${EVEX_BLOCKSCOUT_URL:}
+  balance:
+    # Cron do job noturno de consolidação de saldo (doc §4.4, BalanceSnapshotJob) — default meia-noite,
+    # diário. Sem guarda de concorrência própria: o Spring não roda 2 execuções do mesmo método
+    # @Scheduled em paralelo (mesma garantia já usada pelo BlockchainPoller, E4).
+    snapshot-cron: ${EVEX_BALANCE_SNAPSHOT_CRON:0 0 0 * * *}
+  webhook:
+    # Notificação de saída (indexer→sistema externo, DEC-004) — WebhookDispatchJob (E8, doc §4.6).
+    dispatch-interval-ms: ${EVEX_WEBHOOK_DISPATCH_INTERVAL_MS:5000}
+    dispatch-batch-size: ${EVEX_WEBHOOK_DISPATCH_BATCH_SIZE:50}
+    max-attempts: ${EVEX_WEBHOOK_MAX_ATTEMPTS:5}
+    base-delay-seconds: ${EVEX_WEBHOOK_BASE_DELAY_SECONDS:10}
+    max-delay-seconds: ${EVEX_WEBHOOK_MAX_DELAY_SECONDS:300}
+    request-timeout-ms: ${EVEX_WEBHOOK_REQUEST_TIMEOUT_MS:5000}
+  cors:
+    # E8.1 — origens permitidas a consumir /v1/** via browser (config/SecurityConfig.kt, DEC via
+    # Spring Security, não WebMvcConfigurer — ver docs/decisions.md). Default é a porta padrão do
+    # `npm run dev` do Vite (E9). Lista separada por vírgula, convertida automaticamente em
+    # List<String> pelo @ConfigurationProperties do Spring Boot (relaxed binding).
+    allowed-origins: ${EVEX_CORS_ALLOWED_ORIGINS:http://localhost:5173}

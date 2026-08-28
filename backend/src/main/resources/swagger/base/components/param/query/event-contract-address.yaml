@@ -1,0 +1,7 @@
+name: contractAddress
+in: query
+required: false
+description: Filtra eventos pelo endereço do contrato de origem.
+schema:
+  type: string
+  pattern: "^0x[a-fA-F0-9]{40}$"

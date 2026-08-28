@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Evex: TypeScript strict (frontend/CLAUDE.md) — o template `create-vite` atual não define
+       "strict": true por padrão (diferente do que a versão anterior do template fazia), setado
+       explicitamente aqui. */
+    "strict": true,
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+    // "erasableSyntaxOnly" (default do template create-vite atual) removido: o cliente gerado pelo
+    // openapi-generator (src/api/, typescript-axios) usa TS parameter properties
+    // (`constructor(protected basePath: ...)`) — sintaxe não "erasable-only" que não pode ser
+    // editada (regra não-negociável: cliente gerado nunca é editado à mão). Ver
+    // docs/roadmap.md (notas de execução da E9).
+  },
+  "include": ["src"]
+}

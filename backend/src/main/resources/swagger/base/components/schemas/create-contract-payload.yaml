@@ -1,0 +1,27 @@
+type: object
+description: >-
+  Corpo do cadastro de um novo contrato monitorado. `status` não faz parte deste payload — todo
+  contrato novo nasce com status ACTIVE no servidor.
+required:
+  - address
+  - name
+  - network
+properties:
+  address:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato na rede.
+  name:
+    type: string
+    minLength: 1
+    description: Nome dado pelo usuário ao contrato monitorado.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre do contrato monitorado.
+  version:
+    type: string
+    nullable: true
+    description: "Versão do contrato monitorado (ex.: versão da implementação atrás de um proxy)."
+  network:
+    $ref: "../enum/network.yaml"

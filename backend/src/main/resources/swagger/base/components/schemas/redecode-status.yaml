@@ -1,0 +1,23 @@
+type: object
+description: Snapshot do estado da reindexação assíncrona.
+required:
+  - running
+  - processedCount
+  - decodedCount
+  - remainingCount
+properties:
+  running:
+    type: boolean
+    description: "`true` se há uma execução de redecode em andamento neste momento."
+  processedCount:
+    type: integer
+    format: int64
+    description: Quantidade de eventos processados (revisitados) na execução em andamento/mais recente.
+  decodedCount:
+    type: integer
+    format: int64
+    description: Quantidade de eventos decodificados com sucesso na execução em andamento/mais recente.
+  remainingCount:
+    type: integer
+    format: int64
+    description: "Quantidade de eventos ainda pendentes que batem no filtro da execução em andamento/mais recente — consulta ao vivo, não cacheada."

@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de atualização de um webhook.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/update-webhook-payload.yaml"

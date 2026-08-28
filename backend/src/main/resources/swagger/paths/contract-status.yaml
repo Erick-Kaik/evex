@@ -1,0 +1,16 @@
+patch:
+  tags:
+    - Contracts
+  operationId: updateContractStatus
+  summary: Atualiza o status de um contrato monitorado
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-contract-status-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

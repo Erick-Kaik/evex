@@ -1,0 +1,7 @@
+type: string
+description: "Origem do cadastro de uma versão de ABI (ex.: UPLOAD_FILE, UPLOAD_TEXT)."
+enum:
+  - UPLOAD_FILE
+  - UPLOAD_TEXT
+  - BLOCKSCOUT
+  - AUTO_DETECTED

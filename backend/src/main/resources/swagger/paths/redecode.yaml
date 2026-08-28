@@ -1,0 +1,16 @@
+post:
+  tags:
+    - Redecode
+  operationId: triggerRedecode
+  summary: Dispara a reindexação assíncrona de eventos raw pendentes
+  description: >-
+    Reprocessa eventos raw (`decoded=false`) já ingeridos, sem reconsultar a rede — útil depois de
+    cadastrar/atualizar uma ABI. Só 1 execução por vez: se já houver uma reindexação em andamento, esta
+    chamada não dispara outra (a resposta ainda reflete o estado real atual).
+  requestBody:
+    $ref: "../base/components/requests/redecode-request.yaml"
+  responses:
+    "202":
+      $ref: "../base/components/responses/redecode-status-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"

@@ -1,0 +1,30 @@
+get:
+  tags:
+    - Webhooks
+  operationId: getWebhook
+  summary: Consulta um webhook pelo id
+  parameters:
+    - $ref: "../base/components/param/path/webhook-id.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/webhook-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+put:
+  tags:
+    - Webhooks
+  operationId: updateWebhook
+  summary: Atualiza um webhook
+  parameters:
+    - $ref: "../base/components/param/path/webhook-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-webhook-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/webhook-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

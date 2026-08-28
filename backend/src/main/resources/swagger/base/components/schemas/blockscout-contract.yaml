@@ -1,0 +1,13 @@
+type: object
+description: Um contrato verificado listado pelo Blockscout (doc de produto §7).
+required:
+  - address
+properties:
+  address:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato verificado.
+  name:
+    type: string
+    nullable: true
+    description: Nome do contrato, conforme reportado pelo Blockscout (quando disponível).

@@ -1,0 +1,11 @@
+description: Página de contratos monitorados.
+allOf:
+  - $ref: "./page-metadata.yaml"
+  - type: object
+    required:
+      - content
+    properties:
+      content:
+        type: array
+        items:
+          $ref: "./contract.yaml"

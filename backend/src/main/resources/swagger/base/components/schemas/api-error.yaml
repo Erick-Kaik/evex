@@ -1,0 +1,17 @@
+type: object
+description: Formato padrão de erro do Evex (DEC-013) — usado em toda resposta 4xx/5xx documentada.
+required:
+  - code
+  - message
+  - timestamp
+properties:
+  code:
+    type: string
+    description: "Código estável do erro (ex.: CONTRACT_NOT_FOUND, VALIDATION_ERROR)."
+  message:
+    type: string
+    description: Mensagem legível descrevendo o erro.
+  timestamp:
+    type: string
+    format: date-time
+    description: Momento em que o erro ocorreu.

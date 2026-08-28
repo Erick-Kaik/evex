@@ -1,0 +1,5 @@
+description: Página de contratos monitorados.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/contract-page.yaml"

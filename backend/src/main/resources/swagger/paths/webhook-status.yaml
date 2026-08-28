@@ -1,0 +1,16 @@
+patch:
+  tags:
+    - Webhooks
+  operationId: updateWebhookStatus
+  summary: Ativa ou pausa um webhook
+  parameters:
+    - $ref: "../base/components/param/path/webhook-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-webhook-status-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/webhook-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

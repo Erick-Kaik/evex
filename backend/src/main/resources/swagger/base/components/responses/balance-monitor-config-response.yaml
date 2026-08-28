@@ -1,0 +1,5 @@
+description: Uma configuração de monitoramento de saldo.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/balance-monitor-config.yaml"

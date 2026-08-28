@@ -1,0 +1,7 @@
+type: string
+description: "Como um evento decodificado afeta o saldo de uma carteira (doc de produto §4.4)."
+enum:
+  - CREDIT
+  - DEBIT
+  - TRANSFER
+  - DELTA

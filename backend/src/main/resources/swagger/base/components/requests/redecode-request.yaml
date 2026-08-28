@@ -1,0 +1,6 @@
+required: false
+description: Corpo opcional da requisição de disparo de reindexação assíncrona — ausente/vazio = redecodifica tudo que está pendente globalmente.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/redecode-filter-payload.yaml"

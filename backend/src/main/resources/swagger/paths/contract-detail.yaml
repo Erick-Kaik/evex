@@ -1,0 +1,30 @@
+get:
+  tags:
+    - Contracts
+  operationId: getMonitoredContract
+  summary: Consulta um contrato monitorado pelo endereço
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+put:
+  tags:
+    - Contracts
+  operationId: updateMonitoredContract
+  summary: Atualiza nome/descrição/versão de um contrato monitorado
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-contract-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

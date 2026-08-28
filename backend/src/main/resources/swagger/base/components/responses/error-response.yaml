@@ -1,0 +1,5 @@
+description: Erro padrão do Evex.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/api-error.yaml"

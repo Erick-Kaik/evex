@@ -1,0 +1,7 @@
+name: contractAddress
+in: query
+required: false
+description: Filtra saldos pelo endereço do contrato do ativo.
+schema:
+  type: string
+  pattern: "^0x[a-fA-F0-9]{40}$"

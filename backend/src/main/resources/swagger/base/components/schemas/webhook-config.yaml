@@ -1,0 +1,47 @@
+type: object
+description: Configuração de webhook cadastrada pelo usuário (doc de produto §4.6).
+required:
+  - id
+  - contractAddress
+  - network
+  - eventName
+  - url
+  - filters
+  - active
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato monitorado cujos eventos disparam este webhook.
+  network:
+    $ref: "../enum/network.yaml"
+  eventName:
+    type: string
+    description: "Nome do evento decodificado que dispara este webhook (ex.: Transfer)."
+  url:
+    type: string
+    format: uri
+    description: URL de destino do `POST` disparado quando um evento bate no filtro.
+  filters:
+    type: array
+    description: "Condições de filtro opcionais — lista vazia = sem filtro, sempre dispara."
+    items:
+      $ref: "./filter-condition.yaml"
+  payloadTemplate:
+    type: string
+    nullable: true
+    description: >-
+      Template JSON opcional com placeholders `{{campo}}`/`{{decodedParameters.nome}}`, substituídos
+      por interpolação simples. `null` = usa o envelope JSON padrão (evento completo).
+  active:
+    type: boolean
+    description: Se este webhook está ativo (avaliado a cada evento decodificado) ou pausado.
+  createdAt:
+    type: string
+    format: date-time
+    description: Momento em que este webhook foi cadastrado.

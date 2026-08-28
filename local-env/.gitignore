@@ -1,0 +1,7 @@
+# scaffold-eth-2 e blockscout são clonados aqui como dependências externas, não vendorizadas
+# (ver CLAUDE.md / DEC-052 / DEC-053)
+local-env-scaffold-eth-2/
+local-env-blockscout/
+node_modules/
+
+.logs/

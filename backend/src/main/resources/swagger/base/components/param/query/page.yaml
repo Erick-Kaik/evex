@@ -1,0 +1,9 @@
+name: page
+in: query
+required: false
+description: Número da página (0-indexed).
+schema:
+  type: integer
+  format: int32
+  minimum: 0
+  default: 0

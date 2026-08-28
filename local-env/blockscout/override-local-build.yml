@@ -1,0 +1,10 @@
+version: '3.9'
+# Override de teste (não faz parte do repo oficial): usa a imagem que compilamos localmente a
+# partir do source em vez de tentar puxar do ghcr.io (que só tem a build velha, 9.0.2 — ver
+# docs/decisions.md DEC-055).
+services:
+  backend:
+    image: ghcr.io/blockscout/blockscout:11.2.8-local
+    pull_policy: never
+    ports:
+      - "4001:4000"

@@ -1,0 +1,7 @@
+name: walletAddress
+in: query
+required: false
+description: Filtra saldos pelo endereço da carteira.
+schema:
+  type: string
+  pattern: "^0x[a-fA-F0-9]{40}$"

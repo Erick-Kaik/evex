@@ -1,0 +1,5 @@
+description: Uma versão de ABI.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/contract-abi.yaml"

@@ -1,0 +1,25 @@
+get:
+  tags:
+    - BalanceMonitors
+  operationId: listBalanceMonitors
+  summary: Lista configurações de monitoramento de saldo
+  parameters:
+    - $ref: "../base/components/param/query/page.yaml"
+    - $ref: "../base/components/param/query/size.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/balance-monitor-config-page-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+post:
+  tags:
+    - BalanceMonitors
+  operationId: createBalanceMonitor
+  summary: Cadastra uma nova configuração de monitoramento de saldo
+  requestBody:
+    $ref: "../base/components/requests/create-balance-monitor-request.yaml"
+  responses:
+    "201":
+      $ref: "../base/components/responses/balance-monitor-config-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"

@@ -1,0 +1,8 @@
+get:
+  tags:
+    - Redecode
+  operationId: getRedecodeStatus
+  summary: Consulta o status da reindexação assíncrona
+  responses:
+    "200":
+      $ref: "../base/components/responses/redecode-status-response.yaml"

@@ -1,0 +1,4 @@
+type: array
+description: "Templates de interface padrão que bateram (nível FULL ou PARTIAL) com os eventos observados do contrato — sem `NONE`."
+items:
+  $ref: "./interface-suggestion.yaml"

@@ -1,0 +1,14 @@
+get:
+  tags:
+    - Discovery
+  operationId: listVerifiedContracts
+  summary: Lista contratos verificados no Blockscout configurado
+  description: >-
+    Discovery via Blockscout (doc §7) — não persiste nada, só repassa a lista de contratos verificados
+    pro cliente decidir o que cadastrar. `503` quando `indexer.blockscout.base-url` não está
+    configurado ou a chamada ao Blockscout falhou.
+  responses:
+    "200":
+      $ref: "../base/components/responses/blockscout-contracts-response.yaml"
+    "503":
+      $ref: "../base/components/responses/error-response.yaml"

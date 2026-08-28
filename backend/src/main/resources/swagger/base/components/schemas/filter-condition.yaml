@@ -1,0 +1,16 @@
+type: object
+description: "Uma condição de filtro opcional de um webhook (ex.: `value > 1000`)."
+required:
+  - paramName
+  - operator
+  - value
+properties:
+  paramName:
+    type: string
+    minLength: 1
+    description: Nome do parâmetro do evento decodificado a comparar.
+  operator:
+    $ref: "../enum/filter-operator.yaml"
+  value:
+    type: string
+    description: "Valor de comparação (comparado numericamente quando possível; senão, como string — ver `FilterOperator`)."

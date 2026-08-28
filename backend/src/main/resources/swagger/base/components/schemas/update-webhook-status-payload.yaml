@@ -1,0 +1,8 @@
+type: object
+description: Corpo da atualização de status (ativar/pausar) de um webhook.
+required:
+  - active
+properties:
+  active:
+    type: boolean
+    description: "`true` = ativo (avaliado a cada evento decodificado); `false` = pausado."

@@ -1,0 +1,32 @@
+type: object
+description: Contrato monitorado pelo Evex (doc de produto §4.1).
+required:
+  - id
+  - address
+  - name
+  - network
+  - status
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  address:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato na rede. Imutável após a criação.
+  name:
+    type: string
+    description: Nome dado pelo usuário ao contrato monitorado.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre do contrato monitorado.
+  version:
+    type: string
+    nullable: true
+    description: "Versão do contrato monitorado (ex.: versão da implementação atrás de um proxy)."
+  network:
+    $ref: "../enum/network.yaml"
+  status:
+    $ref: "../enum/contract-status.yaml"

@@ -1,0 +1,10 @@
+name: size
+in: query
+required: false
+description: Quantidade de itens por página.
+schema:
+  type: integer
+  format: int32
+  minimum: 1
+  maximum: 200
+  default: 20

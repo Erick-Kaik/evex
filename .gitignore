@@ -1,0 +1,8 @@
+# Cruft de SO/editor não coberto pelos .gitignore de cada módulo (backend/frontend/local-env têm os
+# próprios, específicos de cada stack — este aqui é só o que pode aparecer solto na raiz).
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.log

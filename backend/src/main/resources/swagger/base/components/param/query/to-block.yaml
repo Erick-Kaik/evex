@@ -1,0 +1,7 @@
+name: toBlock
+in: query
+required: false
+description: Filtra eventos até este número de bloco (inclusive).
+schema:
+  type: integer
+  format: int64

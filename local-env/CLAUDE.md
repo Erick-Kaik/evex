@@ -1,0 +1,97 @@
+# Evex — Ambiente de teste local
+
+> Ler primeiro: [`../CLAUDE.md`](../CLAUDE.md) (decisões travadas) e [`../docs/decisions.md`](../docs/decisions.md) DEC-010/DEC-052 a DEC-057 (contexto de por que este módulo existe, por que não é o repo Hardhat da empresa, e as descobertas reais feitas rodando contra um Blockscout de verdade) e DEC-059 (Blockscout e UI do scaffold-eth-2 viraram opt-in, eventos disparados via script).
+
+## O que é
+
+Ambiente local para validar o Evex ponta a ponta contra uma rede EVM real — não só fixtures/mocks: nó
+Hardhat + contratos de teste + Blockscout real (para exercitar a E6, discovery/detecção automática) +
+UIs prontas pra disparar eventos manualmente (mint, etc.), usado pra destravar a **E12** do roadmap.
+**Validado de ponta a ponta** (não só estruturado) — ver `README.md` seção 4/5 e `docs/decisions.md`
+DEC-054/DEC-057.
+
+**Não é parte do produto entregável.** Nenhum cliente BBChain recebe nada deste módulo — ele existe só
+para desenvolvimento e demonstração do Evex. Por isso vive fora de `backend/`/`frontend/`, como módulo
+próprio, e não tem agente especializado dedicado em `.claude/agents/` (é tratado ad-hoc pela sessão
+principal quando a etapa do roadmap pedir).
+
+## Stack
+
+| Peça | Ferramenta | Papel |
+|---|---|---|
+| Nó EVM local | Hardhat, via [scaffold-eth-2](https://github.com/scaffold-eth/scaffold-eth-2) clonado à parte em `local-env-scaffold-eth-2/` (**não vendorizado**) | nó persistente (`yarn chain`, RPC `127.0.0.1:8545`, chainId **31337**) + pipeline de deploy via `rocketh` (`yarn deploy`) — sempre fora do `docker-compose.yml`/scripts, de propósito (ver README §3.1). A UI de disparo de eventos em `/debug` (gera botão pra cada função da ABI) continua disponível mas não é mais o caminho padrão — ver `seed/emit-events.ts` (DEC-059) |
+| Explorer / discovery | [Blockscout](https://github.com/blockscout/blockscout) **real**, clonado à parte em `local-env-blockscout/` (**não vendorizado**), buildado do source (v11.2.8) — a imagem publicada (`latest`/`master`) tem um bug de SSL sem correção disponível como imagem (DEC-055/DEC-056) | discovery/ABI/fallback de interface da E6, todos validados contra instância real (DEC-057), não mock. **Opt-in** desde a DEC-059 (profile `blockscout` do compose, `scripts/blockscout-up.sh`/`blockscout-down.sh`) — é a peça mais pesada do ambiente, só sobe quando for testar E6 especificamente |
+| Contratos de teste | `contracts/` (versionados aqui, colados dentro do projeto Hardhat do scaffold-eth-2 na hora de deployar) | `TestERC20`/`TestERC721`/`TestERC1155` (wrappers com `mint`/`safeMint`/`mintBatch` públicos sobre OpenZeppelin) + `TestEventEmitter` (contrato 100% customizado, eventos não-padrão) |
+| Disparo de eventos | `seed/emit-events.ts` (ethers direto, assina com a conta deployer padrão do Hardhat) | substitui a UI `/debug` do scaffold-eth-2 como caminho padrão (DEC-059) — mint/safeMint/mintBatch/createWidget/etc. via script, sem precisar de um Next.js dev server no ar |
+| Orquestração | `docker-compose.yml` (Postgres do Evex sempre; Blockscout atrás do profile `blockscout`) + `scripts/up.sh`/`down.sh` (deploy + eventos de teste + docker + frontend do Evex) + `scripts/blockscout-up.sh`/`blockscout-down.sh` (Blockscout, à parte, sob demanda) | reduz o dia a dia a 1 terminal pro nó Hardhat + 1 comando pro resto, mantendo leve por padrão (DEC-059) — backend do Evex fica de fora de propósito (debug/hot-reload na IDE), UI do scaffold-eth-2 e Blockscout ficam opt-in |
+
+## Por que scaffold-eth-2 e Blockscout não são vendorizados
+
+Mesma lógica que levou à remoção de `base/indexer` depois de extrair dele só o que interessava: este
+módulo guarda apenas o que é nosso — contratos, scripts de deploy/seed/verify, compose. Os dois
+projetos de terceiros são clonados à parte pelo desenvolvedor (`README.md`) — evita inflar o histórico
+do Evex com código de terceiros e evita divergir de updates upstream. `.gitignore` deste módulo exclui
+as duas pastas de clone (`local-env-scaffold-eth-2/`, `local-env-blockscout/`) e `.logs/` (saída dos
+scripts).
+
+## Limitações/achados técnicos conhecidos
+
+- **Hardhat × tracer de transações internas**: Hardhat não suporta tracer customizado em
+  `debug_traceBlockByNumber` — o Blockscout oficial já lida com isso usando
+  `INDEXER_INTERNAL_TRANSACTIONS_TRACER_TYPE=opcode` (não "desabilitar transações internas", suposição
+  inicial errada corrigida na DEC-053). Não afeta detecção automática de ERC20/721/1155 (E6), baseada
+  em logs, não em trace.
+- **Imagem publicada do Blockscout tem bug real** (Postgrex/`db_connection` referenciando `:ssl`
+  incondicionalmente mesmo com SSL desabilitado) — sem tag estável publicada que corrija isso
+  (DEC-055). Resolvido compilando do source (`v11.2.8`, `docker-compose.yml` builda sozinho) — achado
+  corrigido na DEC-056 depois que o usuário questionou a conclusão inicial de "aceitar como limitação".
+- **2 bugs reais achados no `BlockscoutClient.kt`** do backend (não só do ambiente de teste), só
+  visíveis contra uma instância real: `filter=verified` inválido (o filtro hoje é por linguagem, não
+  por status), e `address` sendo objeto aninhado (`{hash, name}`) — ambos corrigidos (DEC-057).
+- **Verificação de contrato**: não dá pra usar o `rocketh-verify` do scaffold-eth-2 (fala API antiga
+  estilo Etherscan) — `blockscout/verify-contracts.ts` chama a API v2 real diretamente, usando o
+  `standard-json-input` que o próprio Hardhat já gera.
+
+## Estrutura
+
+```
+local-env/
+├── CLAUDE.md                          # este arquivo
+├── README.md                          # guia operacional completo (subir, testar, exemplos de API)
+├── docker-compose.yml                 # Postgres do Evex (sempre) + Blockscout real (profile "blockscout", opt-in)
+├── .gitignore                         # exclui os 2 clones + .logs/
+├── scripts/
+│   ├── up.sh                          # copia contratos, deploya, dispara eventos de teste, sobe docker (sem blockscout), sobe o frontend do Evex
+│   ├── down.sh                        # derruba tudo que up.sh subiu
+│   ├── blockscout-up.sh               # sobe só o Blockscout (profile "blockscout"), sob demanda
+│   └── blockscout-down.sh             # derruba só o Blockscout
+├── contracts/
+│   ├── TestERC20.sol                  # wrapper sobre OZ ERC20 com mint() público
+│   ├── TestERC721.sol                 # wrapper sobre OZ ERC721 com safeMint() público
+│   ├── TestERC1155.sol                # wrapper sobre OZ ERC1155 com mint()/mintBatch() públicos
+│   └── TestEventEmitter.sol           # contrato customizado, eventos não-padrão
+├── deploy/
+│   └── 01_deploy_test_contracts.ts    # script a colar em packages/hardhat/deploy/ do scaffold-eth-2
+├── seed/
+│   ├── register-contracts.ts          # chama POST /v1/contracts + /abi no Evex após o deploy
+│   └── emit-events.ts                 # dispara mint/safeMint/mintBatch/createWidget/etc. via ethers (substitui a UI /debug, DEC-059)
+├── blockscout/
+│   ├── README.md                      # receita manual completa (build, fix de permissão, subir, testar)
+│   ├── override-local-build.yml       # override de imagem/porta usado pelo docker-compose.yml da raiz
+│   └── verify-contracts.ts            # verifica contratos via API v2 real (sem rocketh-verify)
+└── blockscout-stub/
+    └── server.ts                      # stub HTTP alternativo (mais leve, não testa o Blockscout de verdade)
+```
+
+## Regras
+
+- Nada aqui é consumido em tempo de execução pelo `backend/` ou `frontend/` — é infraestrutura de
+  apoio, rodada manualmente/via script pelo desenvolvedor quando for testar/demonstrar o Evex.
+- Contratos aqui são deliberadamente simples e sem controle de acesso (`mint` público, sem `Ownable`)
+  — é ambiente de teste, não reflete padrão de contrato de produção.
+- `network` do lado do Evex para tudo que vier daqui é sempre `TESTNET`.
+- Mesma regra de idioma do resto do repo: identificadores em inglês, comentários/KDoc/Solidity NatSpec
+  em português.
+- Backend do Evex nunca entra no `docker-compose.yml` deste módulo (de propósito — mantém debug/
+  hot-reload pela IDE). Não rodar `backend/docker-compose.yml` junto com este arquivo — os dois
+  publicam a porta 5432 do Postgres, colidem.

@@ -1,0 +1,7 @@
+name: id
+in: path
+required: true
+description: Identificador interno da configuração de webhook.
+schema:
+  type: string
+  format: uuid

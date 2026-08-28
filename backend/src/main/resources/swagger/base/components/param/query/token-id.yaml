@@ -1,0 +1,6 @@
+name: tokenId
+in: query
+required: false
+description: "Filtra saldos por tokenId (ex.: ERC1155/ERC721). Omitir = todos os tokenIds (inclusive não aplicável/ERC20)."
+schema:
+  type: string

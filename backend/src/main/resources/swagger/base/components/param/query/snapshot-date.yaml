@@ -1,0 +1,7 @@
+name: date
+in: query
+required: true
+description: "Data do snapshot consultado (ISO-8601, ex.: 2026-08-23)."
+schema:
+  type: string
+  format: date

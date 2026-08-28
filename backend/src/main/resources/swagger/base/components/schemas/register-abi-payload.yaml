@@ -1,0 +1,24 @@
+type: object
+description: >-
+  Corpo do cadastro de uma nova versão de ABI para um contrato monitorado. A ABI chega como JSON puro
+  (texto), não multipart — "upload de arquivo" na UI é o frontend lendo o arquivo local e mandando o
+  conteúdo neste mesmo campo.
+required:
+  - source
+properties:
+  abi:
+    type: string
+    nullable: true
+    description: >-
+      Conteúdo do ABI (JSON de eventos/funções do contrato), como texto. Obrigatório só para
+      `source=UPLOAD_FILE`/`UPLOAD_TEXT`; ignorado para `BLOCKSCOUT` (busca no Blockscout configurado)
+      e `AUTO_DETECTED` (usa a ABI built-in do template de interface padrão detectado).
+  source:
+    $ref: "../enum/abi-source.yaml"
+  storage:
+    $ref: "../enum/abi-storage-type.yaml"
+  validFromBlock:
+    type: integer
+    format: int64
+    default: 0
+    description: "Primeiro bloco (inclusive) em que esta versão passa a valer. Default 0 (genesis) quando omitido."

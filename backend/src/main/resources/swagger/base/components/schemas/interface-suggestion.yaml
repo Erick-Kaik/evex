@@ -1,0 +1,23 @@
+type: object
+description: Sugestão de interface padrão (ERC20/ERC721/ERC1155) pra um contrato, comparando `topic0`s observados contra os templates built-in (doc §4.5).
+required:
+  - templateName
+  - level
+  - matchedTopic0s
+  - missingTopic0s
+properties:
+  templateName:
+    type: string
+    description: "Nome do template (ERC20, ERC721 ou ERC1155)."
+  level:
+    $ref: "../enum/detection-level.yaml"
+  matchedTopic0s:
+    type: array
+    items:
+      type: string
+    description: "`topic0`s do template que foram observados no contrato."
+  missingTopic0s:
+    type: array
+    items:
+      type: string
+    description: "`topic0`s do template que não foram observados (vazio quando `level = FULL`)."

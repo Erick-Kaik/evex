@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de cadastro de uma nova versão de ABI.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/register-abi-payload.yaml"

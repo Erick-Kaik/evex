@@ -1,0 +1,11 @@
+description: Página de configurações de webhook.
+allOf:
+  - $ref: "./page-metadata.yaml"
+  - type: object
+    required:
+      - content
+    properties:
+      content:
+        type: array
+        items:
+          $ref: "./webhook-config.yaml"

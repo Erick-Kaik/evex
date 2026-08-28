@@ -1,0 +1,24 @@
+type: object
+description: Metadados de paginação, compostos junto com o `content` específico de cada recurso.
+required:
+  - page
+  - size
+  - totalElements
+  - totalPages
+properties:
+  page:
+    type: integer
+    format: int32
+    description: Página atual (0-indexed).
+  size:
+    type: integer
+    format: int32
+    description: Tamanho da página solicitado.
+  totalElements:
+    type: integer
+    format: int64
+    description: Total de itens em todas as páginas.
+  totalPages:
+    type: integer
+    format: int32
+    description: Total de páginas.

@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de cadastro de contrato monitorado.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/create-contract-payload.yaml"

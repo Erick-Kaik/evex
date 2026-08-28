@@ -1,0 +1,4 @@
+type: array
+description: Versões de ABI de um contrato monitorado, ordenadas por `validFromBlock` ascendente.
+items:
+  $ref: "./contract-abi.yaml"

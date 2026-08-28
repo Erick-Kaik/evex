@@ -1,0 +1,45 @@
+type: object
+description: >-
+  Corpo do cadastro de uma nova configuração de monitoramento de saldo. Combinação de campos válida
+  por `behavior`: `TRANSFER` exige `fromParam`/`toParam` preenchidos e `walletParam` ausente;
+  `CREDIT`/`DEBIT`/`DELTA` exigem `walletParam` preenchido e `fromParam`/`toParam` ausentes. `active`
+  não faz parte deste payload — toda configuração nova nasce ativa no servidor.
+required:
+  - contractAddress
+  - network
+  - eventName
+  - behavior
+  - valueParam
+properties:
+  contractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço do contrato monitorado cujos eventos alimentam esta configuração.
+  network:
+    $ref: "../enum/network.yaml"
+  eventName:
+    type: string
+    minLength: 1
+    description: "Nome do evento decodificado que dispara esta configuração (ex.: Transfer)."
+  behavior:
+    $ref: "../enum/balance-behavior.yaml"
+  walletParam:
+    type: string
+    nullable: true
+    description: "Nome do parâmetro do evento que carrega a carteira afetada. Obrigatório para CREDIT/DEBIT/DELTA; ausente para TRANSFER."
+  fromParam:
+    type: string
+    nullable: true
+    description: "Nome do parâmetro de origem da transferência. Obrigatório só para TRANSFER."
+  toParam:
+    type: string
+    nullable: true
+    description: "Nome do parâmetro de destino da transferência. Obrigatório só para TRANSFER."
+  valueParam:
+    type: string
+    minLength: 1
+    description: Nome do parâmetro do evento que carrega o montante/delta a aplicar no saldo.
+  tokenIdParam:
+    type: string
+    nullable: true
+    description: "Nome do parâmetro do evento que carrega o tokenId (ex.: ERC1155/ERC721). `null` = não aplicável (ex.: ERC20)."
