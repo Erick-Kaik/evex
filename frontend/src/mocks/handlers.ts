@@ -1,0 +1,337 @@
+/**
+ * Handlers do MSW pro modo mock (`npm run dev:mock`). Cada rota da API do Evex responde a partir do
+ * `db` em memória (`./db.ts`) — mutações (`POST`/`PATCH`) alteram o `db`, então a UI parece viva.
+ * Também mocka o `control-panel` (aba "Demonstração").
+ *
+ * Não faz parte do produto.
+ */
+import { http, HttpResponse, delay } from 'msw'
+import type {
+  BalanceMonitorConfig,
+  Contract,
+  ContractAbi,
+  CreateBalanceMonitorPayload,
+  CreateContractPayload,
+  CreateWebhookPayload,
+  Event as IndexedEvent,
+  RegisterAbiPayload,
+  UpdateBalanceMonitorStatusPayload,
+  UpdateContractStatusPayload,
+  UpdateWebhookStatusPayload,
+  WebhookConfig,
+} from '../api/api'
+import {
+  ADDR,
+  blockscoutVerified,
+  db,
+  eventCatalogs,
+  helpers,
+  interfaceSuggestions,
+} from './db'
+
+const CONTROL_PANEL = 'http://localhost:8899'
+
+/** Página no formato do backend (`{ page, size, totalElements, totalPages, content }`). */
+function page<T>(items: T[], url: URL) {
+  const p = Number(url.searchParams.get('page') ?? 0)
+  const s = Number(url.searchParams.get('size') ?? 20)
+  const start = p * s
+  const content = items.slice(start, start + s)
+  return { page: p, size: s, totalElements: items.length, totalPages: Math.max(1, Math.ceil(items.length / s)), content }
+}
+
+const lower = (v: string | null) => (v ?? '').toLowerCase()
+const findContract = (address: string) => db.contracts.find((c) => c.address.toLowerCase() === address.toLowerCase())
+const notFound = (code = 'NOT_FOUND', message = 'Não encontrado') =>
+  HttpResponse.json({ code, message, timestamp: new Date().toISOString() }, { status: 404 })
+
+export const handlers = [
+  // ---------------- Contratos ----------------
+
+  http.get('*/v1/contracts', async ({ request }) => {
+    await delay(120)
+    const url = new URL(request.url)
+    const network = url.searchParams.get('network')
+    let list = db.contracts
+    if (network) list = list.filter((c) => c.network === network)
+    return HttpResponse.json(page(list, url))
+  }),
+
+  http.post('*/v1/contracts', async ({ request }) => {
+    const body = (await request.json()) as CreateContractPayload
+    if (findContract(body.address)) {
+      return HttpResponse.json({ code: 'CONTRACT_ALREADY_EXISTS', message: 'Contrato já cadastrado', timestamp: new Date().toISOString() }, { status: 409 })
+    }
+    const created: Contract = {
+      id: helpers.uid(),
+      address: body.address.toLowerCase(),
+      name: body.name,
+      description: body.description,
+      version: body.version,
+      network: body.network,
+      status: 'ACTIVE',
+    }
+    db.contracts.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+
+  http.get('*/v1/contracts/:address', async ({ params }) => {
+    const c = findContract(String(params.address))
+    return c ? HttpResponse.json(c) : notFound('CONTRACT_NOT_FOUND', 'Contrato não encontrado')
+  }),
+
+  http.patch('*/v1/contracts/:address', async ({ params, request }) => {
+    const c = findContract(String(params.address))
+    if (!c) return notFound('CONTRACT_NOT_FOUND')
+    const body = (await request.json()) as { name: string; description?: string; version?: string }
+    Object.assign(c, body)
+    return HttpResponse.json(c)
+  }),
+
+  http.patch('*/v1/contracts/:address/status', async ({ params, request }) => {
+    const c = findContract(String(params.address))
+    if (!c) return notFound('CONTRACT_NOT_FOUND')
+    const body = (await request.json()) as UpdateContractStatusPayload
+    c.status = body.status
+    return HttpResponse.json(c)
+  }),
+
+  // ---------------- ABI ----------------
+
+  http.get('*/v1/contracts/:address/abi', async ({ params }) => {
+    const addr = String(params.address).toLowerCase()
+    if (!findContract(addr)) return notFound('CONTRACT_NOT_FOUND')
+    return HttpResponse.json(db.abis.filter((a) => a.contractAddress.toLowerCase() === addr))
+  }),
+
+  http.post('*/v1/contracts/:address/abi', async ({ params, request }) => {
+    const addr = String(params.address).toLowerCase()
+    const c = findContract(addr)
+    if (!c) return notFound('CONTRACT_NOT_FOUND')
+    const body = (await request.json()) as RegisterAbiPayload
+    if (body.source === 'UPLOAD_TEXT' && body.abi && body.abi.trim().startsWith('{')) {
+      return HttpResponse.json({ code: 'INVALID_ABI_CONTENT', message: 'ABI precisa ser um array JSON de fragmentos', timestamp: new Date().toISOString() }, { status: 400 })
+    }
+    const abi: ContractAbi = {
+      id: helpers.uid(),
+      contractAddress: addr,
+      network: c.network,
+      source: body.source,
+      storageType: body.storage ?? 'DATABASE',
+      validFromBlock: body.validFromBlock ?? 0,
+      createdAt: new Date().toISOString(),
+    }
+    db.abis.push(abi)
+    // "redecode" instantâneo: os eventos raw desse contrato viram decodificados.
+    const catalog = eventCatalogs[addr]
+    if (catalog?.length) {
+      db.events
+        .filter((e) => e.contractAddress.toLowerCase() === addr && !e.decoded)
+        .forEach((e) => {
+          const evt = catalog[Math.floor(Math.random() * catalog.length)]
+          e.decoded = true
+          e.eventName = evt.name
+          e.decodedParameters = Object.fromEntries(
+            evt.inputs.map((i) => [i.name, i.type === 'address' ? helpers.WALLET.carol : i.type.includes('[]') ? ['1', '2'] : i.type === 'bool' ? false : '1000']),
+          )
+        })
+    }
+    return HttpResponse.json(abi, { status: 201 })
+  }),
+
+  http.get('*/v1/contracts/:address/abi/suggestions', async ({ params }) => {
+    const addr = String(params.address).toLowerCase()
+    return HttpResponse.json(interfaceSuggestions[addr] ?? [])
+  }),
+
+  http.get('*/v1/contracts/:address/events', async ({ params }) => {
+    const addr = String(params.address).toLowerCase()
+    if (!findContract(addr)) return notFound('CONTRACT_NOT_FOUND')
+    return HttpResponse.json(eventCatalogs[addr] ?? [])
+  }),
+
+  // ---------------- Discovery ----------------
+
+  http.get('*/v1/discovery/blockscout/contracts', async () => HttpResponse.json(blockscoutVerified)),
+
+  // ---------------- Eventos + redecode ----------------
+
+  http.get('*/v1/events', async ({ request }) => {
+    await delay(120)
+    const url = new URL(request.url)
+    const ca = lower(url.searchParams.get('contractAddress'))
+    const name = url.searchParams.get('eventName')
+    const fromBlock = url.searchParams.get('fromBlock')
+    const toBlock = url.searchParams.get('toBlock')
+    let list: IndexedEvent[] = [...db.events].sort((a, b) => b.blockNumber - a.blockNumber)
+    if (ca) list = list.filter((e) => e.contractAddress.toLowerCase() === ca)
+    if (name) list = list.filter((e) => e.eventName === name)
+    if (fromBlock) list = list.filter((e) => e.blockNumber >= Number(fromBlock))
+    if (toBlock) list = list.filter((e) => e.blockNumber <= Number(toBlock))
+    return HttpResponse.json(page(list, url))
+  }),
+
+  http.get('*/v1/redecode/status', async () =>
+    HttpResponse.json({ running: false, processedCount: 0, decodedCount: 0, remainingCount: 0 }),
+  ),
+  http.post('*/v1/redecode', async () =>
+    HttpResponse.json({ running: false, processedCount: db.events.length, decodedCount: db.events.filter((e) => e.decoded).length, remainingCount: 0 }),
+  ),
+
+  // ---------------- Saldos ----------------
+
+  http.get('*/v1/balance-monitors', async ({ request }) => HttpResponse.json(page(db.monitors, new URL(request.url)))),
+
+  http.post('*/v1/balance-monitors', async ({ request }) => {
+    const body = (await request.json()) as CreateBalanceMonitorPayload
+    const created: BalanceMonitorConfig = { id: helpers.uid(), ...body, active: true, createdAt: new Date().toISOString() }
+    db.monitors.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+
+  http.get('*/v1/balance-monitors/backfill/status', async () =>
+    HttpResponse.json({ running: false, configId: undefined, processedCount: 0, deltaCount: 0, remainingCount: 0, caughtUp: true }),
+  ),
+
+  http.post('*/v1/balance-monitors/:id/backfill', async ({ params }) => {
+    const m = db.monitors.find((x) => x.id === params.id)
+    if (m && !db.balances.some((b) => b.contractAddress === m.contractAddress && b.walletAddress === helpers.WALLET.carol)) {
+      db.balances.push({ walletAddress: helpers.WALLET.carol, contractAddress: m.contractAddress, network: m.network, balance: '73000', updatedAt: new Date().toISOString() })
+    }
+    return HttpResponse.json({ running: false, configId: params.id, processedCount: 42, deltaCount: 42, remainingCount: 0, caughtUp: true }, { status: 202 })
+  }),
+
+  http.get('*/v1/balance-monitors/:id', async ({ params }) => {
+    const m = db.monitors.find((x) => x.id === params.id)
+    return m ? HttpResponse.json(m) : notFound('BALANCE_MONITOR_NOT_FOUND')
+  }),
+
+  http.patch('*/v1/balance-monitors/:id', async ({ params, request }) => {
+    const m = db.monitors.find((x) => x.id === params.id)
+    if (!m) return notFound('BALANCE_MONITOR_NOT_FOUND')
+    Object.assign(m, await request.json())
+    return HttpResponse.json(m)
+  }),
+
+  http.patch('*/v1/balance-monitors/:id/status', async ({ params, request }) => {
+    const m = db.monitors.find((x) => x.id === params.id)
+    if (!m) return notFound('BALANCE_MONITOR_NOT_FOUND')
+    m.active = ((await request.json()) as UpdateBalanceMonitorStatusPayload).active
+    return HttpResponse.json(m)
+  }),
+
+  http.get('*/v1/balances', async ({ request }) => {
+    const url = new URL(request.url)
+    const w = lower(url.searchParams.get('walletAddress'))
+    const ca = lower(url.searchParams.get('contractAddress'))
+    let list = db.balances
+    if (w) list = list.filter((b) => b.walletAddress.toLowerCase() === w)
+    if (ca) list = list.filter((b) => b.contractAddress.toLowerCase() === ca)
+    return HttpResponse.json(page(list, url))
+  }),
+
+  http.get('*/v1/balances/history', async ({ request }) => {
+    const url = new URL(request.url)
+    const date = url.searchParams.get('date') ?? helpers.NOW.slice(0, 10)
+    const w = lower(url.searchParams.get('walletAddress'))
+    const ca = lower(url.searchParams.get('contractAddress'))
+    let list = db.balances
+    if (w) list = list.filter((b) => b.walletAddress.toLowerCase() === w)
+    if (ca) list = list.filter((b) => b.contractAddress.toLowerCase() === ca)
+    const snapshots = list.map((b) => ({
+      walletAddress: b.walletAddress,
+      contractAddress: b.contractAddress,
+      network: b.network,
+      tokenId: b.tokenId,
+      balance: String(Math.round(Number(b.balance) * 0.8)),
+      snapshotDate: date,
+      blockNumber: 150000,
+    }))
+    return HttpResponse.json(page(snapshots, url))
+  }),
+
+  // ---------------- Webhooks ----------------
+
+  http.get('*/v1/webhooks', async ({ request }) => HttpResponse.json(page(db.webhooks, new URL(request.url)))),
+
+  http.post('*/v1/webhooks', async ({ request }) => {
+    const body = (await request.json()) as CreateWebhookPayload
+    const created: WebhookConfig = { id: helpers.uid(), ...body, filters: body.filters ?? [], active: true, createdAt: new Date().toISOString() }
+    db.webhooks.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+
+  http.get('*/v1/webhooks/:id/deliveries', async ({ params, request }) => {
+    const list = db.deliveries.filter((d) => d.webhookConfigId === params.id)
+    return HttpResponse.json(page(list, new URL(request.url)))
+  }),
+
+  http.get('*/v1/webhooks/:id', async ({ params }) => {
+    const w = db.webhooks.find((x) => x.id === params.id)
+    return w ? HttpResponse.json(w) : notFound('WEBHOOK_NOT_FOUND')
+  }),
+
+  http.patch('*/v1/webhooks/:id', async ({ params, request }) => {
+    const w = db.webhooks.find((x) => x.id === params.id)
+    if (!w) return notFound('WEBHOOK_NOT_FOUND')
+    Object.assign(w, await request.json())
+    return HttpResponse.json(w)
+  }),
+
+  http.patch('*/v1/webhooks/:id/status', async ({ params, request }) => {
+    const w = db.webhooks.find((x) => x.id === params.id)
+    if (!w) return notFound('WEBHOOK_NOT_FOUND')
+    w.active = ((await request.json()) as UpdateWebhookStatusPayload).active
+    return HttpResponse.json(w)
+  }),
+
+  // ---------------- control-panel (aba "Demonstração") ----------------
+
+  http.get(`${CONTROL_PANEL}/health`, async () => HttpResponse.json({ ok: true, running: null })),
+
+  http.get(`${CONTROL_PANEL}/actions`, async () =>
+    HttpResponse.json([
+      { id: 'deploy', label: 'Deploy dos contratos de teste', description: 'Copia os .sol pro clone do scaffold-eth-2 e roda yarn deploy --tags TestContracts.', params: [], commandTemplate: 'cp contracts/*.sol <clone>/… && (cd <clone> && yarn deploy --tags TestContracts)' },
+      { id: 'emit-events', label: 'Disparar eventos de teste', description: 'Roda seed/emit-events.ts nos 4 contratos. ROUNDS repete o lote inteiro.', params: [{ name: 'rounds', label: 'Rounds', type: 'number', default: 1 }], commandTemplate: 'ROUNDS=1 npx tsx seed/emit-events.ts' },
+      { id: 'register-contracts', label: 'Registrar os 4 contratos no Evex', description: 'Roda seed/register-contracts.ts: POST /v1/contracts + POST /abi pros 4 de uma vez.', params: [], commandTemplate: 'EVEX_API_URL=http://localhost:8080 npx tsx seed/register-contracts.ts' },
+    ]),
+  ),
+
+  http.post(`${CONTROL_PANEL}/run/:id`, async ({ params, request }) => {
+    const body = (await request.json().catch(() => ({}))) as { rounds?: number }
+    const rounds = body.rounds ?? 1
+    const cmd = params.id === 'emit-events' ? `ROUNDS=${rounds} npx tsx seed/emit-events.ts` : `npx tsx seed/${params.id}.ts`
+    const lines = [
+      ...(params.id === 'emit-events'
+        ? Array.from({ length: rounds }, (_, r) => [
+            `Round ${r + 1}/${rounds} — disparando eventos...`,
+            '  ✔ TestERC20.mint', '  ✔ TestERC721.safeMint', '  ✔ TestERC1155.mint', '  ✔ TestEventEmitter.createWidget',
+          ]).flat()
+        : ['  ✔ ação concluída (mock)']),
+      'Pronto.',
+    ]
+    const stream = new ReadableStream({
+      async start(controller) {
+        const enc = new TextEncoder()
+        controller.enqueue(enc.encode(`event: started\ndata: ${JSON.stringify({ action: params.id, command: cmd })}\n\n`))
+        for (const line of lines) {
+          await delay(120)
+          controller.enqueue(enc.encode(`event: line\ndata: ${JSON.stringify(line)}\n\n`))
+        }
+        await delay(120)
+        controller.enqueue(enc.encode(`event: done\ndata: ${JSON.stringify({ exitCode: 0 })}\n\n`))
+        controller.close()
+      },
+    })
+    return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } })
+  }),
+
+  // Streams SSE de status: o `EventSource` nativo não é interceptável pelo MSW — deixamos falhar
+  // e o `useServerSentStatus` cai pro polling dos endpoints REST acima (comportamento documentado).
+  http.get(`${CONTROL_PANEL}/run/*`, () => new HttpResponse(null, { status: 404 })),
+
+  // Evita ruído: qualquer outra rota do control-panel volta 404 silencioso.
+  http.all(`${CONTROL_PANEL}/*`, () => new HttpResponse(null, { status: 404 })),
+]
+
+export { ADDR }

@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   FormControlLabel,
+  Link,
   Paper,
   Radio,
   RadioGroup,
@@ -21,6 +22,8 @@ import type { AssetBalance, AssetBalanceSnapshot, Network } from '../../api/api'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { NetworkSelect } from '../../components/NetworkSelect'
 import { Pagination } from '../../components/Pagination'
+import { ContractAutocomplete } from '../../components/ContractAutocomplete'
+import type { ContractRef } from '../../components/ContractAutocomplete'
 import type { BalanceFilters } from './useBalances'
 import { useBalanceHistory, useBalances } from './useBalances'
 
@@ -41,9 +44,16 @@ export function BalanceQuerySection() {
   const [mode, setMode] = useState<Mode>('current')
   const [walletAddress, setWalletAddress] = useState('')
   const [contractAddress, setContractAddress] = useState('')
+  const [contractRef, setContractRef] = useState<ContractRef | null>(null)
+  // Por padrão o contrato vem da lista de monitorados; `manualContract` libera digitar um endereço
+  // não cadastrado (e, aí sim, escolher a rede à mão).
+  const [manualContract, setManualContract] = useState(false)
   const [tokenId, setTokenId] = useState('')
   const [network, setNetwork] = useState<Network | ''>('')
   const [date, setDate] = useState('')
+
+  const effectiveContractAddress = manualContract ? contractAddress : (contractRef?.address ?? '')
+  const effectiveNetwork: Network | '' = manualContract ? network : (contractRef?.network ?? '')
 
   const [filters, setFilters] = useState<BalanceFilters>({})
   const [appliedDate, setAppliedDate] = useState<string | undefined>(undefined)
@@ -58,9 +68,9 @@ export function BalanceQuerySection() {
     event.preventDefault()
     setFilters({
       walletAddress: walletAddress || undefined,
-      contractAddress: contractAddress || undefined,
+      contractAddress: effectiveContractAddress || undefined,
       tokenId: tokenId || undefined,
-      network: network === '' ? undefined : network,
+      network: effectiveNetwork === '' ? undefined : effectiveNetwork,
     })
     if (mode === 'history') {
       setAppliedDate(date || undefined)
@@ -93,15 +103,34 @@ export function BalanceQuerySection() {
             slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
             sx={{ width: 240 }}
           />
-          <TextField
-            label="Contrato"
-            size="small"
-            value={contractAddress}
-            onChange={(event) => setContractAddress(event.target.value)}
-            placeholder="0x..."
-            slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
-            sx={{ width: 240 }}
-          />
+          {manualContract ? (
+            <Stack sx={{ gap: 0.25 }}>
+              <TextField
+                label="Contrato"
+                size="small"
+                value={contractAddress}
+                onChange={(event) => setContractAddress(event.target.value)}
+                placeholder="0x..."
+                slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+                sx={{ width: 240 }}
+              />
+              <Link component="button" type="button" variant="caption" onClick={() => setManualContract(false)}>
+                escolher da lista
+              </Link>
+            </Stack>
+          ) : (
+            <Stack sx={{ gap: 0.25 }}>
+              <ContractAutocomplete
+                value={contractRef}
+                onChange={setContractRef}
+                label="Contrato"
+                sx={{ width: 260 }}
+              />
+              <Link component="button" type="button" variant="caption" onClick={() => setManualContract(true)}>
+                digitar endereço manualmente
+              </Link>
+            </Stack>
+          )}
           <TextField
             label="Token ID"
             size="small"
@@ -109,7 +138,7 @@ export function BalanceQuerySection() {
             onChange={(event) => setTokenId(event.target.value)}
             sx={{ width: 140 }}
           />
-          <NetworkSelect value={network} allowEmpty onChange={setNetwork} />
+          {manualContract && <NetworkSelect value={network} allowEmpty onChange={setNetwork} />}
 
           {mode === 'history' && (
             <TextField

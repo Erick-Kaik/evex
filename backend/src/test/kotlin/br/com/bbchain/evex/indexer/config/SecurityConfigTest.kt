@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 /**
@@ -32,6 +33,19 @@ class SecurityConfigTest(
         mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk)
     }
 
+    /**
+     * E17 / DEC-078: o `JobStatusSseController` é `@RestController` manual (fora da spec-fonte), mas o
+     * `springdoc` monta o `/v3/api-docs` a partir das anotações em runtime — os 2 `/stream` têm que
+     * aparecer lá (com a `@Tag`/`@Operation` do controller) pra continuarem visíveis no Swagger UI.
+     */
+    @Test
+    fun `v3 api-docs lists the 2 SSE stream paths (springdoc via annotations)`() {
+        mockMvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.paths['/v1/redecode/status/stream'].get").exists())
+            .andExpect(jsonPath("$.paths['/v1/balance-monitors/backfill/status/stream'].get").exists())
+    }
+
     @Test
     fun `GET swagger-ui index returns 200, no login required`() {
         mockMvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk)
@@ -40,5 +54,21 @@ class SecurityConfigTest(
     @Test
     fun `GET a real v1 endpoint returns 200, no login required`() {
         mockMvc.perform(get("/v1/contracts")).andExpect(status().isOk)
+    }
+
+    /**
+     * E17 / DEC-078: os 2 streams SSE são servidos por um `@RestController` **manual**
+     * ([br.com.bbchain.evex.indexer.adapters.inbound.api.sse.JobStatusSseController]) — fora do fluxo
+     * OpenAPI. Confirma que caem no `permitAll()` do padrão `/v1` como qualquer outra rota (PoC sem
+     * auth), e não numa regra restritiva do `SecurityFilterChain`.
+     */
+    @Test
+    fun `GET redecode status stream returns 200, no login required`() {
+        mockMvc.perform(get("/v1/redecode/status/stream")).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `GET balance backfill status stream returns 200, no login required`() {
+        mockMvc.perform(get("/v1/balance-monitors/backfill/status/stream")).andExpect(status().isOk)
     }
 }

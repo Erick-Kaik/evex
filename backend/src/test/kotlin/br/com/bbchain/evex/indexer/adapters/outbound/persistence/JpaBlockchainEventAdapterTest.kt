@@ -314,6 +314,75 @@ class JpaBlockchainEventAdapterTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `findDecodedForBackfill returns only decoded rows of the given contract-network-eventName, up to the watermark, ordered by block then logIndex`() {
+        val addr = "0x444444444444444444444444444444444444444d"
+        adapter.saveAll(
+            listOf(
+                newEvent(address = addr, blockNumber = 5, logIndex = 1, txHash = "0xb1", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 5, logIndex = 0, txHash = "0xb2", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 8, logIndex = 0, txHash = "0xb3", decoded = true, eventName = "Transfer"),
+                // acima da marca d'água — não entra
+                newEvent(address = addr, blockNumber = 20, logIndex = 0, txHash = "0xb4", decoded = true, eventName = "Transfer"),
+                // eventName diferente — não entra
+                newEvent(address = addr, blockNumber = 6, logIndex = 0, txHash = "0xb5", decoded = true, eventName = "Approval"),
+                // ainda raw — não entra
+                newEvent(address = addr, blockNumber = 7, logIndex = 0, txHash = "0xb6", decoded = false),
+                // outro contrato — não entra
+                newEvent(address = "0x555555555555555555555555555555555555555e", blockNumber = 6, logIndex = 0, txHash = "0xb7", decoded = true, eventName = "Transfer"),
+            ),
+        )
+
+        val page = adapter.findDecodedForBackfill(addr, Network.TESTNET, "Transfer", afterBlock = -1, afterLogIndex = -1, maxBlock = 10, limit = 50)
+
+        assertThat(page.map { it.txHash }).containsExactly("0xb2", "0xb1", "0xb3")
+    }
+
+    @Test
+    fun `findDecodedForBackfill resumes strictly after the tuple cursor (block, logIndex)`() {
+        val addr = "0x666666666666666666666666666666666666666f"
+        adapter.saveAll(
+            listOf(
+                newEvent(address = addr, blockNumber = 5, logIndex = 0, txHash = "0xc1", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 5, logIndex = 1, txHash = "0xc2", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 5, logIndex = 2, txHash = "0xc3", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 9, logIndex = 0, txHash = "0xc4", decoded = true, eventName = "Transfer"),
+            ),
+        )
+
+        val page = adapter.findDecodedForBackfill(addr, Network.TESTNET, "Transfer", afterBlock = 5, afterLogIndex = 1, maxBlock = 100, limit = 50)
+
+        assertThat(page.map { it.txHash }).containsExactly("0xc3", "0xc4")
+    }
+
+    @Test
+    fun `findDecodedForBackfill honors the batch limit`() {
+        val addr = "0x777777777777777777777777777777777777777a"
+        adapter.saveAll(
+            (1..5L).map { newEvent(address = addr, blockNumber = it, logIndex = 0, txHash = "0xd$it", decoded = true, eventName = "Transfer") },
+        )
+
+        val page = adapter.findDecodedForBackfill(addr, Network.TESTNET, "Transfer", afterBlock = -1, afterLogIndex = -1, maxBlock = 100, limit = 2)
+
+        assertThat(page.map { it.blockNumber }).containsExactly(1L, 2L)
+    }
+
+    @Test
+    fun `countDecodedForBackfill counts the same predicate as findDecodedForBackfill`() {
+        val addr = "0x888888888888888888888888888888888888888b"
+        adapter.saveAll(
+            listOf(
+                newEvent(address = addr, blockNumber = 3, logIndex = 0, txHash = "0xe1", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 4, logIndex = 0, txHash = "0xe2", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 50, logIndex = 0, txHash = "0xe3", decoded = true, eventName = "Transfer"),
+                newEvent(address = addr, blockNumber = 4, logIndex = 0, txHash = "0xe4", decoded = false),
+            ),
+        )
+
+        assertThat(adapter.countDecodedForBackfill(addr, Network.TESTNET, "Transfer", afterBlock = -1, afterLogIndex = -1, maxBlock = 10)).isEqualTo(2L)
+        assertThat(adapter.countDecodedForBackfill(addr, Network.TESTNET, "Transfer", afterBlock = 3, afterLogIndex = 0, maxBlock = 10)).isEqualTo(1L)
+    }
+
+    @Test
     fun `findDistinctTopic0s returns an empty set for a contract with no ingested events`() {
         val topics = adapter.findDistinctTopic0s("0x999999999999999999999999999999999999999f")
 

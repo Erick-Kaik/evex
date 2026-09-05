@@ -32,12 +32,20 @@ paths:
     $ref: "../paths/contract-abi.yaml"
   /v1/contracts/{address}/abi/suggestions:
     $ref: "../paths/contract-abi-suggestions.yaml"
+  /v1/contracts/{address}/events:
+    $ref: "../paths/contract-events.yaml"
   /v1/events:
     $ref: "../paths/events.yaml"
   /v1/redecode:
     $ref: "../paths/redecode.yaml"
   /v1/redecode/status:
     $ref: "../paths/redecode-status.yaml"
+  # GET /v1/redecode/status/stream e GET /v1/balance-monitors/backfill/status/stream (SSE,
+  # text/event-stream) NÃO ficam nesta spec de propósito (E17 / DEC-078): o openapi-generator não
+  # modela stream/SseEmitter e o front consome via EventSource nativo, não pelo cliente gerado. São
+  # o único @RestController manual do projeto — adapters/inbound/api/sse/JobStatusSseController.kt —
+  # e aparecem no Swagger UI via springdoc (que lê anotações em runtime). Payload do `data:` =
+  # mesmo DTO dos endpoints /status acima.
   /v1/discovery/blockscout/contracts:
     $ref: "../paths/blockscout-contracts.yaml"
   /v1/balance-monitors:
@@ -46,6 +54,10 @@ paths:
     $ref: "../paths/balance-monitor-detail.yaml"
   /v1/balance-monitors/{id}/status:
     $ref: "../paths/balance-monitor-status.yaml"
+  /v1/balance-monitors/backfill/status:
+    $ref: "../paths/balance-backfill-status.yaml"
+  /v1/balance-monitors/{id}/backfill:
+    $ref: "../paths/balance-monitor-backfill.yaml"
   /v1/balances:
     $ref: "../paths/balances.yaml"
   /v1/balances/history:

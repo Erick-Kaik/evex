@@ -53,6 +53,28 @@ Depois de clonado, seguir o `README.md` do próprio scaffold-eth-2 para instalar
 
 ## 3. Passo a passo (ponta a ponta)
 
+### 3.0.0 Pré-requisitos de Docker (WSL sem Docker Desktop)
+
+Os scripts usam `docker compose` (plugin v2). O Docker nativo do Ubuntu/WSL (pacote `docker.io`) **não
+traz o plugin** — sem ele, `docker compose up -d` cai no CLI cru e falha com
+`unknown shorthand flag: 'd' in -d`. Instalar uma vez:
+
+```bash
+sudo apt install docker-compose-v2        # provê `docker compose`
+sudo usermod -aG docker "$USER"            # rodar sem sudo (relogar depois)
+```
+
+Sem Docker Desktop o daemon não sobe sozinho a cada boot do WSL. Ou `sudo service docker start` quando
+precisar, ou habilitar systemd de vez em `/etc/wsl.conf`:
+
+```ini
+[boot]
+systemd=true
+```
+
+(depois `wsl --shutdown` no PowerShell). `up.sh`/`down.sh` checam as duas coisas e falham com mensagem
+clara se faltar.
+
 ### 3.0 Caminho rápido (recomendado) — `scripts/up.sh`
 
 Desde a DEC-059, `up.sh` sobe só o essencial (contratos + eventos de teste + Postgres do Evex +
@@ -90,11 +112,19 @@ duplica nada, só referencia — ver comentário no topo do arquivo). **Não** r
 
 ```bash
 cd local-env/local-env-scaffold-eth-2
-yarn chain
+yarn chain --hostname 0.0.0.0
 ```
 Estado é in-memory, zera a cada restart — e é o único pedaço que faz sentido ver rodando/interagir
 direto (logs de bloco, Ctrl+C manual). Dockerizar exigiria resolver `127.0.0.1` (host) vs.
 `host.docker.internal` (containers) na config do Hardhat, sem ganho real.
+
+**`--hostname 0.0.0.0` é obrigatório se você for subir o Blockscout** (`blockscout-up.sh`) ou rodar a
+suíte `e2e/`. Com Docker nativo no WSL (não mais Docker Desktop), o Blockscout roda em container e
+alcança o host pelo gateway da bridge (`host.docker.internal` → `host-gateway`); o `yarn chain`
+padrão escuta só em `127.0.0.1`, que o container **não** consegue alcançar — o Blockscout indexa zero
+blocos e o discovery quebra sem erro visível. `blockscout-up.sh` avisa quando detecta isso. Ver
+`docs/decisions.md` DEC-069. Só pro backend do Evex (que roda no host), `yarn chain` sem flag também
+serve.
 
 ### 3.2 O que o `up.sh` faz por baixo (detalhamento manual, se precisar depurar)
 
@@ -174,6 +204,47 @@ Fica fora do `up.sh` de propósito (DEC-059) — `seed/emit-events.ts` (seção 
 eventos sem precisar desse dev server no ar. Sobe em `http://localhost:3000` se quiser mesmo assim; a
 aba `/debug` gera botões automáticos pra cada função da ABI — `mint`/`safeMint`/`createWidget` etc. em
 qualquer um dos 4 contratos.
+
+### 3.8 Control-panel — aba "Demonstração" do frontend (E17)
+
+`control-panel/server.ts` sobe junto com o `up.sh` (background, `127.0.0.1:8899`, log em
+`.logs/evex-control-panel.log`). É o que a aba **"Demonstração"** do frontend chama pra rodar os
+scripts sem terminal: `deploy` (redeploy dos 4 contratos), `emit-events` (com `ROUNDS`),
+`register-contracts` (cadastra os 4 no Evex de uma vez).
+
+- `GET http://127.0.0.1:8899/actions` — lista os botões + o **comando exato** que cada um roda.
+- `POST http://127.0.0.1:8899/run/<id>` — dispara e faz stream do stdout via SSE.
+- Uma ação por vez (409 se já houver uma rodando).
+- Pro frontend mostrar a aba: `VITE_LOCALENV_CONTROL_URL=http://localhost:8899` (a aba some se a env
+  não estiver setada ou o serviço não responder).
+- **Não** é parte do produto — mesma família de `seed/*.ts`, roda só localmente (DEC-075).
+
+Rodar manualmente (ver output no terminal): `cd local-env && npx tsx control-panel/server.ts`.
+
+### 3.9 Cofre upgradeável (proxy UUPS/ERC1967) — cenário 11 do guia de uso
+
+`contracts/TestUpgradeableVaultV1.sol`/`V2.sol`/`Proxy.sol` + 2 scripts validam de ponta a ponta o
+suporte do Evex a proxy upgradável (ABI versionada por faixa de blocos, `docs/guia-de-uso.md` §11) —
+diferente dos outros 4 contratos de teste, este exige uma sequência de 2 passos porque o upgrade
+acontece **depois** do deploy, não junto:
+
+```bash
+cd local-env
+npx tsx seed/deploy-upgradeable-vault.ts     # implementação V1 + proxy inicializado + 2 deposit()
+# ... cadastre o contrato (endereço do proxy) e a ABI de V1 no Evex, "Bloco inicial de validade = 0" ...
+npx tsx seed/upgrade-upgradeable-vault.ts    # implementação V2 + upgradeToAndCall + deposit()+withdraw()
+# ... cadastre a ABI de V2 com "Bloco inicial de validade = <bloco impresso pelo script>" ...
+```
+
+Cada script imprime o endereço/ABI/bloco exatos a usar no passo seguinte (a ABI também é salva em
+`.logs/vault-v1-abi.json`/`vault-v2-abi.json` — cole o conteúdo do arquivo na tela "Cadastrar ABI"),
+e `deploy-upgradeable-vault.ts` grava o endereço do proxy em `.logs/upgradeable-vault.json`, que
+`upgrade-upgradeable-vault.ts` lê sozinho (sem precisar copiar o endereço na mão entre os 2 passos).
+Requer que `yarn deploy --tags TestContracts` (seção 3.2, ou a ação "Deploy dos contratos de teste" do
+control-panel) já tenha rodado ao menos uma vez — é o que compila os 3 `.sol` novos.
+
+Também disponível pela aba "Demonstração" (seção 3.8): ações "Deploy do cofre upgradeável (V1)" e
+"Upgrade do cofre pra V2".
 
 ### Máquina com pouco fôlego pra tudo isso junto?
 

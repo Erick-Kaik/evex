@@ -176,6 +176,41 @@ class BalanceMonitorsApiTest(
         ).andExpect(status().isNotFound)
     }
 
+    @Test
+    fun `POST backfill returns 202 with the global status snapshot`() {
+        val id = createAndExtractId()
+
+        mockMvc.perform(post("/v1/balance-monitors/$id/backfill"))
+            .andExpect(status().isAccepted)
+            .andExpect(jsonPath("$.running").exists())
+            .andExpect(jsonPath("$.processedCount").exists())
+            .andExpect(jsonPath("$.remainingCount").exists())
+            .andExpect(jsonPath("$.caughtUp").exists())
+    }
+
+    @Test
+    fun `POST backfill on a non-existent id returns 404`() {
+        mockMvc.perform(post("/v1/balance-monitors/${UUID.randomUUID()}/backfill"))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("BALANCE_MONITOR_CONFIG_NOT_FOUND"))
+    }
+
+    @Test
+    fun `POST backfill with a malformed id returns 400 in the ApiError shape`() {
+        mockMvc.perform(post("/v1/balance-monitors/not-a-uuid/backfill"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+    }
+
+    @Test
+    fun `GET global backfill status returns 200`() {
+        mockMvc.perform(get("/v1/balance-monitors/backfill/status"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.running").exists())
+            .andExpect(jsonPath("$.remainingCount").exists())
+            .andExpect(jsonPath("$.caughtUp").exists())
+    }
+
     private fun createAndExtractId(): String {
         val response = mockMvc.perform(
             post("/v1/balance-monitors")

@@ -67,6 +67,32 @@ class BalanceProjectionService(
     }
 
     /**
+     * Backfill de saldo sob demanda (E14, DEC-066): reprojeta uma página de eventos **já
+     * decodificados** contra **uma única** [config] — nunca [projectBatch], que faz
+     * `configs.findActive()` e reaplicaria os deltas de outras configs já existentes do mesmo par
+     * `(contractAddress, eventName)` (contagem dupla). Filtra `event.decoded && event.eventName ==
+     * config.eventName` (o `contractAddress` já vem filtrado da query de [config
+     * .backfillCursorBlock] pra frente), acumula via o mesmo [applySafely] de [projectBatch] (reusa
+     * tratamento de erro + [warnLogDeduper]), 1 chamada `AssetBalancePort.applyDeltas`.
+     *
+     * Sem `@Transactional` próprio — roda dentro da transação de `BalanceBackfillBatchProcessor
+     * .processBatch`, a mesma que avança o cursor de progresso da config: ou os deltas do lote e o
+     * cursor avançam juntos, ou nada avança. Retorna o nº de deltas aplicados (pra contador de
+     * status).
+     */
+    fun projectHistoryForConfig(events: List<BlockchainEvent>, config: BalanceMonitorConfig): Int {
+        val deltas = mutableListOf<BalanceDelta>()
+        for (event in events) {
+            if (!event.decoded || event.eventName != config.eventName) continue
+            deltas += applySafely(config, event)
+        }
+        if (deltas.isNotEmpty()) {
+            balances.applyDeltas(deltas)
+        }
+        return deltas.size
+    }
+
+    /**
      * Achado da revisão da E7 (`reviewer`): `BalanceBehaviorStrategy` (DEC-034) só é garantidamente
      * "nunca lança exceção" para parâmetro **ausente** (`null`) — `toBalanceAmount()` (achado #1)
      * lança `IllegalArgumentException` para um parâmetro **presente mas de tipo incompatível** (ex.:

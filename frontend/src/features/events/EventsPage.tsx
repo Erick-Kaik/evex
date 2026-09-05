@@ -1,10 +1,12 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+import { Link as RouterLink } from 'react-router'
 import {
   Box,
   Button,
   Chip,
   Collapse,
+  Link,
   Paper,
   Stack,
   Table,
@@ -14,24 +16,40 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { CopyableHash } from '../../components/CopyableHash'
 import { Pagination } from '../../components/Pagination'
+import { ContractAutocomplete } from '../../components/ContractAutocomplete'
+import type { ContractRef } from '../../components/ContractAutocomplete'
+import { EventPicker } from '../../components/EventPicker'
+import { useMonitoredContractsList } from '../../components/contractCatalog'
 import { DecodedParamValue } from './DecodedParamValue'
 import type { EventFilters } from './useEvents'
 import { useEvents } from './useEvents'
 
 const PAGE_SIZE = 20
 
+function shortenAddress(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 8)}…${address.slice(-4)}` : address
+}
+
 /**
  * Visualização de eventos indexados com filtros básicos (doc §6) — raw e decodificados, parâmetros
- * decodificados formatados por tipo em runtime (E13, ver `DecodedParamValue`) em vez do
- * `JSON.stringify` cru anterior.
+ * decodificados formatados por tipo em runtime (E13, ver `DecodedParamValue`).
+ *
+ * E16: filtro de contrato via `<ContractAutocomplete>` + evento via `<EventPicker>` quando há
+ * contrato selecionado (degradação natural pra texto livre quando não); coluna "Contrato" na tabela;
+ * `raw` → "sem ABI" com tooltip. Como o Evex indexa a rede inteira (DEC-001) e a tabela mostra
+ * contratos não-monitorados, um link discreto revela um campo de endereço livre (`0x…`) para
+ * filtrar eventos de um contrato fora da lista de monitorados.
  */
 export function EventsPage() {
-  const [contractAddress, setContractAddress] = useState('')
+  const [contractRef, setContractRef] = useState<ContractRef | null>(null)
+  const [manualContract, setManualContract] = useState(false)
+  const [manualAddress, setManualAddress] = useState('')
   const [eventName, setEventName] = useState('')
   const [fromBlock, setFromBlock] = useState('')
   const [toBlock, setToBlock] = useState('')
@@ -43,6 +61,20 @@ export function EventsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const { data, isPending, isError, error } = useEvents(filters, page, PAGE_SIZE)
+
+  // Nomes de contrato pra coluna "Contrato" — uma consulta só, compartilhada (React Query).
+  const contractsList = useMonitoredContractsList()
+  const contractsByAddress = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const contract of contractsList.data ?? []) {
+      map.set(contract.address.toLowerCase(), contract.name)
+    }
+    return map
+  }, [contractsList.data])
+
+  const contractAddress = manualContract ? manualAddress.trim() : (contractRef?.address ?? '')
+  // Só usa o `<EventPicker>` (catálogo) quando o contrato veio da lista de monitorados.
+  const showEventPicker = !manualContract && contractAddress !== ''
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -65,23 +97,70 @@ export function EventsPage() {
 
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 3 }}>
         <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 2, alignItems: 'flex-end' }}>
-          <TextField
-            label="Contrato"
-            size="small"
-            value={contractAddress}
-            onChange={(event) => setContractAddress(event.target.value)}
-            placeholder="0x..."
-            slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
-            sx={{ width: 240 }}
-          />
-          <TextField
-            label="Nome do evento"
-            size="small"
-            value={eventName}
-            onChange={(event) => setEventName(event.target.value)}
-            placeholder="ex.: Transfer"
-            sx={{ width: 160 }}
-          />
+          {manualContract ? (
+            <Stack sx={{ gap: 0.25 }}>
+              <TextField
+                label="Contrato"
+                size="small"
+                value={manualAddress}
+                onChange={(event) => setManualAddress(event.target.value)}
+                placeholder="0x..."
+                slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+                sx={{ width: 260 }}
+              />
+              <Link
+                component="button"
+                type="button"
+                variant="caption"
+                onClick={() => {
+                  setManualContract(false)
+                  setManualAddress('')
+                }}
+              >
+                escolher da lista
+              </Link>
+            </Stack>
+          ) : (
+            <Stack sx={{ gap: 0.25 }}>
+              <ContractAutocomplete
+                value={contractRef}
+                onChange={(next) => {
+                  setContractRef(next)
+                  setEventName('')
+                }}
+                sx={{ width: 260 }}
+              />
+              <Link
+                component="button"
+                type="button"
+                variant="caption"
+                onClick={() => {
+                  setManualContract(true)
+                  setContractRef(null)
+                  setEventName('')
+                }}
+              >
+                digitar endereço manualmente
+              </Link>
+            </Stack>
+          )}
+          {showEventPicker ? (
+            <EventPicker
+              address={contractAddress}
+              value={eventName}
+              onChange={(name) => setEventName(name)}
+              sx={{ width: 200 }}
+            />
+          ) : (
+            <TextField
+              label="Nome do evento"
+              size="small"
+              value={eventName}
+              onChange={(event) => setEventName(event.target.value)}
+              placeholder="ex.: Transfer"
+              sx={{ width: 160 }}
+            />
+          )}
           <TextField
             label="Bloco inicial"
             size="small"
@@ -141,6 +220,7 @@ export function EventsPage() {
             <TableHead>
               <TableRow>
                 <TableCell>Bloco</TableCell>
+                <TableCell>Contrato</TableCell>
                 <TableCell>Tx hash</TableCell>
                 <TableCell>Evento</TableCell>
                 <TableCell>Timestamp</TableCell>
@@ -148,63 +228,85 @@ export function EventsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {data.content.map((evt) => (
-                <Fragment key={evt.id}>
-                  <TableRow hover>
-                    <TableCell>{evt.blockNumber}</TableCell>
-                    <TableCell>
-                      <CopyableHash value={evt.txHash} />
-                    </TableCell>
-                    <TableCell>
-                      {evt.decoded ? evt.eventName : <Chip size="small" label="raw" color="warning" variant="outlined" />}
-                    </TableCell>
-                    <TableCell>
-                      {evt.blockTimestamp ? new Date(evt.blockTimestamp).toLocaleString('pt-BR') : '—'}
-                    </TableCell>
-                    <TableCell align="right">
-                      {evt.decoded && (
-                        <Button size="small" onClick={() => setExpandedId(expandedId === evt.id ? null : evt.id)}>
-                          {expandedId === evt.id ? 'ocultar' : 'ver parâmetros'}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                  {evt.decoded && (
-                    <TableRow>
-                      <TableCell colSpan={5} sx={{ p: 0, borderBottom: expandedId === evt.id ? undefined : 'none' }}>
-                        <Collapse in={expandedId === evt.id} unmountOnExit>
-                          <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
-                            {evt.decodedParameters && Object.keys(evt.decodedParameters).length > 0 ? (
-                              <Table size="small">
-                                <TableHead>
-                                  <TableRow>
-                                    <TableCell>Parâmetro</TableCell>
-                                    <TableCell>Valor</TableCell>
-                                  </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                  {Object.entries(evt.decodedParameters).map(([key, paramValue]) => (
-                                    <TableRow key={key}>
-                                      <TableCell sx={{ fontFamily: 'monospace' }}>{key}</TableCell>
-                                      <TableCell>
-                                        <DecodedParamValue value={paramValue} />
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            ) : (
-                              <Typography variant="body2" color="text.secondary">
-                                Sem parâmetros.
-                              </Typography>
-                            )}
-                          </Box>
-                        </Collapse>
+              {data.content.map((evt) => {
+                const contractName = contractsByAddress.get(evt.contractAddress.toLowerCase())
+                return (
+                  <Fragment key={evt.id}>
+                    <TableRow hover>
+                      <TableCell>{evt.blockNumber}</TableCell>
+                      <TableCell>
+                        {contractName ? (
+                          <Link component={RouterLink} to={`/contracts/${evt.contractAddress}`}>
+                            {contractName}
+                          </Link>
+                        ) : (
+                          <Tooltip title={evt.contractAddress}>
+                            <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                              {shortenAddress(evt.contractAddress)}
+                            </Box>
+                          </Tooltip>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <CopyableHash value={evt.txHash} />
+                      </TableCell>
+                      <TableCell>
+                        {evt.decoded ? (
+                          evt.eventName
+                        ) : (
+                          <Tooltip title="Evento indexado mas ainda não decodificado — cadastre a ABI do contrato">
+                            <Chip size="small" label="sem ABI" color="warning" variant="outlined" />
+                          </Tooltip>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {evt.blockTimestamp ? new Date(evt.blockTimestamp).toLocaleString('pt-BR') : '—'}
+                      </TableCell>
+                      <TableCell align="right">
+                        {evt.decoded && (
+                          <Button size="small" onClick={() => setExpandedId(expandedId === evt.id ? null : evt.id)}>
+                            {expandedId === evt.id ? 'ocultar' : 'ver parâmetros'}
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
-                  )}
-                </Fragment>
-              ))}
+                    {evt.decoded && (
+                      <TableRow>
+                        <TableCell colSpan={6} sx={{ p: 0, borderBottom: expandedId === evt.id ? undefined : 'none' }}>
+                          <Collapse in={expandedId === evt.id} unmountOnExit>
+                            <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
+                              {evt.decodedParameters && Object.keys(evt.decodedParameters).length > 0 ? (
+                                <Table size="small">
+                                  <TableHead>
+                                    <TableRow>
+                                      <TableCell>Parâmetro</TableCell>
+                                      <TableCell>Valor</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {Object.entries(evt.decodedParameters).map(([key, paramValue]) => (
+                                      <TableRow key={key}>
+                                        <TableCell sx={{ fontFamily: 'monospace' }}>{key}</TableCell>
+                                        <TableCell>
+                                          <DecodedParamValue value={paramValue} />
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  Sem parâmetros.
+                                </Typography>
+                              )}
+                            </Box>
+                          </Collapse>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                )
+              })}
             </TableBody>
           </Table>
         </TableContainer>

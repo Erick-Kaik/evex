@@ -1,0 +1,26 @@
+type: object
+description: >-
+  Um evento decodificável de um contrato monitorado, já associado à faixa de blocos da versão de ABI
+  que o declara (DEC-007/DEC-073).
+required:
+  - name
+  - inputs
+  - validFromBlock
+properties:
+  name:
+    type: string
+    description: Nome do evento Solidity.
+  inputs:
+    type: array
+    description: Parâmetros do evento, na ordem de declaração Solidity (mistura indexados e não-indexados).
+    items:
+      $ref: "./contract-event-input.yaml"
+  validFromBlock:
+    type: integer
+    format: int64
+    description: Primeiro bloco (inclusive) em que a versão de ABI que declara este evento é válida.
+  validToBlock:
+    type: integer
+    format: int64
+    nullable: true
+    description: "Último bloco (inclusive) em que a versão é válida; `null` = ainda vigente."

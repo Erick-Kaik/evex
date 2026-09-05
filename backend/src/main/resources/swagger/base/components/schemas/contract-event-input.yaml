@@ -1,0 +1,16 @@
+type: object
+description: Um parâmetro (input) de um evento de ABI, na ordem de declaração Solidity.
+required:
+  - name
+  - type
+  - indexed
+properties:
+  name:
+    type: string
+    description: Nome do parâmetro Solidity.
+  type:
+    type: string
+    description: "Tipo Solidity do parâmetro (ex.: `address`, `uint256`, `bytes32`)."
+  indexed:
+    type: boolean
+    description: "`true` quando o parâmetro é `indexed` (vira um `topic` do log em vez de ir no `data`)."

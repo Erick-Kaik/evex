@@ -15,6 +15,27 @@ cd "$(dirname "$0")/.."
 LOG_DIR="$(pwd)/.logs"
 mkdir -p "$LOG_DIR"
 
+# Resolve o comando do Compose: plugin v2 (`docker compose`) ou o standalone legado (`docker-compose`).
+# O Docker nativo do WSL/Ubuntu (pacote `docker.io`) NÃO traz o plugin do compose por padrão — sem ele
+# `docker compose up` cai no CLI cru e dá "unknown shorthand flag: 'd' in -d". Instalar com:
+#   sudo apt install docker-compose-v2
+if docker compose version >/dev/null 2>&1; then
+  DC="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC="docker-compose"
+else
+  echo "ERRO: Compose não encontrado (nem o plugin 'docker compose' v2, nem 'docker-compose')."
+  echo "      Instale o plugin: sudo apt install docker-compose-v2"
+  exit 1
+fi
+
+# Sem Docker Desktop, o daemon no WSL não sobe sozinho a menos que systemd esteja ligado no wsl.conf.
+if ! docker info >/dev/null 2>&1; then
+  echo "ERRO: o daemon do Docker não respondeu. Suba com 'sudo service docker start' (ou habilite"
+  echo "      systemd em /etc/wsl.conf: [boot] systemd=true, e 'wsl --shutdown' no PowerShell)."
+  exit 1
+fi
+
 echo "==> Checando se o nó Hardhat está no ar (127.0.0.1:8545)..."
 if ! curl -s -o /dev/null --max-time 3 -X POST http://127.0.0.1:8545 \
     -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}'; then
@@ -32,8 +53,15 @@ echo "==> Deploy dos contratos de teste..."
 echo "==> Disparando eventos de teste (mint/safeMint/createWidget/...) via script..."
 npx tsx seed/emit-events.ts
 
-echo "==> Subindo Postgres do Evex (docker compose, sem o profile 'blockscout')..."
-docker compose up -d
+echo "==> Subindo Postgres do Evex ($DC, sem o profile 'blockscout')..."
+$DC up -d
+
+echo "==> Subindo o control-panel (aba 'Demonstração' do frontend — E17/DEC-075) em background..."
+# Serviço que dispara os scripts deploy/emit-events/register-contracts pela UI. Só built-ins do Node,
+# roda via tsx (mesma pegada de seed/*.ts). `setsid` pelo mesmo motivo do frontend abaixo.
+setsid nohup npx tsx control-panel/server.ts > "$LOG_DIR/evex-control-panel.log" 2>&1 < /dev/null &
+echo $! > "$LOG_DIR/evex-control-panel.pid"
+disown -a
 
 echo "==> Subindo o frontend do Evex em background..."
 # `setsid` isola num grupo de processos próprio: `npm run dev` costuma sair logo depois de spawnar o
@@ -52,6 +80,7 @@ echo "  2. Registrar os contratos: npx tsx seed/register-contracts.ts"
 echo ""
 echo "URLs:"
 echo "  Frontend do Evex:  http://localhost:5173"
+echo "  Control-panel:     http://127.0.0.1:8899  (aba 'Demonstração' — set VITE_LOCALENV_CONTROL_URL=http://localhost:8899 no frontend)"
 echo ""
 echo "Precisa testar discovery/E6 contra Blockscout real? ./scripts/blockscout-up.sh (pesado, sobe à parte)."
 echo "Quer a UI de disparo manual do scaffold-eth-2? cd local-env-scaffold-eth-2 && yarn start (http://localhost:3000/debug)."

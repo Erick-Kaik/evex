@@ -187,6 +187,44 @@ class BalanceProjectionServiceTest {
     }
 
     @Test
+    fun `projectHistoryForConfig applies only the given config, never findActive, and returns the delta count`() {
+        val eventA = decodedEvent(parameters = mapOf("wallet" to wallet, "value" to BigInteger.valueOf(3)))
+        val eventB = decodedEvent(parameters = mapOf("wallet" to wallet, "value" to BigInteger.valueOf(7)))
+        val slot = slot<List<BalanceDelta>>()
+        every { balances.applyDeltas(capture(slot)) } returns Unit
+
+        val count = service.projectHistoryForConfig(listOf(eventA, eventB), creditConfig())
+
+        assertThat(count).isEqualTo(2)
+        verify(exactly = 0) { configs.findActive(any(), any()) }
+        verify(exactly = 1) { balances.applyDeltas(any()) }
+        assertThat(slot.captured.map { it.amount }).containsExactly(BigInteger.valueOf(3), BigInteger.valueOf(7))
+    }
+
+    @Test
+    fun `projectHistoryForConfig skips events whose eventName does not match the config`() {
+        val matching = decodedEvent(eventName = "Minted", parameters = mapOf("wallet" to wallet, "value" to BigInteger.valueOf(4)))
+        val other = decodedEvent(eventName = "Burned", parameters = mapOf("wallet" to wallet, "value" to BigInteger.valueOf(99)))
+        val slot = slot<List<BalanceDelta>>()
+        every { balances.applyDeltas(capture(slot)) } returns Unit
+
+        val count = service.projectHistoryForConfig(listOf(matching, other), creditConfig())
+
+        assertThat(count).isEqualTo(1)
+        assertThat(slot.captured.single().amount).isEqualTo(BigInteger.valueOf(4))
+    }
+
+    @Test
+    fun `projectHistoryForConfig with no matching events never calls applyDeltas and returns 0`() {
+        val other = decodedEvent(eventName = "Burned", parameters = mapOf("wallet" to wallet, "value" to BigInteger.valueOf(1)))
+
+        val count = service.projectHistoryForConfig(listOf(other), creditConfig())
+
+        assertThat(count).isEqualTo(0)
+        verify(exactly = 0) { balances.applyDeltas(any()) }
+    }
+
+    @Test
     fun `a config whose param is missing logs again after the dedupe interval elapses`() {
         // Prova que o dedupe é uma janela de tempo, não uma supressão permanente por config — usa um
         // IndexerProperties próprio com intervalo curtíssimo (não a instância default de 5min da

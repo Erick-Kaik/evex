@@ -6,14 +6,19 @@
   "scripts": {
     "dev": "vite",
     "predev": "npm run generate:api",
+    "dev:mock": "vite --mode mock",
     "build": "tsc -b && vite build",
     "prebuild": "npm run generate:api",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:types": "tsc -p tsconfig.vitest.json --noEmit",
     "lint": "eslint .",
     "preview": "vite preview",
     "bundle:api": "redocly bundle ../backend/src/main/resources/swagger/base/base.yaml -o openapi/evex-api.bundled.yaml",
     "generate:api": "npm run bundle:api && openapi-generator-cli generate -i openapi/evex-api.bundled.yaml -g typescript-axios -o src/api --additional-properties=supportsES6=true,withInterfaces=true --global-property=apiTests=false,apiDocs=false,modelTests=false,modelDocs=false && rm -rf src/api/git_push.sh src/api/.gitignore src/api/.npmignore src/api/.openapi-generator-ignore src/api/.openapi-generator"
   },
   "dependencies": {
+    "@dnd-kit/core": "6.3.1",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^9.4.0",
@@ -28,6 +33,9 @@
     "@eslint/js": "^10.0.1",
     "@openapitools/openapi-generator-cli": "^2.40.1",
     "@redocly/cli": "^2.47.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -36,8 +44,16 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",
+    "jsdom": "^29.1.1",
+    "msw": "^2.15.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.65.0",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^3.2.7"
+  },
+  "msw": {
+    "workerDirectory": [
+      "public"
+    ]
   }
 }

@@ -52,6 +52,9 @@ class JpaBalanceMonitorConfigAdapter(
         tokenIdParam = tokenIdParam,
         active = active,
         createdAt = createdAt,
+        backfillWatermarkBlock = backfillWatermarkBlock,
+        backfillCursorBlock = backfillCursorBlock,
+        backfillCursorLogIndex = backfillCursorLogIndex,
         new = isNew,
     )
 
@@ -68,5 +71,8 @@ class JpaBalanceMonitorConfigAdapter(
         tokenIdParam = tokenIdParam,
         active = active,
         createdAt = createdAt,
+        backfillWatermarkBlock = backfillWatermarkBlock,
+        backfillCursorBlock = backfillCursorBlock,
+        backfillCursorLogIndex = backfillCursorLogIndex,
     )
 }

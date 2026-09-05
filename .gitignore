@@ -6,3 +6,6 @@ Thumbs.db
 .vscode/
 *.iml
 *.log
+
+# Saída do Playwright MCP (browser dirigido pelo Claude Code — ver e2e/mcp/README.md)
+e2e/.mcp-output/

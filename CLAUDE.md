@@ -20,6 +20,7 @@ Ao terminar qualquer unidade de trabalho: atualizar `docs/roadmap.md` (status + 
 - [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — decisões técnicas e estrutura do frontend.
 - [`docs/roadmap.md`](docs/roadmap.md) — **onde estamos**: etapas, status, dependências, critério de aceite de cada uma.
 - [`docs/decisions.md`](docs/decisions.md) — **por que decidimos assim**: log histórico de decisões técnicas (ADR).
+- [`docs/guia-de-uso.md`](docs/guia-de-uso.md) — **como usar**: guia por cenário (cadastro, redecode, saldo, backfill, webhook, SSE, aba Demonstração…) com prints. Inclui o modo mock do front (`npm run dev:mock`).
 
 `base/indexer` (código legado Anbima) já foi removido depois de extraído o que era reaproveitável para `backend/docs/`. Não existe mais no repositório — não procurar lá.
 
@@ -53,6 +54,7 @@ Decisões que não estão no `indexer-product-draft.md` mas foram fechadas em se
 - **[backend/](backend/CLAUDE.md)** — Kotlin/Spring Boot, arquitetura hexagonal, API OpenAPI-first.
 - **[frontend/](frontend/CLAUDE.md)** — React/Vite, UI mínima da PoC.
 - **[local-env/](local-env/CLAUDE.md)** — ambiente local de teste (Hardhat + Blockscout + contratos de teste), **não é parte do produto entregável** — existe só para validar o Evex ponta a ponta e para demonstrações.
+- **[e2e/](e2e/CLAUDE.md)** — suíte de testes E2E (Playwright) que dirige o navegador contra a stack real (frontend → backend → local-env), **não é parte do produto entregável** — cobre os fluxos da UI mínima (cadastro/ABI, discovery, redecode, saldo, backfill). Ver roadmap E15.
 
 ## Agentes especializados (`.claude/agents/`)
 

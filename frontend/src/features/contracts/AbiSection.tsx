@@ -6,6 +6,7 @@ import {
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   Stack,
   Table,
   TableBody,
@@ -18,6 +19,7 @@ import SearchIcon from '@mui/icons-material/Search'
 import AddIcon from '@mui/icons-material/Add'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { useContractAbiVersions } from './useContracts'
+import { useRedecodeStatus } from './useRedecodeStatus'
 import { AbiRegisterDialog } from './AbiRegisterDialog'
 import { AbiSuggestionsDialog } from './AbiSuggestionsDialog'
 
@@ -31,6 +33,7 @@ interface AbiSectionProps {
  */
 export function AbiSection({ address }: AbiSectionProps) {
   const abiVersions = useContractAbiVersions(address)
+  const redecode = useRedecodeStatus()
   const [registerOpen, setRegisterOpen] = useState(false)
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
 
@@ -48,6 +51,18 @@ export function AbiSection({ address }: AbiSectionProps) {
             </Button>
           </Stack>
         </Stack>
+
+        {/* O redecode é global (E5/DEC-078), não por contrato — o status não diz de qual contrato.
+            Mostrar o indicador em qualquer tela de contrato enquanto um redecode corre é aceitável;
+            o texto é genérico de propósito. Some sozinho quando `running` volta a `false`. */}
+        {redecode.data?.running && (
+          <Stack direction="row" sx={{ alignItems: 'center', gap: 1, mt: 2 }}>
+            <CircularProgress size={16} />
+            <Typography variant="body2" color="text.secondary">
+              Decodificando o histórico… ({redecode.data.processedCount} processados)
+            </Typography>
+          </Stack>
+        )}
 
         {abiVersions.isPending && (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>

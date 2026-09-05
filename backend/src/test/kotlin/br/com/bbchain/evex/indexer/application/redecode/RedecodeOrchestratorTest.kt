@@ -1,7 +1,9 @@
 package br.com.bbchain.evex.indexer.application.redecode
 
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEventPort
+import br.com.bbchain.evex.indexer.domain.jobstatus.JobStatusPublisherPort
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
+import br.com.bbchain.evex.indexer.domain.redecode.RedecodeStatus
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -17,12 +19,22 @@ class RedecodeOrchestratorTest {
 
     private val runner: RedecodeRunner = mockk(relaxed = true)
     private val events: BlockchainEventPort = mockk()
+    private val statusPublisher: JobStatusPublisherPort<RedecodeStatus> = mockk(relaxed = true)
     private lateinit var orchestrator: RedecodeOrchestrator
 
     @BeforeEach
     fun setUp() {
-        orchestrator = RedecodeOrchestrator(runner, events)
+        orchestrator = RedecodeOrchestrator(runner, events, statusPublisher)
         every { events.countPending(any()) } returns 0L
+    }
+
+    @Test
+    fun `publishes a status snapshot on start, on each batch and on finish`() {
+        orchestrator.tryStart(RedecodeFilter())
+        orchestrator.onBatchProcessed(RedecodeBatchResult(processedCount = 3, decodedCount = 1))
+        orchestrator.onFinished()
+
+        verify(exactly = 3) { statusPublisher.publish(any()) }
     }
 
     @Test

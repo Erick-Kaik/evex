@@ -5,7 +5,6 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Redecode
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.RedecodeStatus as RedecodeStatusDto
 import br.com.bbchain.evex.indexer.application.redecode.RedecodeOrchestrator
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
-import br.com.bbchain.evex.indexer.domain.redecode.RedecodeStatus
 import org.springframework.stereotype.Service
 
 /**
@@ -27,22 +26,15 @@ class RedecodeApiServiceImpl(
     override fun triggerRedecode(redecodeFilterPayload: RedecodeFilterPayload?): RedecodeStatusDto {
         val filter = redecodeFilterPayload.toDomain()
         redecodeOrchestrator.tryStart(filter)
-        return redecodeOrchestrator.status().toDto()
+        return redecodeOrchestrator.status().toWireDto()
     }
 
-    override fun getRedecodeStatus(): RedecodeStatusDto = redecodeOrchestrator.status().toDto()
+    override fun getRedecodeStatus(): RedecodeStatusDto = redecodeOrchestrator.status().toWireDto()
 
     private fun RedecodeFilterPayload?.toDomain(): RedecodeFilter = RedecodeFilter(
         contractAddress = this?.contractAddress?.lowercase(),
         topic0 = this?.topic0,
         fromBlock = this?.fromBlock,
         toBlock = this?.toBlock,
-    )
-
-    private fun RedecodeStatus.toDto(): RedecodeStatusDto = RedecodeStatusDto(
-        running = running,
-        processedCount = processedCount,
-        decodedCount = decodedCount,
-        remainingCount = remainingCount,
     )
 }

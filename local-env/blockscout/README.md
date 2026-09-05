@@ -31,6 +31,26 @@ docker tag blockscout-local:11.2.8 ghcr.io/blockscout/blockscout:11.2.8-local
 Build é só Elixir/Alpine (sem Rust/Node) — na prática levou só alguns minutos. `docker/Dockerfile` do
 próprio repo, nada nosso.
 
+### 2.1 Compilação de deps trava com "partition dependency compiler ... timeout" (ver DEC-065)
+
+O `docker/Dockerfile` compila as deps Elixir com `MIX_OS_DEPS_COMPILE_PARTITION_COUNT=$(nproc)` —
+sobe `nproc` processos `mix`/BEAM em paralelo, que se conectam a um coordenador via socket TCP local.
+Numa WSL2 com RAM apertada (e outras coisas rodando: nó Hardhat, Gradle, etc.), subir 8 BEAM de uma
+vez estoura o timeout de conexão do coordenador e o build morre com:
+
+```
+** (Mix) could not start partition dependency compiler, no connection made to TCP port: {:error, :timeout}
+```
+
+Fix: forçar partição = 1 (sem paralelismo entre VMs, sem o handshake TCP) — `scripts/blockscout-up.sh`
+já reescreve essa linha do `Dockerfile` sozinho (idempotente, reaplica se o clone for refeito). Pra
+buildar na mão, trocar antes:
+
+```bash
+sed -i 's#MIX_OS_DEPS_COMPILE_PARTITION_COUNT=$(nproc)#MIX_OS_DEPS_COMPILE_PARTITION_COUNT=1#' \
+  local-env-blockscout/docker/Dockerfile
+```
+
 ## 3. Subir
 
 O arquivo `docker-compose/hardhat-network.yml` do próprio repo já vem configurado para um nó Hardhat

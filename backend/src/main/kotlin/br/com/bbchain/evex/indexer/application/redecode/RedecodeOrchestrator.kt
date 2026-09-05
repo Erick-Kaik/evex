@@ -1,10 +1,12 @@
 package br.com.bbchain.evex.indexer.application.redecode
 
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEventPort
+import br.com.bbchain.evex.indexer.domain.jobstatus.JobStatusPublisherPort
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeStatus
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 /**
@@ -22,6 +24,12 @@ import org.springframework.stereotype.Service
 class RedecodeOrchestrator(
     private val runner: RedecodeRunner,
     private val events: BlockchainEventPort,
+    /**
+     * Publica cada transição de estado pra quem consome o status ao vivo (E17 / DEC-078: hoje o
+     * `RedecodeStatusSseBroker` via SSE). Spring resolve por tipo genérico. `publish` é síncrono,
+     * não-transacional e best-effort (só empurra pro registro de emitters) — não segura o runner.
+     */
+    private val statusPublisher: JobStatusPublisherPort<RedecodeStatus>,
 ) {
     private val running = AtomicBoolean(false)
     private val totalProcessed = AtomicLong(0)
@@ -43,8 +51,23 @@ class RedecodeOrchestrator(
         totalProcessed.set(0)
         totalDecoded.set(0)
         lastFilter = filter
+        publishStatusSafely()
         runner.run(filter, this)
         return true
+    }
+
+    /**
+     * Publica o status pra quem escuta ao vivo (E17) **sem nunca deixar uma falha abortar o job** —
+     * a proteção cobre tanto o `publish` do broker quanto a montagem do snapshot [status] (que hoje
+     * bate no banco via `countPending`). Um hiccup transitório de banco aqui vira só um `warn`, não
+     * um `catch (Exception)` no runner que encerraria a reindexação no meio.
+     */
+    private fun publishStatusSafely() {
+        try {
+            statusPublisher.publish(status())
+        } catch (ex: Exception) {
+            log.warn("Falha ao publicar status SSE de redecode (ignorada, não afeta o job): {}", ex.message)
+        }
     }
 
     fun status(): RedecodeStatus = RedecodeStatus(
@@ -58,10 +81,16 @@ class RedecodeOrchestrator(
     fun onBatchProcessed(result: RedecodeBatchResult) {
         totalProcessed.addAndGet(result.processedCount.toLong())
         totalDecoded.addAndGet(result.decodedCount.toLong())
+        publishStatusSafely()
     }
 
     /** Chamado por [RedecodeRunner] em `finally`, sucesso ou falha — libera a próxima execução. */
     fun onFinished() {
         running.set(false)
+        publishStatusSafely()
+    }
+
+    private companion object {
+        private val log = LoggerFactory.getLogger(RedecodeOrchestrator::class.java)
     }
 }

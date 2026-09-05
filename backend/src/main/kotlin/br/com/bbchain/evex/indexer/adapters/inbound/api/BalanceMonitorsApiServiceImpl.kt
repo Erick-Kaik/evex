@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.adapters.inbound.api
 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.BalanceMonitorsApiService
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.BalanceBackfillStatus as BalanceBackfillStatusDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.BalanceBehavior as BalanceBehaviorDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.BalanceMonitorConfig as BalanceMonitorConfigDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.BalanceMonitorConfigPage
@@ -8,6 +9,7 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.CreateBa
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Network as NetworkDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateBalanceMonitorPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateBalanceMonitorStatusPayload
+import br.com.bbchain.evex.indexer.application.balance.BalanceBackfillOrchestrator
 import br.com.bbchain.evex.indexer.application.balance.BalanceMonitorConfigService
 import br.com.bbchain.evex.indexer.domain.balance.BalanceBehavior
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfig
@@ -23,6 +25,7 @@ import org.springframework.stereotype.Service
 @Service
 class BalanceMonitorsApiServiceImpl(
     private val balanceMonitorConfigService: BalanceMonitorConfigService,
+    private val balanceBackfillOrchestrator: BalanceBackfillOrchestrator,
 ) : BalanceMonitorsApiService {
 
     override fun createBalanceMonitor(createBalanceMonitorPayload: CreateBalanceMonitorPayload): BalanceMonitorConfigDto {
@@ -71,6 +74,21 @@ class BalanceMonitorsApiServiceImpl(
 
     override fun updateBalanceMonitorStatus(id: UUID, updateBalanceMonitorStatusPayload: UpdateBalanceMonitorStatusPayload): BalanceMonitorConfigDto =
         balanceMonitorConfigService.updateStatus(id, updateBalanceMonitorStatusPayload.active).toDto()
+
+    /**
+     * `get(id)` primeiro só pelo 404 (`BalanceMonitorConfigNotFoundException` → `ApiExceptionHandler`)
+     * — `tryStart` decide sozinho se dispara (já havia backfill em andamento); a resposta `202` sempre
+     * reflete o status global real logo depois da tentativa, útil mesmo quando `tryStart` retorna `false`.
+     */
+    override fun triggerBalanceBackfill(id: UUID): BalanceBackfillStatusDto {
+        balanceMonitorConfigService.get(id)
+        balanceBackfillOrchestrator.tryStart(id)
+        return balanceBackfillOrchestrator.globalStatus().toWireDto()
+    }
+
+    /** Status global do job de backfill (DEC-067) — não é por configuração; a UI faz 1 polling só. */
+    override fun getBalanceBackfillStatus(): BalanceBackfillStatusDto =
+        balanceBackfillOrchestrator.globalStatus().toWireDto()
 
     private fun NetworkDto.toDomain(): Network = Network.valueOf(this.name)
 

@@ -1,10 +1,8 @@
 import { Fragment, useState } from 'react'
-import { useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   Collapse,
   Paper,
@@ -18,31 +16,47 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import EditIcon from '@mui/icons-material/Edit'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { Pagination } from '../../components/Pagination'
+import { StatusToggle } from '../../components/StatusToggle'
+import type { StatusOption } from '../../components/StatusToggle'
+import type { PageMode } from '../../components/pageMode'
 import {
+  useCreateWebhook,
   useUpdateWebhook,
   useUpdateWebhookStatus,
   useWebhook,
   useWebhookDeliveries,
 } from './useWebhooks'
 import { WebhookForm } from './WebhookForm'
+import type { WebhookFormValues } from './WebhookForm'
 
 const PAGE_SIZE = 20
 
-/**
- * Detalhe de um webhook: config + toggle de status + tabela de entregas com o log de tentativas
- * (status/attemptCount/nextAttemptAt, expansível pra ver cada `WebhookDeliveryAttempt` — doc §4.6).
- */
-export function WebhookDetailPage() {
-  const { id } = useParams<{ id: string }>()
-  const webhook = useWebhook(id)
-  const updateWebhook = useUpdateWebhook(id ?? '')
-  const updateStatus = useUpdateWebhookStatus(id ?? '')
+const ACTIVE_OPTIONS: StatusOption<boolean>[] = [
+  { value: true, label: 'Ativo', color: 'success' },
+  { value: false, label: 'Pausado', color: 'default' },
+]
 
-  const [page, setPage] = useState(0)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const deliveries = useWebhookDeliveries(id, page, PAGE_SIZE)
+interface WebhookFormPageProps {
+  mode: PageMode
+}
+
+/**
+ * Página de formulário de webhook, nos 3 modos do padrão E18 (mesmo componente para os 3, ver
+ * DEC-079): `create` (`/webhooks/new`), `view` (`/webhooks/:id`, campos só leitura + log de
+ * entregas) e `edit` (`/webhooks/:id/edit`). O toggle rápido de status e a tabela de entregas só
+ * aparecem em `view`/`edit`, quando já existe um webhook cadastrado.
+ */
+export function WebhookFormPage({ mode }: WebhookFormPageProps) {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+
+  if (mode === 'create') {
+    return <CreateForm />
+  }
 
   if (!id) {
     return (
@@ -52,8 +66,62 @@ export function WebhookDetailPage() {
     )
   }
 
+  return <ViewEditForm id={id} mode={mode} navigateBack={() => navigate('/webhooks')} />
+}
+
+function CreateForm() {
+  const navigate = useNavigate()
+  const createWebhook = useCreateWebhook()
+
+  function handleSubmit(payload: WebhookFormValues) {
+    createWebhook.mutate(payload, {
+      onSuccess: (webhook) => navigate(`/webhooks/${webhook.id}`),
+    })
+  }
+
   return (
     <Box sx={{ p: 3 }}>
+      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/webhooks')} sx={{ mb: 2 }}>
+        Voltar
+      </Button>
+      <Typography variant="h5" sx={{ fontWeight: 600, mb: 3 }}>
+        Novo webhook
+      </Typography>
+
+      <WebhookForm
+        mode="create"
+        submitLabel="Cadastrar"
+        isPending={createWebhook.isPending}
+        isError={createWebhook.isError}
+        error={createWebhook.error}
+        onSubmit={handleSubmit}
+      />
+    </Box>
+  )
+}
+
+function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; navigateBack: () => void }) {
+  const navigate = useNavigate()
+  const webhook = useWebhook(id)
+  const updateWebhook = useUpdateWebhook(id)
+  const updateStatus = useUpdateWebhookStatus(id)
+
+  const [page, setPage] = useState(0)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const deliveries = useWebhookDeliveries(id, page, PAGE_SIZE)
+
+  function handleSubmit(payload: WebhookFormValues) {
+    updateWebhook.mutate(payload, {
+      onSuccess: () => navigate(`/webhooks/${id}`),
+    })
+  }
+
+  return (
+    <Box sx={{ p: 3 }}>
+      <Button startIcon={<ArrowBackIcon />} onClick={navigateBack} sx={{ mb: 2 }}>
+        Voltar
+      </Button>
+
       {webhook.isPending && (
         <Typography variant="body2" color="text.secondary">
           Carregando...
@@ -73,37 +141,38 @@ export function WebhookDetailPage() {
               </Typography>
             </Box>
             <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
-              <Chip size="small" label={webhook.data.active ? 'ativo' : 'pausado'} color={webhook.data.active ? 'success' : 'default'} />
-              <Button
-                variant="outlined"
-                size="small"
+              <StatusToggle
+                value={webhook.data.active}
+                options={ACTIVE_OPTIONS}
                 disabled={updateStatus.isPending}
-                onClick={() => updateStatus.mutate({ active: !webhook.data.active })}
-              >
-                {webhook.data.active ? 'Pausar' : 'Ativar'}
-              </Button>
+                onChange={(active) => updateStatus.mutate({ active })}
+              />
+              {mode === 'view' && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<EditIcon />}
+                  onClick={() => navigate(`/webhooks/${id}/edit`)}
+                >
+                  Editar
+                </Button>
+              )}
             </Stack>
           </Stack>
           {updateStatus.isError && <ApiErrorAlert error={updateStatus.error} />}
 
-          <Card variant="outlined" sx={{ mt: 3 }}>
-            <CardContent>
-              <Typography variant="subtitle2" gutterBottom>
-                Editar configuração
-              </Typography>
-              <WebhookForm
-                key={webhook.data.id}
-                initialValues={webhook.data}
-                submitLabel="Salvar"
-                isPending={updateWebhook.isPending}
-                isError={updateWebhook.isError}
-                error={updateWebhook.error}
-                isSuccess={updateWebhook.isSuccess}
-                successMessage="Webhook atualizado com sucesso."
-                onSubmit={(payload) => updateWebhook.mutate(payload)}
-              />
-            </CardContent>
-          </Card>
+          <Box sx={{ mt: 3 }}>
+            <WebhookForm
+              key={webhook.data.id}
+              mode={mode}
+              initialValues={webhook.data}
+              submitLabel="Salvar"
+              isPending={updateWebhook.isPending}
+              isError={updateWebhook.isError}
+              error={updateWebhook.error}
+              onSubmit={handleSubmit}
+            />
+          </Box>
 
           <Box sx={{ mt: 5 }}>
             <Typography variant="h6">Entregas</Typography>

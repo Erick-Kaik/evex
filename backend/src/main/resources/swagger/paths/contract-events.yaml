@@ -1,0 +1,17 @@
+get:
+  tags:
+    - Contracts
+  operationId: listContractEvents
+  summary: Lista os eventos decodificáveis de um contrato monitorado
+  description: >-
+    Catálogo dos eventos que o Evex sabe decodificar para este contrato, derivado das versões de ABI
+    já cadastradas (DEC-073). Um item por par "evento x faixa de validade de ABI" — num contrato proxy
+    upgradável (DEC-007) o mesmo evento pode aparecer mais de uma vez, com faixas de blocos distintas.
+    Contrato sem nenhuma ABI cadastrada devolve `200` com lista vazia (não é erro).
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-event-list-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

@@ -17,6 +17,15 @@ import java.util.UUID
  * [tokenIdParam] é opcional em qualquer behavior — `null` = não aplicável (ex.: ERC20, sem noção de
  * tokenId). `valueParam` é sempre obrigatório: é o parâmetro que carrega o montante/delta em todos os
  * 4 behaviors.
+ *
+ * Campos de backfill de saldo sob demanda (E14, DEC-066):
+ * - [backfillWatermarkBlock]: bloco do cursor de ingestão no instante em que a config foi criada
+ *   (`register()`), **imutável** depois. O backfill só reprojeta eventos com
+ *   `blockNumber <= backfillWatermarkBlock` — tudo a partir daí é da ingestão ao vivo, sem
+ *   sobreposição/contagem dupla. `-1` = cursor ainda em `-1` na criação (nada a reprojetar).
+ * - [backfillCursorBlock]/[backfillCursorLogIndex]: progresso resumível do backfill, avançado na
+ *   **mesma transação** em que os deltas do lote são aplicados. `-1`/`-1` = nada reprojetado ainda.
+ *   Torna o backfill seguro de re-disparar (vira no-op ao alcançar a marca d'água).
  */
 data class BalanceMonitorConfig(
     val id: UUID,
@@ -31,4 +40,7 @@ data class BalanceMonitorConfig(
     val tokenIdParam: String?,
     val active: Boolean,
     val createdAt: Instant,
+    val backfillWatermarkBlock: Long = -1,
+    val backfillCursorBlock: Long = -1,
+    val backfillCursorLogIndex: Long = -1,
 )

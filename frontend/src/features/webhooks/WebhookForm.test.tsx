@@ -1,0 +1,230 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { renderWithProviders } from '../../test/renderWithProviders'
+import { WebhookForm } from './WebhookForm'
+
+const { listMonitoredContracts, listContractEvents } = vi.hoisted(() => ({
+  listMonitoredContracts: vi.fn(),
+  listContractEvents: vi.fn(),
+}))
+
+vi.mock('../../api/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/api')>()
+  return {
+    ...actual,
+    ContractsApi: vi.fn(() => ({ listMonitoredContracts, listContractEvents })),
+  }
+})
+
+const CONTRACT = {
+  id: '1',
+  address: '0xaaa0000000000000000000000000000000000001',
+  name: 'Token A',
+  network: 'TESTNET',
+  status: 'ACTIVE',
+}
+
+const baseProps = {
+  mode: 'create' as const,
+  submitLabel: 'Cadastrar',
+  isPending: false,
+  isError: false,
+  error: null,
+}
+
+describe('WebhookForm', () => {
+  beforeEach(() => {
+    listMonitoredContracts.mockResolvedValue({
+      data: { page: 0, size: 500, totalElements: 1, totalPages: 1, content: [CONTRACT] },
+    })
+    listContractEvents.mockResolvedValue({
+      data: [
+        {
+          name: 'Transfer',
+          inputs: [
+            { name: 'from', type: 'address', indexed: true },
+            { name: 'value', type: 'uint256', indexed: false },
+          ],
+          validFromBlock: 0,
+          validToBlock: null,
+        },
+      ],
+    })
+  })
+
+  it('modo manual: form de texto livre, monta o CreateWebhookPayload (sem regressão)', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(<WebhookForm {...baseProps} onSubmit={onSubmit} />)
+
+    await user.click(screen.getByRole('button', { name: 'Manual' }))
+
+    await user.type(screen.getByRole('textbox', { name: 'Contrato' }), '0xfeed000000000000000000000000000000000001')
+    await user.click(screen.getByRole('combobox', { name: 'Rede' }))
+    await user.click(await screen.findByRole('option', { name: 'MAINNET' }))
+    await user.type(screen.getByRole('textbox', { name: 'Nome do evento' }), 'Transfer')
+    await user.type(screen.getByRole('textbox', { name: 'URL de destino' }), 'https://example.test/hook')
+
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      contractAddress: '0xfeed000000000000000000000000000000000001',
+      network: 'MAINNET',
+      eventName: 'Transfer',
+      url: 'https://example.test/hook',
+      filters: undefined,
+      payloadTemplate: undefined,
+    })
+  })
+
+  it('modo guiado: contrato + evento em cascata, filtro por <EventParamSelect kind="any">', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(<WebhookForm {...baseProps} onSubmit={onSubmit} />)
+
+    expect(screen.queryByRole('combobox', { name: 'Rede' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('combobox', { name: 'Contrato' }))
+    await user.click(await screen.findByRole('option', { name: /Token A/ }))
+
+    await user.click(screen.getByRole('combobox', { name: 'Nome do evento' }))
+    await user.click(await screen.findByRole('option', { name: 'Transfer' }))
+
+    await user.type(screen.getByRole('textbox', { name: 'URL de destino' }), 'https://example.test/hook')
+
+    await user.click(screen.getByRole('button', { name: /adicionar filtro/i }))
+    await user.click(screen.getByRole('combobox', { name: 'parâmetro' }))
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'value (uint256)' }))
+    await user.type(screen.getAllByPlaceholderText('valor')[0], '100')
+
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      contractAddress: CONTRACT.address,
+      network: 'TESTNET',
+      eventName: 'Transfer',
+      url: 'https://example.test/hook',
+      filters: [{ paramName: 'value', operator: 'EQ', value: '100' }],
+    })
+  })
+
+  it('modo visual: canvas de filtros + builder de payloadTemplate montam o mesmo payload', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(<WebhookForm {...baseProps} onSubmit={onSubmit} />)
+
+    await user.click(screen.getByRole('button', { name: 'Visual' }))
+    expect(screen.queryByRole('combobox', { name: 'Rede' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('combobox', { name: 'Contrato' }))
+    await user.click(await screen.findByRole('option', { name: /Token A/ }))
+    await user.click(screen.getByRole('combobox', { name: 'Nome do evento' }))
+    await user.click(await screen.findByRole('option', { name: 'Transfer' }))
+    await user.type(screen.getByRole('textbox', { name: 'URL de destino' }), 'https://example.test/hook')
+
+    // filtro: adiciona um slot, vincula o parâmetro pelo fallback de clique, preenche o valor
+    await user.click(screen.getByRole('button', { name: /adicionar filtro/i }))
+    await user.click(await screen.findByRole('button', { name: 'Parâmetro value, tipo uint256' }))
+    await user.click(screen.getByRole('button', { name: /Campo Filtro 1/ }))
+    await user.type(screen.getByRole('textbox', { name: 'valor' }), '100')
+
+    // payloadTemplate: insere um token clicando no chip
+    await user.click(screen.getByRole('button', { name: 'Inserir {{eventName}}' }))
+
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      contractAddress: CONTRACT.address,
+      network: 'TESTNET',
+      eventName: 'Transfer',
+      url: 'https://example.test/hook',
+      filters: [{ paramName: 'value', operator: 'EQ', value: '100' }],
+      payloadTemplate: '{{eventName}}',
+    })
+  })
+
+  it('edição guiada: aceita eventName fora do catálogo sem esvaziar o campo (não-bloqueante 2)', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(
+      <WebhookForm
+        {...baseProps}
+        mode="edit"
+        submitLabel="Salvar"
+        initialValues={{
+          contractAddress: CONTRACT.address,
+          network: 'TESTNET',
+          eventName: 'LegacyEvent',
+          url: 'https://old.test/hook',
+        }}
+        onSubmit={onSubmit}
+      />,
+    )
+
+    // guiado é o default; o evento 'LegacyEvent' não está no catálogo mockado (só 'Transfer')
+    const eventField = await screen.findByRole('combobox', { name: 'Nome do evento' })
+    expect(eventField).toHaveValue('LegacyEvent')
+    expect(screen.getByText(/não está no catálogo do contrato/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      contractAddress: CONTRACT.address,
+      eventName: 'LegacyEvent',
+    })
+  })
+
+  it('edição: pré-carrega os valores no modo manual', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(
+      <WebhookForm
+        {...baseProps}
+        mode="edit"
+        submitLabel="Salvar"
+        initialValues={{
+          contractAddress: '0xfeed000000000000000000000000000000000001',
+          network: 'MAINNET',
+          eventName: 'Approval',
+          url: 'https://old.test/hook',
+        }}
+        onSubmit={onSubmit}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Manual' }))
+    expect(screen.getByRole('textbox', { name: 'Nome do evento' })).toHaveValue('Approval')
+    expect(screen.getByRole('textbox', { name: 'URL de destino' })).toHaveValue('https://old.test/hook')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      contractAddress: '0xfeed000000000000000000000000000000000001',
+      network: 'MAINNET',
+      eventName: 'Approval',
+    })
+  })
+
+  it('modo view: mostra os campos como texto, sem controles editáveis nem botão de salvar', () => {
+    renderWithProviders(
+      <WebhookForm
+        {...baseProps}
+        mode="view"
+        submitLabel="Salvar"
+        initialValues={{
+          contractAddress: CONTRACT.address,
+          network: 'TESTNET',
+          eventName: 'Transfer',
+          url: 'https://old.test/hook',
+        }}
+        onSubmit={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('URL de destino')).toBeInTheDocument()
+    expect(screen.getByText('https://old.test/hook')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+  })
+})

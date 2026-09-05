@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import {
   Box,
-  Chip,
   Paper,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -12,25 +12,42 @@ import {
   TableRow,
   Typography,
 } from '@mui/material'
+import AddIcon from '@mui/icons-material/Add'
+import Button from '@mui/material/Button'
+import type { WebhookConfig } from '../../api/api'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { Pagination } from '../../components/Pagination'
-import { useCreateWebhook, useWebhooks } from './useWebhooks'
-import { WebhookForm } from './WebhookForm'
+import { RowActions } from '../../components/RowActions'
+import { StatusToggle } from '../../components/StatusToggle'
+import type { StatusOption } from '../../components/StatusToggle'
+import { useUpdateWebhookStatus, useWebhooks } from './useWebhooks'
 
 const PAGE_SIZE = 20
 
-/** Listagem de webhooks configurados + formulário de cadastro (doc §4.6). */
+const ACTIVE_OPTIONS: StatusOption<boolean>[] = [
+  { value: true, label: 'Ativo', color: 'success' },
+  { value: false, label: 'Pausado', color: 'default' },
+]
+
+/**
+ * Listagem de webhooks configurados (doc §4.6) — status como toggle rápido e ações "Ver"/"Editar" por
+ * linha (padrão E18). Cadastro em página dedicada (`/webhooks/new`), não mais inline nesta tela.
+ */
 export function WebhooksListPage() {
   const navigate = useNavigate()
   const [page, setPage] = useState(0)
   const { data, isPending, isError, error } = useWebhooks(page, PAGE_SIZE)
-  const createWebhook = useCreateWebhook()
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" sx={{ fontWeight: 600 }}>
-        Webhooks
-      </Typography>
+      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          Webhooks
+        </Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/webhooks/new')}>
+          Cadastrar
+        </Button>
+      </Stack>
 
       {isPending && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
@@ -41,7 +58,7 @@ export function WebhooksListPage() {
 
       {data && data.content.length === 0 && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
-          Nenhum webhook cadastrado ainda.
+          Nenhum webhook cadastrado ainda. Use "Cadastrar" para criar o primeiro.
         </Typography>
       )}
 
@@ -53,19 +70,13 @@ export function WebhooksListPage() {
                 <TableCell>Contrato</TableCell>
                 <TableCell>Evento</TableCell>
                 <TableCell>URL</TableCell>
-                <TableCell>Ativo</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell />
               </TableRow>
             </TableHead>
             <TableBody>
               {data.content.map((webhook) => (
-                <TableRow key={webhook.id} hover onClick={() => navigate(`/webhooks/${webhook.id}`)} sx={{ cursor: 'pointer' }}>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{webhook.contractAddress}</TableCell>
-                  <TableCell>{webhook.eventName}</TableCell>
-                  <TableCell>{webhook.url}</TableCell>
-                  <TableCell>
-                    <Chip size="small" label={webhook.active ? 'sim' : 'não'} color={webhook.active ? 'success' : 'default'} />
-                  </TableCell>
-                </TableRow>
+                <WebhookRow key={webhook.id} webhook={webhook} />
               ))}
             </TableBody>
           </Table>
@@ -80,21 +91,33 @@ export function WebhooksListPage() {
           onPageChange={setPage}
         />
       )}
-
-      <Box sx={{ mt: 5 }}>
-        <Typography variant="h6">Novo webhook</Typography>
-        <Box sx={{ mt: 2 }}>
-          <WebhookForm
-            submitLabel="Cadastrar"
-            isPending={createWebhook.isPending}
-            isError={createWebhook.isError}
-            error={createWebhook.error}
-            isSuccess={createWebhook.isSuccess}
-            successMessage="Webhook cadastrado com sucesso."
-            onSubmit={(payload) => createWebhook.mutate(payload)}
-          />
-        </Box>
-      </Box>
     </Box>
+  )
+}
+
+function WebhookRow({ webhook }: { webhook: WebhookConfig }) {
+  const navigate = useNavigate()
+  const updateStatus = useUpdateWebhookStatus(webhook.id)
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{webhook.contractAddress}</TableCell>
+      <TableCell>{webhook.eventName}</TableCell>
+      <TableCell>{webhook.url}</TableCell>
+      <TableCell>
+        <StatusToggle
+          value={webhook.active}
+          options={ACTIVE_OPTIONS}
+          disabled={updateStatus.isPending}
+          onChange={(active) => updateStatus.mutate({ active })}
+        />
+      </TableCell>
+      <TableCell align="right">
+        <RowActions
+          onView={() => navigate(`/webhooks/${webhook.id}`)}
+          onEdit={() => navigate(`/webhooks/${webhook.id}/edit`)}
+        />
+      </TableCell>
+    </TableRow>
   )
 }

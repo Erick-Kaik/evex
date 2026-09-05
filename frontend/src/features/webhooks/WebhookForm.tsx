@@ -15,10 +15,27 @@ import { FilterOperator } from '../../api/api'
 import type { CreateWebhookPayload, FilterCondition, Network } from '../../api/api'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { NetworkSelect } from '../../components/NetworkSelect'
+import { ContractAutocomplete } from '../../components/ContractAutocomplete'
+import type { ContractRef } from '../../components/ContractAutocomplete'
+import { EventPicker } from '../../components/EventPicker'
+import { EventParamSelect } from '../../components/EventParamSelect'
+import { ParamBindingCanvas } from '../../components/ParamBindingCanvas'
+import { FormModeToggle } from '../../components/FormModeToggle'
+import { readFormMode } from '../../components/formMode'
+import type { FormMode } from '../../components/formMode'
+import { LabeledField } from '../../components/LabeledField'
+import type { PageMode } from '../../components/pageMode'
+import { useContractEventCatalog } from '../../components/contractCatalog'
+import { PayloadTemplateBuilder } from './PayloadTemplateBuilder'
 
 export type WebhookFormValues = CreateWebhookPayload
 
+const FORM_MODE_KEY = 'webhook-form'
+const FORM_MODES: FormMode[] = ['guided', 'visual', 'manual']
+
 interface WebhookFormProps {
+  /** `view` (só leitura), `edit` (edição de webhook existente) ou `create` (padrão E18). */
+  mode: PageMode
   initialValues?: Partial<WebhookFormValues>
   submitLabel: string
   isPending: boolean
@@ -30,12 +47,20 @@ interface WebhookFormProps {
 }
 
 /**
- * Form de cadastro/edição de webhook (doc §4.6) — `filters` como lista dinâmica de
- * `{paramName, operator, value}`, `payloadTemplate` opcional com placeholder mostrando o formato
- * `{{campo}}`/`{{decodedParameters.nome}}`. Reaproveitado no cadastro (`WebhooksListPage`) e na
- * edição (`WebhookDetailPage`).
+ * Form de cadastro/edição/visualização de webhook (doc §4.6, padrão E18/DEC-079) — `filters` como
+ * lista dinâmica de `{paramName, operator, value}`, `payloadTemplate` opcional. Componente único
+ * reaproveitado nos 3 modos: `create` (`/webhooks/new`), `view` (`/webhooks/:id`, campos só leitura)
+ * e `edit` (`/webhooks/:id/edit`).
+ *
+ * Em `edit`/`create`, três modos de preenchimento (DEC-072): **guiado** (contrato/evento sobre os
+ * dados cadastrados, rede herdada, cada `filter.paramName` num `<EventParamSelect kind="any">`),
+ * **visual** (`<ParamBindingCanvas>` para os filtros — arrasta o parâmetro, escolhe operador/valor ao
+ * lado — e `<PayloadTemplateBuilder>` para montar o `payloadTemplate`) e **manual** (texto livre +
+ * `<NetworkSelect>`, comportamento histórico). Os três montam o mesmo `CreateWebhookPayload`. Em
+ * `view` os 3 modos não se aplicam — os campos aparecem como texto (`<LabeledField mode="view">`).
  */
 export function WebhookForm({
+  mode,
   initialValues,
   submitLabel,
   isPending,
@@ -45,12 +70,31 @@ export function WebhookForm({
   successMessage,
   onSubmit,
 }: WebhookFormProps) {
+  const [formMode, setFormMode] = useState<FormMode>(() => readFormMode(FORM_MODE_KEY, FORM_MODES))
+
   const [contractAddress, setContractAddress] = useState(initialValues?.contractAddress ?? '')
   const [network, setNetwork] = useState<Network | ''>(initialValues?.network ?? '')
+  const [contractRef, setContractRef] = useState<ContractRef | null>(
+    initialValues?.contractAddress && initialValues?.network
+      ? { address: initialValues.contractAddress, network: initialValues.network }
+      : null,
+  )
   const [eventName, setEventName] = useState(initialValues?.eventName ?? '')
   const [url, setUrl] = useState(initialValues?.url ?? '')
   const [filters, setFilters] = useState<FilterCondition[]>(initialValues?.filters ?? [])
   const [payloadTemplate, setPayloadTemplate] = useState(initialValues?.payloadTemplate ?? '')
+
+  const isGuided = formMode === 'guided'
+  const isVisual = formMode === 'visual'
+  // Guiado e visual compartilham a cascata contrato→evento no topo (rede herdada do contrato).
+  const usesContractRef = isGuided || isVisual
+  const effectiveAddress = usesContractRef ? (contractRef?.address ?? '') : contractAddress
+  const effectiveNetwork: Network | '' = usesContractRef ? (contractRef?.network ?? '') : network
+
+  // Catálogo do contrato-âncora — usado nos modos guiado/visual tanto pra o `<EventPicker>` quanto
+  // pra resolver os `inputs` do evento já selecionado (edição de um webhook existente).
+  const catalog = useContractEventCatalog(usesContractRef ? effectiveAddress || undefined : undefined)
+  const eventInputs = catalog.inputsByEvent.get(eventName) ?? []
 
   function addFilter() {
     setFilters([...filters, { paramName: '', operator: FilterOperator.Eq, value: '' }])
@@ -64,15 +108,58 @@ export function WebhookForm({
     setFilters(filters.filter((_, i) => i !== index))
   }
 
+  /** Operador + valor + remover de um filtro — igual nos 3 modos, só o campo de parâmetro muda. */
+  function renderFilterControls(index: number) {
+    const filter = filters[index]
+    if (!filter) {
+      return null
+    }
+    return (
+      <>
+        <TextField
+          select
+          size="small"
+          label="operador"
+          value={filter.operator}
+          onChange={(event) => updateFilter(index, { operator: event.target.value as FilterOperator })}
+          sx={{ width: 110 }}
+        >
+          {(Object.values(FilterOperator) as FilterOperator[]).map((operator) => (
+            <MenuItem key={operator} value={operator}>
+              {operator}
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          required
+          size="small"
+          label="valor"
+          value={filter.value}
+          onChange={(event) => updateFilter(index, { value: event.target.value })}
+          placeholder="valor"
+          sx={{ width: 140 }}
+        />
+        <IconButton size="small" color="error" onClick={() => removeFilter(index)} aria-label="remover filtro">
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+      </>
+    )
+  }
+
+  function handleContractRefChange(next: ContractRef | null) {
+    setContractRef(next)
+    setEventName('')
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (network === '') {
+    if (effectiveNetwork === '') {
       return
     }
 
     onSubmit({
-      contractAddress,
-      network,
+      contractAddress: effectiveAddress,
+      network: effectiveNetwork,
       eventName,
       url,
       filters: filters.length > 0 ? filters : undefined,
@@ -80,28 +167,81 @@ export function WebhookForm({
     })
   }
 
+  if (mode === 'view') {
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 560 }}>
+        <LabeledField label="Contrato" mode="view" value={contractAddress} monospace />
+        <LabeledField label="Rede" mode="view" value={network} />
+        <LabeledField label="Nome do evento" mode="view" value={eventName} />
+        <LabeledField label="URL de destino" mode="view" value={url} />
+        <Box>
+          <Typography variant="subtitle2">Filtros</Typography>
+          {filters.length === 0 ? (
+            <Typography variant="caption" color="text.secondary">
+              Sem filtros — sempre dispara.
+            </Typography>
+          ) : (
+            <Stack sx={{ gap: 0.5, mt: 0.5 }}>
+              {filters.map((filter, index) => (
+                <Typography key={index} variant="body2">
+                  {filter.paramName} {filter.operator} {filter.value}
+                </Typography>
+              ))}
+            </Stack>
+          )}
+        </Box>
+        <LabeledField
+          label="Template de payload"
+          mode="view"
+          value={payloadTemplate || 'Vazio — usa o envelope JSON padrão (evento completo).'}
+          multiline
+          monospace
+        />
+      </Box>
+    )
+  }
+
   return (
     <Box component="form" onSubmit={handleSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 560 }}>
-      <TextField
-        label="Contrato"
-        required
-        fullWidth
-        value={contractAddress}
-        onChange={(event) => setContractAddress(event.target.value)}
-        placeholder="0x..."
-        slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+      <FormModeToggle
+        storageKey={FORM_MODE_KEY}
+        modes={FORM_MODES}
+        value={formMode}
+        onChange={setFormMode}
       />
 
-      <NetworkSelect required value={network} onChange={setNetwork} />
-
-      <TextField
-        label="Nome do evento"
-        required
-        fullWidth
-        value={eventName}
-        onChange={(event) => setEventName(event.target.value)}
-        placeholder="ex.: Transfer"
-      />
+      {usesContractRef ? (
+        <>
+          <ContractAutocomplete value={contractRef} onChange={handleContractRefChange} required />
+          <EventPicker
+            address={effectiveAddress || undefined}
+            value={eventName}
+            onChange={(name) => setEventName(name)}
+            required
+          />
+        </>
+      ) : (
+        <>
+          <TextField
+            label="Contrato"
+            required
+            fullWidth
+            value={contractAddress}
+            onChange={(event) => setContractAddress(event.target.value)}
+            placeholder="0x..."
+            slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+          />
+          <NetworkSelect required value={network} onChange={setNetwork} />
+          <TextField
+            label="Nome do evento"
+            required
+            fullWidth
+            value={eventName}
+            onChange={(event) => setEventName(event.target.value)}
+            placeholder="ex.: Transfer"
+          />
+        </>
+      )}
 
       <TextField
         label="URL de destino"
@@ -127,55 +267,70 @@ export function WebhookForm({
           </Typography>
         )}
 
-        {filters.map((filter, index) => (
-          <Stack key={index} direction="row" sx={{ alignItems: 'center', gap: 1, mt: 1 }}>
-            <TextField
-              required
-              size="small"
-              value={filter.paramName}
-              onChange={(event) => updateFilter(index, { paramName: event.target.value })}
-              placeholder="parâmetro"
-              sx={{ width: 140 }}
+        {isVisual ? (
+          <Box sx={{ mt: 1 }}>
+            <ParamBindingCanvas
+              params={eventInputs}
+              slots={filters.map((filter, index) => ({
+                key: String(index),
+                label: `Filtro ${index + 1}`,
+                kind: 'any',
+                value: filter.paramName,
+              }))}
+              onBind={(slotKey, paramName) =>
+                updateFilter(Number(slotKey), { paramName: paramName ?? '' })
+              }
+              renderSlotExtra={(slotKey) => renderFilterControls(Number(slotKey))}
             />
-            <TextField
-              select
-              size="small"
-              value={filter.operator}
-              onChange={(event) => updateFilter(index, { operator: event.target.value as FilterOperator })}
-              sx={{ width: 100 }}
-            >
-              {(Object.values(FilterOperator) as FilterOperator[]).map((operator) => (
-                <MenuItem key={operator} value={operator}>
-                  {operator}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              required
-              size="small"
-              value={filter.value}
-              onChange={(event) => updateFilter(index, { value: event.target.value })}
-              placeholder="valor"
-              sx={{ width: 140 }}
-            />
-            <IconButton size="small" color="error" onClick={() => removeFilter(index)} aria-label="remover filtro">
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Stack>
-        ))}
+          </Box>
+        ) : (
+          filters.map((filter, index) => (
+            <Stack key={index} direction="row" sx={{ alignItems: 'center', gap: 1, mt: 1 }}>
+              {isGuided ? (
+                <EventParamSelect
+                  kind="any"
+                  inputs={eventInputs}
+                  value={filter.paramName}
+                  onChange={(paramName) => updateFilter(index, { paramName })}
+                  label="parâmetro"
+                  required
+                  sx={{ width: 160 }}
+                />
+              ) : (
+                <TextField
+                  required
+                  size="small"
+                  value={filter.paramName}
+                  onChange={(event) => updateFilter(index, { paramName: event.target.value })}
+                  placeholder="parâmetro"
+                  sx={{ width: 140 }}
+                />
+              )}
+              {renderFilterControls(index)}
+            </Stack>
+          ))
+        )}
       </Box>
 
-      <TextField
-        label="Template de payload (opcional)"
-        multiline
-        minRows={3}
-        fullWidth
-        value={payloadTemplate}
-        onChange={(event) => setPayloadTemplate(event.target.value)}
-        placeholder='{"evento": "{{eventName}}", "valor": "{{decodedParameters.value}}"}'
-        helperText="Vazio = usa o envelope JSON padrão (evento completo)."
-        slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.75rem' } } }}
-      />
+      {isVisual ? (
+        <PayloadTemplateBuilder
+          params={eventInputs}
+          value={payloadTemplate}
+          onChange={setPayloadTemplate}
+        />
+      ) : (
+        <TextField
+          label="Template de payload (opcional)"
+          multiline
+          minRows={3}
+          fullWidth
+          value={payloadTemplate}
+          onChange={(event) => setPayloadTemplate(event.target.value)}
+          placeholder='{"evento": "{{eventName}}", "valor": "{{decodedParameters.value}}"}'
+          helperText="Vazio = usa o envelope JSON padrão (evento completo)."
+          slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.75rem' } } }}
+        />
+      )}
 
       {isError && <ApiErrorAlert error={error} />}
       {isSuccess && successMessage && (

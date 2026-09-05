@@ -5,6 +5,7 @@ import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfig
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigNotFoundException
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigPort
 import br.com.bbchain.evex.indexer.domain.balance.InvalidBalanceMonitorConfigException
+import br.com.bbchain.evex.indexer.domain.blockchain.IngestionCursorPort
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import io.mockk.every
@@ -21,7 +22,12 @@ import org.junit.jupiter.api.Test
 class BalanceMonitorConfigServiceTest {
 
     private val configs: BalanceMonitorConfigPort = mockk()
-    private val service = BalanceMonitorConfigService(configs)
+    private val ingestionCursor: IngestionCursorPort = mockk()
+    private val service = BalanceMonitorConfigService(configs, ingestionCursor)
+
+    init {
+        every { ingestionCursor.current() } returns -1
+    }
 
     private val contractAddress = "0xaaaa000000000000000000000000000000aaaa"
 
@@ -163,6 +169,59 @@ class BalanceMonitorConfigServiceTest {
         assertThat(result.behavior).isEqualTo(BalanceBehavior.DELTA)
         assertThat(result.contractAddress).isEqualTo(contractAddress)
         assertThat(result.active).isTrue()
+    }
+
+    @Test
+    fun `register stamps backfillWatermarkBlock from the current ingestion cursor, cursors at -1`() {
+        every { ingestionCursor.current() } returns 4200
+        val savedSlot = slot<BalanceMonitorConfig>()
+        every { configs.save(capture(savedSlot)) } answers { savedSlot.captured }
+
+        val result = service.register(
+            contractAddress = contractAddress,
+            network = Network.TESTNET,
+            eventName = "Minted",
+            behavior = BalanceBehavior.CREDIT,
+            walletParam = "wallet",
+            fromParam = null,
+            toParam = null,
+            valueParam = "value",
+            tokenIdParam = null,
+        )
+
+        assertThat(result.backfillWatermarkBlock).isEqualTo(4200L)
+        assertThat(result.backfillCursorBlock).isEqualTo(-1L)
+        assertThat(result.backfillCursorLogIndex).isEqualTo(-1L)
+    }
+
+    @Test
+    fun `update does not reset the backfill watermark or progress cursor`() {
+        val existing = sampleConfig().copy(
+            backfillWatermarkBlock = 999,
+            backfillCursorBlock = 500,
+            backfillCursorLogIndex = 3,
+        )
+        every { configs.findById(existing.id) } returns existing
+        val savedSlot = slot<BalanceMonitorConfig>()
+        every { configs.save(capture(savedSlot)) } answers { savedSlot.captured }
+
+        service.update(
+            id = existing.id,
+            contractAddress = contractAddress,
+            network = Network.TESTNET,
+            eventName = "Renamed",
+            behavior = BalanceBehavior.CREDIT,
+            walletParam = "wallet",
+            fromParam = null,
+            toParam = null,
+            valueParam = "value",
+            tokenIdParam = null,
+        )
+
+        assertThat(savedSlot.captured.eventName).isEqualTo("Renamed")
+        assertThat(savedSlot.captured.backfillWatermarkBlock).isEqualTo(999L)
+        assertThat(savedSlot.captured.backfillCursorBlock).isEqualTo(500L)
+        assertThat(savedSlot.captured.backfillCursorLogIndex).isEqualTo(3L)
     }
 
     @Test

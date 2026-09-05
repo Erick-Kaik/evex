@@ -1,0 +1,30 @@
+post:
+  tags:
+    - BalanceMonitors
+  operationId: triggerBalanceBackfill
+  summary: Dispara o backfill de saldo sob demanda de uma configuração de monitoramento
+  description: >-
+    Reprojeta contra esta configuração de saldo os eventos **já indexados e decodificados** abaixo da
+    sua marca d'água (o bloco do cursor de indexação no instante em que a configuração foi criada),
+    sem reconsultar a rede. Útil quando a configuração foi criada **depois** de o histórico já ter
+    sido decodificado — nesse caso a projeção ao vivo nunca reprocessa esses eventos e
+    `GET /v1/balances` fica vazio até este backfill rodar.
+
+
+    Assíncrono, em lotes, **1 execução por vez em toda a instância**: se já houver um backfill em
+    andamento (desta ou de outra configuração), esta chamada não dispara outro — a resposta ainda
+    reflete o estado real (status global do job). Re-disparar depois de concluído é no-op (marca
+    d'água + cursor de progresso garantem que cada evento é contado uma única vez).
+
+
+    O status retornado é o do job global — consulte `GET /v1/balance-monitors/backfill/status` para
+    acompanhar o progresso.
+  parameters:
+    - $ref: "../base/components/param/path/balance-monitor-id.yaml"
+  responses:
+    "202":
+      $ref: "../base/components/responses/balance-backfill-status-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

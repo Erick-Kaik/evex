@@ -5,6 +5,8 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiSourc
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiStorageType as AbiStorageTypeDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Contract as ContractDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractAbi as ContractAbiDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractEvent as ContractEventDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractEventInput as ContractEventInputDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractPage
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractStatus as ContractStatusDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.CreateContractPayload
@@ -15,9 +17,11 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Register
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractStatusPayload
 import br.com.bbchain.evex.indexer.application.abi.AbiRegistrationService
+import br.com.bbchain.evex.indexer.application.abi.ContractEventCatalogService
 import br.com.bbchain.evex.indexer.application.abi.InterfaceDetectionService
 import br.com.bbchain.evex.indexer.application.contract.MonitoredContractService
 import br.com.bbchain.evex.indexer.domain.abi.AbiSource
+import br.com.bbchain.evex.indexer.domain.abi.CatalogedEvent
 import br.com.bbchain.evex.indexer.domain.abi.AbiStorageType
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbi
 import br.com.bbchain.evex.indexer.domain.abi.DetectionLevel
@@ -37,6 +41,7 @@ class ContractsApiServiceImpl(
     private val monitoredContractService: MonitoredContractService,
     private val abiRegistrationService: AbiRegistrationService,
     private val interfaceDetectionService: InterfaceDetectionService,
+    private val contractEventCatalogService: ContractEventCatalogService,
 ) : ContractsApiService {
 
     override fun createMonitoredContract(createContractPayload: CreateContractPayload): ContractDto {
@@ -96,6 +101,9 @@ class ContractsApiServiceImpl(
     override fun listContractAbiVersions(address: kotlin.String): MutableList<ContractAbiDto> =
         abiRegistrationService.listVersions(address).map { it.toDto() }.toMutableList()
 
+    override fun listContractEvents(address: kotlin.String): MutableList<ContractEventDto> =
+        contractEventCatalogService.catalogFor(address).map { it.toDto() }.toMutableList()
+
     /**
      * 404 se o contrato não estiver cadastrado — `getByAddress` (não usado no resto deste método)
      * lança [br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException] sozinho;
@@ -141,6 +149,13 @@ class ContractsApiServiceImpl(
     private fun AbiStorageTypeDto.toDomain(): AbiStorageType = AbiStorageType.valueOf(this.name)
 
     private fun AbiStorageType.toDto(): AbiStorageTypeDto = AbiStorageTypeDto.valueOf(this.name)
+
+    private fun CatalogedEvent.toDto(): ContractEventDto = ContractEventDto(
+        name = name,
+        inputs = inputs.map { ContractEventInputDto(name = it.name, type = it.type, indexed = it.indexed) }.toMutableList(),
+        validFromBlock = validFromBlock,
+        validToBlock = validToBlock,
+    )
 
     private fun ContractAbi.toDto(): ContractAbiDto = ContractAbiDto(
         id = id,

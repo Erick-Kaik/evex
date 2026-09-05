@@ -1,5 +1,6 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.persistence
 
+import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEventPort
@@ -59,6 +60,59 @@ class JpaBlockchainEventAdapter(
 
     override fun findDistinctTopic0s(contractAddress: String): Set<String> =
         repository.findDistinctTopic0sByContractAddress(contractAddress.lowercase())
+
+    override fun findDecodedForBackfill(
+        contractAddress: String,
+        network: Network,
+        eventName: String,
+        afterBlock: Long,
+        afterLogIndex: Long,
+        maxBlock: Long,
+        limit: Int,
+    ): List<BlockchainEvent> {
+        val pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.ASC, "blockNumber", "logIndex"))
+        val specification = buildBackfillSpecification(contractAddress, network, eventName, afterBlock, afterLogIndex, maxBlock)
+        return repository.findAll(specification, pageable).content.map { it.toDomain() }
+    }
+
+    override fun countDecodedForBackfill(
+        contractAddress: String,
+        network: Network,
+        eventName: String,
+        afterBlock: Long,
+        afterLogIndex: Long,
+        maxBlock: Long,
+    ): Long = repository.count(buildBackfillSpecification(contractAddress, network, eventName, afterBlock, afterLogIndex, maxBlock))
+
+    /**
+     * `decoded=true` + `(contractAddress, network, eventName)` da config + `blockNumber <= maxBlock`
+     * (marca d'água) + tupla de cursor `(blockNumber > afterBlock) OR (blockNumber = afterBlock AND
+     * logIndex > afterLogIndex)` (E14, DEC-066).
+     */
+    private fun buildBackfillSpecification(
+        contractAddress: String,
+        network: Network,
+        eventName: String,
+        afterBlock: Long,
+        afterLogIndex: Long,
+        maxBlock: Long,
+    ): Specification<BlockchainEventEntity> =
+        Specification.allOf(
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.isTrue(root.get("decoded")) },
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.equal(root.get<String>("contractAddress"), contractAddress.lowercase()) },
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.equal(root.get<Network>("network"), network) },
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.equal(root.get<String>("eventName"), eventName) },
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.lessThanOrEqualTo(root.get("blockNumber"), maxBlock) },
+            Specification<BlockchainEventEntity> { root, _, cb ->
+                cb.or(
+                    cb.greaterThan(root.get("blockNumber"), afterBlock),
+                    cb.and(
+                        cb.equal(root.get<Long>("blockNumber"), afterBlock),
+                        cb.greaterThan(root.get("logIndex"), afterLogIndex),
+                    ),
+                )
+            },
+        )
 
     private fun buildPendingSpecification(filter: RedecodeFilter): Specification<BlockchainEventEntity> =
         Specification.allOf(

@@ -22,6 +22,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.HandlerMethodValidationException
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 
 /**
  * Traduz exceções de domínio/validação para o formato [ApiError] documentado no spec (DEC-013).
@@ -159,6 +160,22 @@ class ApiExceptionHandler {
             ApiError(
                 code = "VALIDATION_ERROR",
                 message = ex.body.detail ?: "Parâmetro inválido",
+                timestamp = OffsetDateTime.now(),
+            ),
+        )
+
+    /**
+     * `@PathVariable`/`@RequestParam` com tipo incompatível — ex.: `GET /v1/balance-monitors/{id}/...`
+     * com um `id` que não parseia como UUID. Sem este handler, a resposta seria o formato de erro
+     * default do Spring, não o [ApiError] que os `4xx` documentados no spec prometem (DEC-013). Vale
+     * pra todos os recursos com path param tipado (contratos, balance-monitors, webhooks).
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun handleTypeMismatch(ex: MethodArgumentTypeMismatchException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(
+                code = "VALIDATION_ERROR",
+                message = "${ex.name}: valor inválido para o tipo esperado",
                 timestamp = OffsetDateTime.now(),
             ),
         )

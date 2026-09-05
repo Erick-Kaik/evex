@@ -1,0 +1,16 @@
+get:
+  tags:
+    - BalanceMonitors
+  operationId: getBalanceBackfillStatus
+  summary: Consulta o status do job global de backfill de saldo sob demanda
+  description: >-
+    O backfill de saldo roda **1 execução por vez em toda a instância** — este status é global, não
+    por configuração. `configId` indica qual configuração está sendo reprojetada agora (`null` quando
+    ocioso); os contadores são os da execução em andamento ou da mais recente já concluída.
+
+
+    A UI faz polling deste endpoint (um só, compartilhado por todas as linhas da tabela de
+    configurações) enquanto `running` for `true` ou `configId` for não-nulo.
+  responses:
+    "200":
+      $ref: "../base/components/responses/balance-backfill-status-response.yaml"

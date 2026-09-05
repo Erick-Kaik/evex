@@ -85,6 +85,58 @@ class AbiParserTest {
     }
 
     @Test
+    fun `eventsOf returns each event with typed inputs, preserving order and indexed flags`() {
+        val events = parser.eventsOf(erc20LikeAbi)
+
+        assertThat(events.map { it.name }).containsExactly("Transfer", "Approval")
+        val transfer = events.first { it.name == "Transfer" }
+        assertThat(transfer.inputs.map { it.name }).containsExactly("from", "to", "value")
+        assertThat(transfer.inputs.map { it.type }).containsExactly("address", "address", "uint256")
+        assertThat(transfer.inputs.map { it.indexed }).containsExactly(true, true, false)
+    }
+
+    @Test
+    fun `eventsOf on an empty array returns an empty list`() {
+        assertThat(parser.eventsOf("[]")).isEmpty()
+    }
+
+    @Test
+    fun `eventsOf on an ABI with no events returns an empty list`() {
+        val functionsOnly = """
+            [
+              {
+                "type": "function",
+                "name": "transfer",
+                "inputs": [{"name": "to", "type": "address"}],
+                "outputs": [{"name": "", "type": "bool"}]
+              }
+            ]
+        """.trimIndent()
+
+        assertThat(parser.eventsOf(functionsOnly)).isEmpty()
+    }
+
+    @Test
+    fun `eventsOf is consistent with parse - same event names and same input order`() {
+        val descriptors = parser.parse(erc20LikeAbi)
+        val events = parser.eventsOf(erc20LikeAbi)
+
+        assertThat(events.map { it.name }).isEqualTo(descriptors.map { it.name })
+        events.forEach { event ->
+            val descriptor = descriptors.first { it.name == event.name }
+            assertThat(event.inputs.map { it.name }).isEqualTo(descriptor.inputs.map { it.name })
+            assertThat(event.inputs.map { it.type }).isEqualTo(descriptor.inputs.map { it.type })
+            assertThat(event.inputs.map { it.indexed }).isEqualTo(descriptor.inputs.map { it.indexed })
+        }
+    }
+
+    @Test
+    fun `eventsOf on malformed JSON throws InvalidAbiContentException`() {
+        assertThatThrownBy { parser.eventsOf("{not valid json") }
+            .isInstanceOf(InvalidAbiContentException::class.java)
+    }
+
+    @Test
     fun `unsupported Solidity type throws InvalidAbiContentException`() {
         val abiWithTuple = """
             [

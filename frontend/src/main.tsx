@@ -14,13 +14,26 @@ if (!rootElement) {
   throw new Error('#root element not found')
 }
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </ThemeProvider>
-  </StrictMode>,
-)
+/**
+ * Modo mock (`npm run dev:mock`): sobe o Service Worker do MSW com dados estáticos antes de renderizar,
+ * pra rodar o front sem backend. O import é dinâmico pra o código de mock nunca entrar no bundle real.
+ */
+async function bootstrap(): Promise<void> {
+  if (import.meta.env.VITE_MOCK === '1') {
+    const { startMockWorker } = await import('./mocks/browser')
+    await startMockWorker()
+  }
+
+  createRoot(rootElement!).render(
+    <StrictMode>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    </StrictMode>,
+  )
+}
+
+void bootstrap()

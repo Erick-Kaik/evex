@@ -5,6 +5,7 @@ import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfig
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigNotFoundException
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigPort
 import br.com.bbchain.evex.indexer.domain.balance.InvalidBalanceMonitorConfigException
+import br.com.bbchain.evex.indexer.domain.blockchain.IngestionCursorPort
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import java.time.Instant
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service
 @Service
 class BalanceMonitorConfigService(
     private val configs: BalanceMonitorConfigPort,
+    private val ingestionCursor: IngestionCursorPort,
 ) {
     fun register(
         contractAddress: String,
@@ -41,6 +43,13 @@ class BalanceMonitorConfigService(
             tokenIdParam = tokenIdParam,
             active = true,
             createdAt = Instant.now(),
+            // E14/DEC-066: marca d'água = cursor de ingestão AGORA, imutável. O backfill sob demanda
+            // só reprojeta eventos até este bloco; o que a ingestão ao vivo processar daqui pra
+            // frente já entra via IngestionBatchProcessor, sem contagem dupla. Cursores de progresso
+            // em -1 (nada reprojetado ainda).
+            backfillWatermarkBlock = ingestionCursor.current(),
+            backfillCursorBlock = -1,
+            backfillCursorLogIndex = -1,
         )
         return configs.save(config)
     }
@@ -63,6 +72,9 @@ class BalanceMonitorConfigService(
     ): BalanceMonitorConfig {
         validate(behavior, walletParam, fromParam, toParam)
         val existing = get(id)
+        // `copy` só dos campos editáveis — os 3 campos de backfill (marca d'água + cursor de
+        // progresso, E14/DEC-066) NÃO entram aqui de propósito: a marca d'água é imutável depois da
+        // criação e o cursor não pode retroceder por uma edição de config.
         val updated = existing.copy(
             contractAddress = contractAddress.lowercase(),
             network = network,

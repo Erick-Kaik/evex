@@ -1,0 +1,38 @@
+type: object
+description: >-
+  Snapshot do estado do job **global** de backfill de saldo sob demanda (E14, DEC-067). O backfill
+  roda 1 execução por vez em toda a instância — este status não é por configuração.
+required:
+  - running
+  - processedCount
+  - deltaCount
+  - remainingCount
+  - caughtUp
+properties:
+  running:
+    type: boolean
+    description: "`true` se há um backfill em andamento neste momento (de qualquer configuração)."
+  configId:
+    type: string
+    format: uuid
+    description: >-
+      Configuração cujo backfill está em andamento agora. `null` quando nenhum backfill está rodando.
+      A UI usa este campo pra desabilitar o botão de reprocessamento das demais linhas enquanto um
+      backfill corre.
+  processedCount:
+    type: integer
+    format: int64
+    description: Eventos já reprojetados na execução em andamento/mais recente.
+  deltaCount:
+    type: integer
+    format: int64
+    description: Deltas de saldo aplicados na execução em andamento/mais recente.
+  remainingCount:
+    type: integer
+    format: int64
+    description: >-
+      Eventos decodificados abaixo da marca d'água ainda não reprojetados pela configuração em foco
+      (a que roda agora, ou a última que rodou) — consulta ao vivo, não cacheada.
+  caughtUp:
+    type: boolean
+    description: "`true` quando não há mais nada a reprojetar na configuração em foco (`remainingCount == 0`)."

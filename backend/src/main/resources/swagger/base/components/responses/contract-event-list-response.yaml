@@ -1,0 +1,5 @@
+description: Catálogo de eventos decodificáveis de um contrato monitorado.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/contract-event-list.yaml"

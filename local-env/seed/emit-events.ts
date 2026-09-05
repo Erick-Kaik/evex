@@ -31,7 +31,7 @@
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import type { Wallet as EthersWallet } from "ethers";
+import type { Signer as EthersSigner } from "ethers";
 
 const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
 const DEPLOYER_PRIVATE_KEY =
@@ -42,7 +42,7 @@ const CHAIN_ID = process.env.CHAIN_ID ?? "31337";
 const ROUNDS = Number.parseInt(process.env.ROUNDS ?? "1", 10);
 
 const hardhatRequire = createRequire(pathToFileURL(resolve(SCAFFOLD_ETH_DIR, "packages/hardhat/package.json")).href);
-const { Contract, JsonRpcProvider, Wallet } = hardhatRequire("ethers") as typeof import("ethers");
+const { Contract, JsonRpcProvider, NonceManager, Wallet } = hardhatRequire("ethers") as typeof import("ethers");
 
 type DeployedContract = { address: string; abi: unknown[] };
 type DeployedContracts = Record<string, Record<string, DeployedContract>>;
@@ -55,7 +55,7 @@ async function loadDeployedContracts(): Promise<DeployedContracts> {
 
 /** Dispara um round de eventos variados nos 4 contratos. Cada round é seguro de repetir (ids/nonces
  * avançam sozinhos nos contratos — não há estado "já mintado" a colidir). */
-async function emitRound(contracts: Record<string, DeployedContract>, signer: EthersWallet, round: number): Promise<void> {
+async function emitRound(contracts: Record<string, DeployedContract>, signer: EthersSigner, round: number): Promise<void> {
   const erc20 = new Contract(contracts.TestERC20.address, contracts.TestERC20.abi, signer);
   const erc721 = new Contract(contracts.TestERC721.address, contracts.TestERC721.abi, signer);
   const erc1155 = new Contract(contracts.TestERC1155.address, contracts.TestERC1155.abi, signer);
@@ -92,7 +92,11 @@ async function confirm(label: string, txPromise: Promise<{ hash: string; wait: (
 
 async function main(): Promise<void> {
   const provider = new JsonRpcProvider(RPC_URL);
-  const signer = new Wallet(DEPLOYER_PRIVATE_KEY, provider);
+  // `NonceManager` mantém o nonce localmente e incrementa a cada envio — imune à corrida em que o
+  // Hardhat, sob carga concorrente (ex.: Blockscout indexando via `debug_traceTransaction`),
+  // responde `eth_getTransactionCount` com o valor anterior à última mineração e a tx seguinte
+  // sai com nonce repetido ("Nonce too low ... can't be queued when automining").
+  const signer = new NonceManager(new Wallet(DEPLOYER_PRIVATE_KEY, provider));
 
   const deployedContracts = await loadDeployedContracts();
   const contractsOnChain = deployedContracts[CHAIN_ID];
@@ -103,8 +107,9 @@ async function main(): Promise<void> {
     );
   }
 
+  const signerAddress = await signer.getAddress();
   for (let round = 1; round <= ROUNDS; round++) {
-    console.log(`Round ${round}/${ROUNDS} — disparando eventos como ${signer.address}...`);
+    console.log(`Round ${round}/${ROUNDS} — disparando eventos como ${signerAddress}...`);
     await emitRound(contractsOnChain, signer, round);
   }
   console.log("Pronto. Confira em GET /v1/events (ou no frontend do Evex).");

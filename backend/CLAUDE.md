@@ -79,12 +79,13 @@ Diferente do código base (que tem separação por pacote técnico — `abi/`, `
 - **Segregação MAINNET/TESTNET** por campo `network` em todas as entidades.
 - **Configuração de monitoramento de saldo** como entidade editável via API (`contract_address`/`event_name`/`wallet_param`/`value_param`/`behavior`) — doc §4.4.
 - **`asset_balance_snapshots`** + job noturno de consolidação (`@Scheduled` diário) — doc §4.4.
+- **Backfill de saldo sob demanda** (E14/DEC-066, DEC-068): `POST /v1/balance-monitors/{id}/backfill` (dispara) + `GET /v1/balance-monitors/backfill/status` (status **global** — job único por instância) — reprojeta os eventos já indexados e decodificados abaixo da marca d'água da config (bloco do cursor de indexação na criação da config) contra ela, sem reconsultar a rede. Job único global assíncrono em lotes espelhando o redecode (`application/balance/BalanceBackfill{Orchestrator,Runner,BatchProcessor}`); cursor `(block, logIndex)` persistido na config pra exactly-once/resumível.
 - **Webhooks** — módulo completo: config por usuário/contrato/tipo de evento, filtros opcionais, fila de envio, retry com backoff, log de tentativas, payload customizável — doc §4.6. **Não é sobre a conexão com a rede** (essa continua só polling) — é notificação de saída, disparada depois que um evento é decodificado e bate com a config do usuário.
 - **Versionamento de ABI por faixa de blocos** (suporte a proxy upgradável) — não coberto pelo doc de produto original, decisão desta análise.
 
 ## Regras não negociáveis (do doc de produto §9)
 
-- **OpenAPI first**: o `.yaml` é a fonte de verdade — nunca escrever controllers ou clientes HTTP manualmente. O generator já entrega controller + interface `*ApiService` + models; o único código handwritten do lado de entrada é a `*ApiServiceImpl` (fina, delega para `application`/`domain`/`adapters/outbound`) — ver `docs/hexagonal-architecture.md`.
+- **OpenAPI first**: o `.yaml` é a fonte de verdade — nunca escrever controllers ou clientes HTTP manualmente. O generator já entrega controller + interface `*ApiService` + models; o único código handwritten do lado de entrada é a `*ApiServiceImpl` (fina, delega para `application`/`domain`/`adapters/outbound`) — ver `docs/hexagonal-architecture.md`. **Exceção única (E17 / DEC-078):** transportes de streaming que o `openapi-generator` não modela — hoje só os 2 endpoints SSE `text/event-stream` em `adapters/inbound/api/sse/JobStatusSseController.kt` — podem ser `@RestController` manual, documentados via `springdoc` (anotações) + comentário na spec-fonte. Qualquer recurso REST/JSON continua obrigatoriamente via spec.
 - **Sem `web3j-gradle-plugin`**: decodificação dinâmica em runtime via API de baixo nível do Web3j (ver seção de reaproveitamento acima).
 - **Sem BBChain Keeper**: Web3j direto.
 - **Banco como índice central de ABIs**: PostgreSQL é sempre o índice, independente do storage escolhido.

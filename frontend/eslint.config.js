@@ -8,7 +8,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   // src/api: cliente gerado pelo openapi-generator (regra do frontend/CLAUDE.md — nunca editado à
   // mão, nunca commitado). openapi/: bundle intermediário do Redocly. Nenhum dos dois deve ser lintado.
-  globalIgnores(['dist', 'src/api', 'openapi']),
+  globalIgnores(['dist', 'src/api', 'openapi', 'public/mockServiceWorker.js']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

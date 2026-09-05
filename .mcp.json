@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "npx.cmd",
+        "-y",
+        "@playwright/mcp@latest",
+        "--executable-path=${EVEX_MCP_BRAVE_EXE:-C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe}",
+        "--user-data-dir=${EVEX_MCP_WIN_HOME}\\.evex-mcp-brave",
+        "--viewport-size=1280,800",
+        "--output-dir=${EVEX_MCP_WIN_HOME}\\.evex-mcp-output"
+      ]
+    }
+  }
+}

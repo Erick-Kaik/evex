@@ -60,7 +60,7 @@ O controller gerado **já chama** o bean Spring que implementa a interface. Ou s
 1. Editar `resources/api/evex-api.yaml` primeiro (novo path/operationId/schema).
 2. Rodar `./gradlew compileKotlin` — o generator cria a nova interface `*ApiService` (ou adiciona o método na existente) em `build/generated`.
 3. Implementar (ou estender) a `*ApiServiceImpl` correspondente em `adapters/inbound/api/`.
-4. **Nunca** criar um `@RestController`, `@RequestMapping` ou `@GetMapping` à mão em nenhum outro lugar do código.
+4. **Nunca** criar um `@RestController`, `@RequestMapping` ou `@GetMapping` à mão em nenhum outro lugar do código. **Exceção única (E17 / DEC-078):** transportes de streaming que o `openapi-generator` não modela — hoje só os 2 endpoints SSE `text/event-stream` em `adapters/inbound/api/sse/JobStatusSseController.kt` — podem ser `@RestController` manual (documentados via `springdoc`, ver DEC-078). Qualquer recurso REST/JSON continua obrigatoriamente via spec.
 
 ## `*ApiServiceImpl` deve ser fino
 

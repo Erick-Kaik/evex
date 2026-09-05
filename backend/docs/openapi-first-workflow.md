@@ -103,7 +103,7 @@ tasks.processResources { dependsOn(generateEvexApi) }
 
 | | Gerado (`build/generated`, nunca editado) | Handwritten |
 |---|---|---|
-| Controllers | ✅ `*Controller.kt` completo, com rotas | ❌ nunca criar manualmente |
+| Controllers | ✅ `*Controller.kt` completo, com rotas | ❌ nunca criar manualmente — **exceção**: transporte de streaming não modelado pelo generator (SSE `text/event-stream`), ver E17/DEC-078 |
 | Interface de service | ✅ `*ApiService.kt` (1 método por operação) | — |
 | Implementação do service | ❌ | ✅ `adapters/inbound/api/*ApiServiceImpl.kt` |
 | Models (DTOs) | ✅ `model/*.kt` | ❌ nunca escrever DTO de request/response à mão |

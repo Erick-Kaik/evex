@@ -31,5 +31,6 @@
     // editada (regra não-negociável: cliente gerado nunca é editado à mão). Ver
     // docs/roadmap.md (notas de execução da E9).
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"]
 }

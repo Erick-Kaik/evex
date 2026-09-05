@@ -87,6 +87,12 @@ indexer:
     # Tamanho do lote da reindexação assíncrona (ingestion-pipeline-reference.md §4) — orquestrador
     # RedecodeOrchestrator/RedecodeRunner/RedecodeBatchProcessor (E5).
     batch-size: ${EVEX_REDECODE_BATCH_SIZE:100}
+  sse:
+    # Streams SSE de status de job (E17 / DEC-074) — GET /v1/redecode/status/stream e
+    # GET /v1/balance-monitors/backfill/status/stream. heartbeat abaixo do timeout ocioso típico de
+    # proxy; emitter-timeout longo (o EventSource reconecta sozinho, só evita conexão zumbi eterna).
+    heartbeat-interval-ms: ${EVEX_SSE_HEARTBEAT_INTERVAL_MS:15000}
+    emitter-timeout-ms: ${EVEX_SSE_EMITTER_TIMEOUT_MS:1800000}
   blockscout:
     # Vazio (default) = discovery/origem BLOCKSCOUT/fallback de detecção de interface desabilitados —
     # BlockscoutClient lança BlockscoutUnavailableException (503) direto, sem tentar HTTP. Nenhuma
@@ -97,6 +103,10 @@ indexer:
     # diário. Sem guarda de concorrência própria: o Spring não roda 2 execuções do mesmo método
     # @Scheduled em paralelo (mesma garantia já usada pelo BlockchainPoller, E4).
     snapshot-cron: ${EVEX_BALANCE_SNAPSHOT_CRON:0 0 0 * * *}
+    # Tamanho do lote do backfill de saldo sob demanda (E14, DEC-066) — orquestrador
+    # BalanceBackfillOrchestrator/BalanceBackfillRunner/BalanceBackfillBatchProcessor, espelha
+    # indexer.redecode.batch-size.
+    backfill-batch-size: ${EVEX_BALANCE_BACKFILL_BATCH_SIZE:500}
   webhook:
     # Notificação de saída (indexer→sistema externo, DEC-004) — WebhookDispatchJob (E8, doc §4.6).
     dispatch-interval-ms: ${EVEX_WEBHOOK_DISPATCH_INTERVAL_MS:5000}

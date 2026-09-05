@@ -52,6 +52,14 @@ class BalanceMonitorConfigEntity(
     var active: Boolean,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant,
+    // E14/DEC-066 — backfill de saldo sob demanda. Marca d'água imutável + cursor de progresso
+    // resumível. Migration V2 (`ADD COLUMN IF NOT EXISTS ... DEFAULT -1`) cobre bancos preexistentes.
+    @Column(name = "backfill_watermark_block", nullable = false)
+    val backfillWatermarkBlock: Long = -1,
+    @Column(name = "backfill_cursor_block", nullable = false)
+    val backfillCursorBlock: Long = -1,
+    @Column(name = "backfill_cursor_log_index", nullable = false)
+    val backfillCursorLogIndex: Long = -1,
     @Transient
     private val new: Boolean = false,
 ) : Persistable<UUID> {
