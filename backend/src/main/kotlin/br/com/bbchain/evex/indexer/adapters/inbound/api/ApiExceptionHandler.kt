@@ -11,6 +11,8 @@ import br.com.bbchain.evex.indexer.domain.balance.InvalidBalanceMonitorConfigExc
 import br.com.bbchain.evex.indexer.domain.contract.ContractAlreadyExistsException
 import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
 import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutUnavailableException
+import br.com.bbchain.evex.indexer.domain.wallet.WalletAlreadyExistsException
+import br.com.bbchain.evex.indexer.domain.wallet.WalletNotFoundException
 import br.com.bbchain.evex.indexer.domain.webhook.InvalidWebhookConfigException
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfigNotFoundException
 import jakarta.validation.ConstraintViolationException
@@ -136,6 +138,20 @@ class ApiExceptionHandler {
     fun handleWebhookConfigNotFound(ex: WebhookConfigNotFoundException): ResponseEntity<ApiError> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(
             ApiError(code = "WEBHOOK_CONFIG_NOT_FOUND", message = ex.message ?: "Webhook não encontrado", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Nenhuma carteira cadastrada com o endereço informado. */
+    @ExceptionHandler(WalletNotFoundException::class)
+    fun handleWalletNotFound(ex: WalletNotFoundException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiError(code = "WALLET_NOT_FOUND", message = ex.message ?: "Carteira não encontrada", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `POST /v1/wallets` com `address` já cadastrado — `address` é chave natural, unique no banco. */
+    @ExceptionHandler(WalletAlreadyExistsException::class)
+    fun handleWalletAlreadyExists(ex: WalletAlreadyExistsException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ApiError(code = "WALLET_ALREADY_EXISTS", message = ex.message ?: "Carteira já cadastrada", timestamp = OffsetDateTime.now()),
         )
 
     /** `@Valid @RequestBody` inválido (ex.: POST /v1/contracts com campo obrigatório ausente). */

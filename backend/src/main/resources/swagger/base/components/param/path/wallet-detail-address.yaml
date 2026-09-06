@@ -1,0 +1,8 @@
+name: address
+in: path
+required: true
+description: Endereço da carteira na rede (formato hexadecimal EVM, 20 bytes).
+schema:
+  type: string
+  pattern: "^0x[a-fA-F0-9]{40}$"
+  example: "0x1234567890abcdef1234567890abcdef12345678"

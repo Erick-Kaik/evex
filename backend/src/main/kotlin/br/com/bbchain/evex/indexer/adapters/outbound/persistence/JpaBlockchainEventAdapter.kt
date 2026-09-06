@@ -134,9 +134,31 @@ class JpaBlockchainEventAdapter(
         )
 
     override fun search(filter: EventSearchFilter, page: Int, size: Int): PageResult<BlockchainEvent> {
-        val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "blockNumber", "logIndex"))
-        val specification = buildSpecification(filter)
-        val result = repository.findAll(specification, pageable)
+        // `walletAddress` sai do `Specification.allOf(...)` dinâmico de propósito (DEC-080) — caminho
+        // de query nativo dedicado em [BlockchainEventJpaRepository.searchByWalletAddress]. Quando
+        // `null`, comportamento idêntico ao pré-existente (nenhuma regressão).
+        val result = if (filter.walletAddress != null) {
+            // `PageRequest` **sem** `Sort` de propósito: o Spring Data JPA, pra query nativa com
+            // `Pageable`, concatena o `Sort` recebido crú ao final do SQL usando o nome do *atributo*
+            // Kotlin (`blockNumber`/`logIndex`), não o nome da *coluna* (`block_number`/`log_index`) —
+            // gera `ORDER BY ... , blockNumber desc, logIndex desc` e quebra com "column blocknumber
+            // does not exist" (achado empírico rodando contra Testcontainers). O `ORDER BY` já vem
+            // fixo no SQL da query (mesma ordenação `blockNumber DESC, logIndex DESC` do `Specification`
+            // abaixo) — só precisamos do `Pageable` pra `LIMIT`/`OFFSET`.
+            repository.searchByWalletAddress(
+                walletAddress = filter.walletAddress.lowercase(),
+                contractAddress = filter.contractAddress?.lowercase(),
+                eventName = filter.eventName,
+                fromBlock = filter.fromBlock,
+                toBlock = filter.toBlock,
+                fromDate = filter.fromDate,
+                toDate = filter.toDate,
+                pageable = PageRequest.of(page, size),
+            )
+        } else {
+            val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "blockNumber", "logIndex"))
+            repository.findAll(buildSpecification(filter), pageable)
+        }
         return PageResult(
             content = result.content.map { it.toDomain() },
             page = page,

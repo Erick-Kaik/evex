@@ -1,0 +1,17 @@
+patch:
+  tags:
+    - Wallets
+  operationId: acknowledgeWalletContractWarning
+  summary: Confirma ciência do aviso "este endereço parece um contrato" desta carteira
+  description: >-
+    Marca `looksLikeContractAcknowledged = true` (complemento à DEC-080, E22) — sem corpo de
+    requisição, é uma decisão binária e unidirecional do usuário ("já vi o aviso, quero manter o
+    cadastro assim mesmo"). Não recalcula `looksLikeContract` (não chama `eth_getCode` de novo) nem
+    tem caminho de volta pra `false`.
+  parameters:
+    - $ref: "../base/components/param/path/wallet-detail-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/wallet-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

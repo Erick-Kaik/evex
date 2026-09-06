@@ -1,5 +1,6 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.persistence
 
+import br.com.bbchain.evex.indexer.domain.common.Network
 import java.math.BigInteger
 import java.time.LocalDate
 import java.util.UUID
@@ -59,4 +60,13 @@ interface AssetBalanceJpaRepository : JpaRepository<AssetBalanceEntity, UUID>, J
         nativeQuery = true,
     )
     fun snapshotAll(@Param("date") date: LocalDate, @Param("blockNumber") blockNumber: Long): Int
+
+    /**
+     * Candidatos brutos pra descoberta automática de carteiras (E22 / DEC-080) — endereços distintos
+     * já observados em `asset_balances.wallet_address` (coluna tipada, bem mais barato que vasculhar o
+     * JSONB de eventos), sem excluir os já cadastrados em `monitored_wallets` (exclusão em memória, na
+     * `application`, ver [br.com.bbchain.evex.indexer.domain.balance.AssetBalancePort.findDistinctWalletAddresses]).
+     */
+    @Query("SELECT DISTINCT a.walletAddress FROM AssetBalanceEntity a WHERE (:network IS NULL OR a.network = :network)")
+    fun findDistinctWalletAddressesBy(@Param("network") network: Network?): List<String>
 }

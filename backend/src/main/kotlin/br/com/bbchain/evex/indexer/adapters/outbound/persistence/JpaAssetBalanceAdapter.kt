@@ -100,6 +100,9 @@ class JpaAssetBalanceAdapter(
 
     override fun snapshotAll(date: LocalDate, blockNumber: Long): Int = repository.snapshotAll(date, blockNumber)
 
+    override fun findDistinctWalletAddresses(network: Network?): List<String> =
+        repository.findDistinctWalletAddressesBy(network)
+
     private data class BalanceKey(val walletAddress: String, val contractAddress: String, val tokenId: String?, val network: Network)
 
     private fun String?.toStorageTokenId(): String = this ?: ""

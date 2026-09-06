@@ -19,4 +19,14 @@ interface BlockchainPort {
 
     /** Timestamp do bloco (`eth_getBlockByNumber`). */
     fun getBlockTimestamp(blockNumber: Long): Instant
+
+    /**
+     * `true` se [address] tem bytecode publicado (`eth_getCode` no bloco `latest`, `code != "0x"`) —
+     * ou seja, é um contrato, não um EOA. Usado pelo cadastro de carteira (E22, DEC-080) só como aviso
+     * não-bloqueante (`Wallet.looksLikeContract`) — nunca impede o cadastro (uma carteira multisig tipo
+     * Gnosis Safe é um contrato e pode legitimamente ser cadastrada como "carteira"). Primeiro uso de
+     * `eth_getCode` no Evex; a decisão de reaproveitar o mesmo client concreto desta porta (em vez de
+     * um client à parte) fica com `blockchain-integration` na implementação.
+     */
+    fun hasCode(address: String): Boolean
 }

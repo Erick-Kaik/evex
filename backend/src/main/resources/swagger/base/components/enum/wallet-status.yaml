@@ -1,0 +1,6 @@
+type: string
+description: Situação operacional da carteira cadastrada. Transição livre entre estados.
+enum:
+  - ACTIVE
+  - PAUSED
+  - ARCHIVED

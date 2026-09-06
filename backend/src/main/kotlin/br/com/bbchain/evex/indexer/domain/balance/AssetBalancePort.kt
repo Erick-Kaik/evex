@@ -39,4 +39,15 @@ interface AssetBalancePort {
 
     /** Consolida `asset_balances` em `asset_balance_snapshots` pra [date]/[blockNumber]. Retorna linhas gravadas. */
     fun snapshotAll(date: LocalDate, blockNumber: Long): Int
+
+    /**
+     * Endereços distintos de `asset_balances.wallet_address` (coluna tipada, não o JSONB de eventos —
+     * bem mais barato) — candidatos brutos pra descoberta automática de carteiras (E22 / DEC-080,
+     * `GET /v1/wallets/suggestions`). **Não exclui** os já cadastrados em `monitored_wallets`: essa
+     * exclusão é responsabilidade da camada `application` (combinar com
+     * [br.com.bbchain.evex.indexer.domain.wallet.WalletPort.findAllAddresses] em memória) — esta porta
+     * de saldo não tem motivo pra conhecer a tabela de outro módulo (`monitored_wallets`), o que
+     * quebraria a separação entre os domínios `balance`/`wallet`.
+     */
+    fun findDistinctWalletAddresses(network: Network?): List<String>
 }

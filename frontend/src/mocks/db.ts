@@ -14,6 +14,7 @@ import type {
   ContractEvent,
   Event as IndexedEvent,
   InterfaceSuggestion,
+  Wallet,
   WebhookConfig,
   WebhookDelivery,
 } from '../api/api'
@@ -50,6 +51,7 @@ export const db = {
   balances: [] as AssetBalance[],
   webhooks: [] as WebhookConfig[],
   deliveries: [] as WebhookDelivery[],
+  wallets: [] as Wallet[],
 }
 
 // ---------- Catálogos de eventos (GET /v1/contracts/{address}/events) ----------
@@ -179,6 +181,16 @@ function seed(): void {
     { walletAddress: WALLET.alice, contractAddress: ADDR.erc20, network: 'TESTNET', balance: '210000', updatedAt: NOW },
     { walletAddress: WALLET.bob, contractAddress: ADDR.erc20, network: 'TESTNET', balance: '130000', updatedAt: NOW },
     { walletAddress: WALLET.bob, contractAddress: ADDR.widgets, network: 'TESTNET', balance: '1200', updatedAt: NOW },
+  ]
+
+  // `WALLET.bob` fica de propósito FORA de `db.wallets` (já tem saldo em `db.balances` acima) — é o
+  // candidato que `GET /v1/wallets/suggestions` deve sugerir. O 2º item demonstra `looksLikeContract`
+  // (endereço cadastrado como "carteira" que na verdade é um dos contratos do seed).
+  db.wallets = [
+    { id: uid(), address: WALLET.alice, label: 'Alice (holder)', description: 'Carteira de teste com saldo em BRLX', network: 'TESTNET', status: 'ACTIVE', looksLikeContract: false, looksLikeContractAcknowledged: false },
+    // `looksLikeContractAcknowledged: false` de propósito — demonstra o aviso (com o botão "Ciente,
+    // não mostrar de novo") ao abrir o detalhe desta carteira no modo mock.
+    { id: uid(), address: ADDR.erc1155, label: 'Endereço suspeito', description: 'Cadastrado de propósito pra demonstrar o aviso looksLikeContract — na verdade é o endereço do contrato NFT (ERC1155) do seed.', network: 'TESTNET', status: 'ACTIVE', looksLikeContract: true, looksLikeContractAcknowledged: false },
   ]
 
   db.webhooks = [

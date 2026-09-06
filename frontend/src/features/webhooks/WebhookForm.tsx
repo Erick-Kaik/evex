@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   IconButton,
+  Link,
   MenuItem,
   Stack,
   TextField,
@@ -17,6 +18,8 @@ import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { NetworkSelect } from '../../components/NetworkSelect'
 import { ContractAutocomplete } from '../../components/ContractAutocomplete'
 import type { ContractRef } from '../../components/ContractAutocomplete'
+import { WalletAutocomplete } from '../../components/WalletAutocomplete'
+import type { WalletRef } from '../../components/WalletAutocomplete'
 import { EventPicker } from '../../components/EventPicker'
 import { EventParamSelect } from '../../components/EventParamSelect'
 import { ParamBindingCanvas } from '../../components/ParamBindingCanvas'
@@ -25,7 +28,7 @@ import { readFormMode } from '../../components/formMode'
 import type { FormMode } from '../../components/formMode'
 import { LabeledField } from '../../components/LabeledField'
 import type { PageMode } from '../../components/pageMode'
-import { useContractEventCatalog } from '../../components/contractCatalog'
+import { matchesParamKind, useContractEventCatalog } from '../../components/contractCatalog'
 import { PayloadTemplateBuilder } from './PayloadTemplateBuilder'
 
 export type WebhookFormValues = CreateWebhookPayload
@@ -108,12 +111,22 @@ export function WebhookForm({
     setFilters(filters.filter((_, i) => i !== index))
   }
 
-  /** Operador + valor + remover de um filtro — igual nos 3 modos, só o campo de parâmetro muda. */
+  /**
+   * Operador + valor + remover de um filtro — igual nos 3 modos, só o campo de parâmetro muda. E22:
+   * quando o `paramName` escolhido é de um evento com esse parâmetro do tipo Solidity `address`
+   * (`eventInputs`/`matchesParamKind`, só disponível nos modos guiado/visual, que têm catálogo), o
+   * campo de valor oferece `<WalletAutocomplete>` como alternativa ao texto livre, atrás do mesmo
+   * toggle "digitar manualmente" usado em outros lugares (DEC-081) — escolher uma carteira já
+   * conhecida em vez de colar o endereço de novo.
+   */
   function renderFilterControls(index: number) {
     const filter = filters[index]
     if (!filter) {
       return null
     }
+    const paramType = eventInputs.find((input) => input.name === filter.paramName)?.type
+    const isAddressValue = paramType !== undefined && matchesParamKind(paramType, 'address')
+
     return (
       <>
         <TextField
@@ -130,15 +143,23 @@ export function WebhookForm({
             </MenuItem>
           ))}
         </TextField>
-        <TextField
-          required
-          size="small"
-          label="valor"
-          value={filter.value}
-          onChange={(event) => updateFilter(index, { value: event.target.value })}
-          placeholder="valor"
-          sx={{ width: 140 }}
-        />
+        {isAddressValue ? (
+          <FilterAddressValueField
+            value={filter.value}
+            network={effectiveNetwork || undefined}
+            onChange={(value) => updateFilter(index, { value })}
+          />
+        ) : (
+          <TextField
+            required
+            size="small"
+            label="valor"
+            value={filter.value}
+            onChange={(event) => updateFilter(index, { value: event.target.value })}
+            placeholder="valor"
+            sx={{ width: 140 }}
+          />
+        )}
         <IconButton size="small" color="error" onClick={() => removeFilter(index)} aria-label="remover filtro">
           <DeleteIcon fontSize="small" />
         </IconButton>
@@ -343,5 +364,52 @@ export function WebhookForm({
         {isPending ? 'Salvando...' : submitLabel}
       </Button>
     </Box>
+  )
+}
+
+interface FilterAddressValueFieldProps {
+  value: string
+  network?: Network
+  onChange: (value: string) => void
+}
+
+/**
+ * Campo de valor de um filtro sobre um parâmetro `address` (E22) — por padrão oferece
+ * `<WalletAutocomplete>` (escolher uma carteira já cadastrada), com um toggle "digitar manualmente"
+ * pra texto livre (mesmo padrão dual de `<ContractAutocomplete>` em `BalanceQuerySection`/
+ * `EventsPage`). Estado de toggle local ao componente — como a lista de filtros é renderizada com
+ * `key={index}` (mesmo índice da posição na lista), remover/adicionar filtros já remonta a instância
+ * corretamente, sem precisar sincronizar um mapa de índice→modo no componente pai.
+ */
+function FilterAddressValueField({ value, network, onChange }: FilterAddressValueFieldProps) {
+  const [manual, setManual] = useState(false)
+  const walletRef: WalletRef | null = value && network ? { address: value, network } : null
+
+  return (
+    <Stack sx={{ gap: 0.25 }}>
+      {manual ? (
+        <TextField
+          required
+          size="small"
+          label="valor"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="valor"
+          sx={{ width: 180 }}
+        />
+      ) : (
+        <WalletAutocomplete
+          value={walletRef}
+          network={network}
+          label="valor"
+          size="small"
+          sx={{ width: 220 }}
+          onChange={(ref) => onChange(ref?.address ?? '')}
+        />
+      )}
+      <Link component="button" type="button" variant="caption" onClick={() => setManual((current) => !current)}>
+        {manual ? 'escolher carteira cadastrada' : 'digitar manualmente'}
+      </Link>
+    </Stack>
   )
 }

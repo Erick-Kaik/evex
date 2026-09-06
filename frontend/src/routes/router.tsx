@@ -2,6 +2,8 @@ import { createBrowserRouter, Navigate } from 'react-router'
 import { RootLayout } from './RootLayout'
 import { ContractsListPage } from '../features/contracts/ContractsListPage'
 import { ContractFormPage } from '../features/contracts/ContractFormPage'
+import { WalletsListPage } from '../features/wallets/WalletsListPage'
+import { WalletFormPage } from '../features/wallets/WalletFormPage'
 import { EventsPage } from '../features/events/EventsPage'
 import { BalancesPage } from '../features/balances/BalancesPage'
 import { BalanceMonitorFormPage } from '../features/balances/BalanceMonitorFormPage'
@@ -39,6 +41,11 @@ export const router = createBrowserRouter([
       { path: 'contracts/new', element: <ContractFormPage mode="create" /> },
       { path: 'contracts/:address', element: <ContractFormPage mode="view" /> },
       { path: 'contracts/:address/edit', element: <ContractFormPage mode="edit" /> },
+
+      { path: 'wallets', element: <WalletsListPage /> },
+      { path: 'wallets/new', element: <WalletFormPage mode="create" /> },
+      { path: 'wallets/:address', element: <WalletFormPage mode="view" /> },
+      { path: 'wallets/:address/edit', element: <WalletFormPage mode="edit" /> },
 
       { path: 'events', element: <EventsPage /> },
 

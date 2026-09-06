@@ -383,6 +383,126 @@ class JpaBlockchainEventAdapterTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `search by walletAddress matches an event where the address is the 'to' parameter`() {
+        val wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        adapter.saveAll(
+            listOf(
+                newEvent(
+                    blockNumber = 1,
+                    txHash = "0xwallet1",
+                    decoded = true,
+                    eventName = "Transfer",
+                    decodedParameters = mapOf("from" to "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "to" to wallet, "value" to "100"),
+                ),
+            ),
+        )
+
+        val page = adapter.search(EventSearchFilter(walletAddress = wallet), 0, 10)
+
+        assertThat(page.content.map { it.txHash }).containsExactly("0xwallet1")
+    }
+
+    @Test
+    fun `search by walletAddress matches an event where the address is a different parameter name (not a fixed key)`() {
+        val wallet = "0xcccccccccccccccccccccccccccccccccccccccc"
+        adapter.saveAll(
+            listOf(
+                newEvent(
+                    blockNumber = 1,
+                    txHash = "0xwallet-user",
+                    decoded = true,
+                    eventName = "SomeCustomEvent",
+                    decodedParameters = mapOf("user" to wallet, "amount" to "1"),
+                ),
+            ),
+        )
+
+        val page = adapter.search(EventSearchFilter(walletAddress = wallet), 0, 10)
+
+        assertThat(page.content.map { it.txHash }).containsExactly("0xwallet-user")
+    }
+
+    @Test
+    fun `search by walletAddress is case-insensitive on the query side (decoded values are always lowercase)`() {
+        val walletLowercase = "0xdddddddddddddddddddddddddddddddddddddddd"
+        adapter.saveAll(
+            listOf(
+                newEvent(
+                    blockNumber = 1,
+                    txHash = "0xwallet-case",
+                    decoded = true,
+                    eventName = "Transfer",
+                    decodedParameters = mapOf("to" to walletLowercase),
+                ),
+            ),
+        )
+
+        val page = adapter.search(EventSearchFilter(walletAddress = "0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"), 0, 10)
+
+        assertThat(page.content.map { it.txHash }).containsExactly("0xwallet-case")
+    }
+
+    @Test
+    fun `search by walletAddress does not match an event that never mentions that address`() {
+        adapter.saveAll(
+            listOf(
+                newEvent(
+                    blockNumber = 1,
+                    txHash = "0xwallet-nomatch",
+                    decoded = true,
+                    eventName = "Transfer",
+                    decodedParameters = mapOf("from" to "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "to" to "0xffffffffffffffffffffffffffffffffffffffff"),
+                ),
+            ),
+        )
+
+        val page = adapter.search(EventSearchFilter(walletAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 0, 10)
+
+        assertThat(page.content).isEmpty()
+    }
+
+    @Test
+    fun `search by walletAddress does not match a raw undecoded event (decoded_parameters is null)`() {
+        val wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        adapter.saveAll(listOf(newEvent(blockNumber = 1, txHash = "0xwallet-raw", decoded = false)))
+
+        val page = adapter.search(EventSearchFilter(walletAddress = wallet), 0, 10)
+
+        assertThat(page.content).isEmpty()
+    }
+
+    @Test
+    fun `search by walletAddress combined with contractAddress restricts to that contract only`() {
+        val wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        val contractA = "0x111111111111111111111111111111111111111a"
+        val contractB = "0x222222222222222222222222222222222222222b"
+        adapter.saveAll(
+            listOf(
+                newEvent(
+                    address = contractA,
+                    blockNumber = 1,
+                    txHash = "0xwallet-ca",
+                    decoded = true,
+                    eventName = "Transfer",
+                    decodedParameters = mapOf("to" to wallet),
+                ),
+                newEvent(
+                    address = contractB,
+                    blockNumber = 2,
+                    txHash = "0xwallet-cb",
+                    decoded = true,
+                    eventName = "Transfer",
+                    decodedParameters = mapOf("to" to wallet),
+                ),
+            ),
+        )
+
+        val page = adapter.search(EventSearchFilter(walletAddress = wallet, contractAddress = contractA), 0, 10)
+
+        assertThat(page.content.map { it.txHash }).containsExactly("0xwallet-ca")
+    }
+
+    @Test
     fun `findDistinctTopic0s returns an empty set for a contract with no ingested events`() {
         val topics = adapter.findDistinctTopic0s("0x999999999999999999999999999999999999999f")
 

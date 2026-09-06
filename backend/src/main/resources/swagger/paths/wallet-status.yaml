@@ -1,0 +1,16 @@
+patch:
+  tags:
+    - Wallets
+  operationId: updateWalletStatus
+  summary: Atualiza o status de uma carteira cadastrada
+  parameters:
+    - $ref: "../base/components/param/path/wallet-detail-address.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-wallet-status-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/wallet-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

@@ -4,9 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
 import { WebhookForm } from './WebhookForm'
 
-const { listMonitoredContracts, listContractEvents } = vi.hoisted(() => ({
+const { listMonitoredContracts, listContractEvents, listWallets } = vi.hoisted(() => ({
   listMonitoredContracts: vi.fn(),
   listContractEvents: vi.fn(),
+  listWallets: vi.fn(),
 }))
 
 vi.mock('../../api/api', async (importOriginal) => {
@@ -14,6 +15,7 @@ vi.mock('../../api/api', async (importOriginal) => {
   return {
     ...actual,
     ContractsApi: vi.fn(() => ({ listMonitoredContracts, listContractEvents })),
+    WalletsApi: vi.fn(() => ({ listWallets })),
   }
 })
 
@@ -50,6 +52,24 @@ describe('WebhookForm', () => {
           validToBlock: null,
         },
       ],
+    })
+    listWallets.mockResolvedValue({
+      data: {
+        page: 0,
+        size: 200,
+        totalElements: 1,
+        totalPages: 1,
+        content: [
+          {
+            id: 'w1',
+            address: '0xddd0000000000000000000000000000000000004',
+            label: 'Carteira D',
+            network: 'TESTNET',
+            status: 'ACTIVE',
+            looksLikeContract: false,
+          },
+        ],
+      },
     })
   })
 
@@ -203,6 +223,58 @@ describe('WebhookForm', () => {
       contractAddress: '0xfeed000000000000000000000000000000000001',
       network: 'MAINNET',
       eventName: 'Approval',
+    })
+  })
+
+  it('modo guiado: filtro sobre parâmetro address oferece <WalletAutocomplete> como valor (E22)', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(<WebhookForm {...baseProps} onSubmit={onSubmit} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Contrato' }))
+    await user.click(await screen.findByRole('option', { name: /Token A/ }))
+    await user.click(screen.getByRole('combobox', { name: 'Nome do evento' }))
+    await user.click(await screen.findByRole('option', { name: 'Transfer' }))
+    await user.type(screen.getByRole('textbox', { name: 'URL de destino' }), 'https://example.test/hook')
+
+    await user.click(screen.getByRole('button', { name: /adicionar filtro/i }))
+    await user.click(screen.getByRole('combobox', { name: 'parâmetro' }))
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'from (address)' }))
+
+    // valor do filtro vira um autocomplete de carteira (não um texto livre)
+    await user.click(await screen.findByRole('combobox', { name: 'valor' }))
+    await user.click(await screen.findByRole('option', { name: /Carteira D/ }))
+
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      filters: [{ paramName: 'from', operator: 'EQ', value: '0xddd0000000000000000000000000000000000004' }],
+    })
+  })
+
+  it('modo guiado: filtro sobre parâmetro address permite digitar o valor manualmente', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(<WebhookForm {...baseProps} onSubmit={onSubmit} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Contrato' }))
+    await user.click(await screen.findByRole('option', { name: /Token A/ }))
+    await user.click(screen.getByRole('combobox', { name: 'Nome do evento' }))
+    await user.click(await screen.findByRole('option', { name: 'Transfer' }))
+    await user.type(screen.getByRole('textbox', { name: 'URL de destino' }), 'https://example.test/hook')
+
+    await user.click(screen.getByRole('button', { name: /adicionar filtro/i }))
+    await user.click(screen.getByRole('combobox', { name: 'parâmetro' }))
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'from (address)' }))
+
+    await user.click(await screen.findByRole('button', { name: /digitar manualmente/i }))
+    await user.type(screen.getByRole('textbox', { name: 'valor' }), '0xfeed000000000000000000000000000000000009')
+
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }))
+
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      filters: [{ paramName: 'from', operator: 'EQ', value: '0xfeed000000000000000000000000000000000009' }],
     })
   })
 

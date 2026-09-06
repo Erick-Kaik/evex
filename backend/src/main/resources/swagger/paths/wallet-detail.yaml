@@ -1,0 +1,30 @@
+get:
+  tags:
+    - Wallets
+  operationId: getWallet
+  summary: Consulta uma carteira cadastrada pelo endereço
+  parameters:
+    - $ref: "../base/components/param/path/wallet-detail-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/wallet-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+put:
+  tags:
+    - Wallets
+  operationId: updateWallet
+  summary: Atualiza label/descrição de uma carteira cadastrada
+  parameters:
+    - $ref: "../base/components/param/path/wallet-detail-address.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-wallet-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/wallet-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

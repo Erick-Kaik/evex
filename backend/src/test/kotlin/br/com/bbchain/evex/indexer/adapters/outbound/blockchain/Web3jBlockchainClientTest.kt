@@ -1,9 +1,15 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.blockchain
 
 import br.com.bbchain.evex.indexer.config.BlockchainProperties
+import io.mockk.every
+import io.mockk.mockk
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.web3j.protocol.Web3j
+import org.web3j.protocol.core.DefaultBlockParameter
+import org.web3j.protocol.core.Request
 import org.web3j.protocol.core.Response
+import org.web3j.protocol.core.methods.response.EthGetCode
 import org.web3j.protocol.core.methods.response.Log
 
 /**
@@ -66,5 +72,31 @@ class Web3jBlockchainClientTest {
         val error = Response.Error(-32000, "execution reverted")
 
         assertThat(client.isRangeError(error)).isFalse()
+    }
+
+    @Test
+    fun `hasCode returns true when eth_getCode returns non-empty bytecode (contract address)`() {
+        val address = "0x2222222222222222222222222222222222222b"
+        val request = mockk<Request<*, EthGetCode>>()
+        every { request.send() } returns EthGetCode().apply {
+            setResult("0x6080604052348015600f57600080fd5b50")
+        }
+        val web3j = mockk<Web3j>()
+        every { web3j.ethGetCode(address, any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+
+        assertThat(client.hasCode(address)).isTrue()
+    }
+
+    @Test
+    fun `hasCode returns false when eth_getCode returns 0x (EOA address)`() {
+        val address = "0x3333333333333333333333333333333333333c"
+        val request = mockk<Request<*, EthGetCode>>()
+        every { request.send() } returns EthGetCode().apply { setResult("0x") }
+        val web3j = mockk<Web3j>()
+        every { web3j.ethGetCode(address, any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+
+        assertThat(client.hasCode(address)).isFalse()
     }
 }

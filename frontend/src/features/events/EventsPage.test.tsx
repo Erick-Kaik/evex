@@ -4,10 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
 import { EventsPage } from './EventsPage'
 
-const { useEvents, listMonitoredContracts, listContractEvents } = vi.hoisted(() => ({
+const { useEvents, listMonitoredContracts, listContractEvents, listWallets } = vi.hoisted(() => ({
   useEvents: vi.fn(),
   listMonitoredContracts: vi.fn(),
   listContractEvents: vi.fn(),
+  listWallets: vi.fn(),
 }))
 
 vi.mock('./useEvents', () => ({ useEvents }))
@@ -17,11 +18,13 @@ vi.mock('../../api/api', async (importOriginal) => {
   return {
     ...actual,
     ContractsApi: vi.fn(() => ({ listMonitoredContracts, listContractEvents })),
+    WalletsApi: vi.fn(() => ({ listWallets })),
   }
 })
 
 const KNOWN = '0xaaa0000000000000000000000000000000000001'
 const UNKNOWN = '0xbbb0000000000000000000000000000000000002'
+const WALLET = '0xccc0000000000000000000000000000000000003'
 
 const events = [
   {
@@ -66,6 +69,24 @@ describe('EventsPage', () => {
         content: [{ id: '1', address: KNOWN, name: 'Token A', network: 'TESTNET', status: 'ACTIVE' }],
       },
     })
+    listWallets.mockResolvedValue({
+      data: {
+        page: 0,
+        size: 200,
+        totalElements: 1,
+        totalPages: 1,
+        content: [
+          {
+            id: 'w1',
+            address: WALLET,
+            label: 'Carteira A',
+            network: 'TESTNET',
+            status: 'ACTIVE',
+            looksLikeContract: false,
+          },
+        ],
+      },
+    })
   })
 
   it('mostra a coluna "Contrato" com nome+link pros monitorados e endereço curto pros demais', async () => {
@@ -96,7 +117,7 @@ describe('EventsPage', () => {
     const user = userEvent.setup()
     renderWithProviders(<EventsPage />)
 
-    await user.click(screen.getByRole('button', { name: /digitar endereço manualmente/i }))
+    await user.click(screen.getByRole('button', { name: /digitar endereço do contrato manualmente/i }))
 
     const addressField = screen.getByRole('textbox', { name: 'Contrato' })
     await user.type(addressField, UNKNOWN)
@@ -130,5 +151,35 @@ describe('EventsPage', () => {
     // agora o nome do evento é um combobox (EventPicker)
     expect(await screen.findByRole('combobox', { name: 'Nome do evento' })).toBeInTheDocument()
     expect(listContractEvents).toHaveBeenCalledWith(KNOWN)
+  })
+
+  it('filtra por carteira via <WalletAutocomplete> (E22)', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<EventsPage />)
+
+    await user.click(await screen.findByRole('combobox', { name: 'Carteira' }))
+    await user.click(await screen.findByRole('option', { name: /Carteira A/ }))
+    await user.click(screen.getByRole('button', { name: 'Filtrar' }))
+
+    expect(useEvents).toHaveBeenLastCalledWith(
+      expect.objectContaining({ walletAddress: WALLET }),
+      0,
+      20,
+    )
+  })
+
+  it('permite digitar um endereço de carteira fora da lista cadastrada', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<EventsPage />)
+
+    await user.click(screen.getByRole('button', { name: /digitar endereço da carteira manualmente/i }))
+    await user.type(screen.getByRole('textbox', { name: 'Carteira' }), UNKNOWN)
+    await user.click(screen.getByRole('button', { name: 'Filtrar' }))
+
+    expect(useEvents).toHaveBeenLastCalledWith(
+      expect.objectContaining({ walletAddress: UNKNOWN }),
+      0,
+      20,
+    )
   })
 })

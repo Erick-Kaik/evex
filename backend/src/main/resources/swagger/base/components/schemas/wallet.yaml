@@ -1,0 +1,42 @@
+type: object
+description: Carteira cadastrada pelo Evex (E22) — catálogo de endereços conhecidos, simétrico ao de contratos.
+required:
+  - id
+  - address
+  - label
+  - network
+  - status
+  - looksLikeContract
+  - looksLikeContractAcknowledged
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  address:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço da carteira na rede. Imutável após a criação.
+  label:
+    type: string
+    description: Nome dado pelo usuário à carteira.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre da carteira.
+  network:
+    $ref: "../enum/network.yaml"
+  status:
+    $ref: "../enum/wallet-status.yaml"
+  looksLikeContract:
+    type: boolean
+    description: >-
+      `true` se o endereço tinha bytecode publicado (eth_getCode) no momento do cadastro — indício de
+      que é um contrato, não um EOA. Só um aviso não-bloqueante (ex.: pode ser uma carteira multisig
+      cadastrada de propósito).
+  looksLikeContractAcknowledged:
+    type: boolean
+    description: >-
+      `true` depois que o usuário confirma estar ciente do aviso `looksLikeContract`
+      (`PATCH /v1/wallets/{address}/contract-warning`) — a partir daí a UI para de mostrar o aviso
+      nessa carteira. Irrelevante quando `looksLikeContract` é `false`.

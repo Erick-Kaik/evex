@@ -1,0 +1,7 @@
+name: walletAddress
+in: query
+required: false
+description: Filtra eventos cujo endereço aparece em algum parâmetro decodificado do tipo address.
+schema:
+  type: string
+  pattern: "^0x[a-fA-F0-9]{40}$"

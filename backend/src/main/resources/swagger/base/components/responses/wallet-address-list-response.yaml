@@ -1,0 +1,5 @@
+description: Lista de endereços candidatos a cadastro de carteira.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/wallet-address-list.yaml"

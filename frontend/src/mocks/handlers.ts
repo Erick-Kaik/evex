@@ -12,12 +12,16 @@ import type {
   ContractAbi,
   CreateBalanceMonitorPayload,
   CreateContractPayload,
+  CreateWalletPayload,
   CreateWebhookPayload,
   Event as IndexedEvent,
   RegisterAbiPayload,
   UpdateBalanceMonitorStatusPayload,
   UpdateContractStatusPayload,
+  UpdateWalletPayload,
+  UpdateWalletStatusPayload,
   UpdateWebhookStatusPayload,
+  Wallet,
   WebhookConfig,
 } from '../api/api'
 import {
@@ -42,6 +46,7 @@ function page<T>(items: T[], url: URL) {
 
 const lower = (v: string | null) => (v ?? '').toLowerCase()
 const findContract = (address: string) => db.contracts.find((c) => c.address.toLowerCase() === address.toLowerCase())
+const findWallet = (address: string) => db.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase())
 const notFound = (code = 'NOT_FOUND', message = 'Não encontrado') =>
   HttpResponse.json({ code, message, timestamp: new Date().toISOString() }, { status: 404 })
 
@@ -80,7 +85,11 @@ export const handlers = [
     return c ? HttpResponse.json(c) : notFound('CONTRACT_NOT_FOUND', 'Contrato não encontrado')
   }),
 
-  http.patch('*/v1/contracts/:address', async ({ params, request }) => {
+  // O cliente gerado manda PUT pra `updateMonitoredContract` (achado ao mexer neste arquivo pra E22
+  // — o handler antigo interceptava PATCH, então a edição de contrato nunca era de fato respondida
+  // no modo mock; nenhuma tela chegou a testar isso porque a listagem/detalhe continuam funcionando
+  // via GET, só a submissão do form de edição silenciosamente não batia em handler nenhum).
+  http.put('*/v1/contracts/:address', async ({ params, request }) => {
     const c = findContract(String(params.address))
     if (!c) return notFound('CONTRACT_NOT_FOUND')
     const body = (await request.json()) as { name: string; description?: string; version?: string }
@@ -163,11 +172,21 @@ export const handlers = [
     const name = url.searchParams.get('eventName')
     const fromBlock = url.searchParams.get('fromBlock')
     const toBlock = url.searchParams.get('toBlock')
+    const wallet = lower(url.searchParams.get('walletAddress'))
     let list: IndexedEvent[] = [...db.events].sort((a, b) => b.blockNumber - a.blockNumber)
     if (ca) list = list.filter((e) => e.contractAddress.toLowerCase() === ca)
     if (name) list = list.filter((e) => e.eventName === name)
     if (fromBlock) list = list.filter((e) => e.blockNumber >= Number(fromBlock))
     if (toBlock) list = list.filter((e) => e.blockNumber <= Number(toBlock))
+    // Equivalente mock do `jsonb_path_exists` real (E22/DEC-080): casa se o endereço aparecer como
+    // valor de QUALQUER parâmetro decodificado, não uma chave fixa — evento raw nunca casa.
+    if (wallet) {
+      list = list.filter(
+        (e) =>
+          e.decoded &&
+          Object.values(e.decodedParameters ?? {}).some((v) => typeof v === 'string' && v.toLowerCase() === wallet),
+      )
+    }
     return HttpResponse.json(page(list, url))
   }),
 
@@ -248,6 +267,76 @@ export const handlers = [
       blockNumber: 150000,
     }))
     return HttpResponse.json(page(snapshots, url))
+  }),
+
+  // ---------------- Carteiras (E22) ----------------
+
+  http.get('*/v1/wallets', async ({ request }) => {
+    await delay(120)
+    const url = new URL(request.url)
+    const network = url.searchParams.get('network')
+    let list = db.wallets
+    if (network) list = list.filter((w) => w.network === network)
+    return HttpResponse.json(page(list, url))
+  }),
+
+  http.post('*/v1/wallets', async ({ request }) => {
+    const body = (await request.json()) as CreateWalletPayload
+    if (findWallet(body.address)) {
+      return HttpResponse.json({ code: 'WALLET_ALREADY_EXISTS', message: 'Carteira já cadastrada', timestamp: new Date().toISOString() }, { status: 409 })
+    }
+    const created: Wallet = {
+      id: helpers.uid(),
+      address: body.address.toLowerCase(),
+      label: body.label,
+      description: body.description,
+      network: body.network,
+      status: 'ACTIVE',
+      // Mesma heurística do backend real (`eth_getCode`): aqui, "tem bytecode" = é um dos endereços de
+      // contrato já cadastrados no seed — o suficiente pra demonstrar o aviso sem simular RPC de verdade.
+      looksLikeContract: db.contracts.some((c) => c.address.toLowerCase() === body.address.toLowerCase()),
+      looksLikeContractAcknowledged: false,
+    }
+    db.wallets.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+
+  // Precisa vir ANTES de `/v1/wallets/:address` — senão "suggestions" seria capturado como endereço.
+  http.get('*/v1/wallets/suggestions', async ({ request }) => {
+    const url = new URL(request.url)
+    const network = url.searchParams.get('network')
+    const known = new Set(db.wallets.map((w) => w.address.toLowerCase()))
+    let balances = db.balances
+    if (network) balances = balances.filter((b) => b.network === network)
+    const candidates = [...new Set(balances.map((b) => b.walletAddress.toLowerCase()))].filter((a) => !known.has(a))
+    return HttpResponse.json(candidates)
+  }),
+
+  http.get('*/v1/wallets/:address', async ({ params }) => {
+    const w = findWallet(String(params.address))
+    return w ? HttpResponse.json(w) : notFound('WALLET_NOT_FOUND', 'Carteira não encontrada')
+  }),
+
+  http.put('*/v1/wallets/:address', async ({ params, request }) => {
+    const w = findWallet(String(params.address))
+    if (!w) return notFound('WALLET_NOT_FOUND')
+    const body = (await request.json()) as UpdateWalletPayload
+    Object.assign(w, body)
+    return HttpResponse.json(w)
+  }),
+
+  http.patch('*/v1/wallets/:address/status', async ({ params, request }) => {
+    const w = findWallet(String(params.address))
+    if (!w) return notFound('WALLET_NOT_FOUND')
+    w.status = ((await request.json()) as UpdateWalletStatusPayload).status
+    return HttpResponse.json(w)
+  }),
+
+  http.patch('*/v1/wallets/:address/contract-warning', async ({ params }) => {
+    const w = findWallet(String(params.address))
+    if (!w) return notFound('WALLET_NOT_FOUND')
+    w.looksLikeContractAcknowledged = true
+    return HttpResponse.json(w)
   }),
 
   // ---------------- Webhooks ----------------

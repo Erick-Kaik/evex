@@ -1,0 +1,5 @@
+description: Uma carteira cadastrada.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/wallet.yaml"

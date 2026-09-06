@@ -23,6 +23,7 @@ class EventsApiServiceImpl(
 
     override fun listEvents(
         contractAddress: kotlin.String?,
+        walletAddress: kotlin.String?,
         eventName: kotlin.String?,
         fromBlock: kotlin.Long?,
         toBlock: kotlin.Long?,
@@ -38,6 +39,7 @@ class EventsApiServiceImpl(
             toBlock = toBlock,
             fromDate = fromDate?.toInstant(),
             toDate = toDate?.toInstant(),
+            walletAddress = walletAddress?.lowercase(),
         )
         val result = eventQueryService.search(filter, page, size)
         return EventPage(

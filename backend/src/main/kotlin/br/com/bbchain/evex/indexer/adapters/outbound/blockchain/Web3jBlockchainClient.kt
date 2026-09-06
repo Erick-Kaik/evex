@@ -7,6 +7,7 @@ import br.com.bbchain.evex.indexer.domain.blockchain.RpcRangeException
 import java.time.Instant
 import org.springframework.stereotype.Component
 import org.web3j.protocol.Web3j
+import org.web3j.protocol.core.DefaultBlockParameter
 import org.web3j.protocol.core.DefaultBlockParameterNumber
 import org.web3j.protocol.core.Response
 import org.web3j.protocol.core.methods.request.EthFilter
@@ -27,7 +28,10 @@ class Web3jBlockchainClient(
     properties: BlockchainProperties,
 ) : BlockchainPort {
 
-    private val web3j: Web3j = Web3j.build(HttpService(properties.rpcUrl))
+    // `internal var` (não `private val`) pelo mesmo motivo de `isRangeError`/`toBlockchainLog` abaixo:
+    // permite ao [Web3jBlockchainClientTest] substituir por um `Web3j` mockado (MockK) sem HTTP real,
+    // já que o `test` source set é associado ao `main` pelo plugin Kotlin e enxerga `internal`.
+    internal var web3j: Web3j = Web3j.build(HttpService(properties.rpcUrl))
 
     override fun currentBlockNumber(): Long =
         web3j.ethBlockNumber().send().blockNumber.toLong()
@@ -59,6 +63,16 @@ class Web3jBlockchainClient(
         val block = web3j.ethGetBlockByNumber(DefaultBlockParameterNumber(blockNumber), false).send().block
             ?: throw IllegalStateException("Bloco $blockNumber não encontrado (eth_getBlockByNumber retornou nulo)")
         return Instant.ofEpochSecond(block.timestamp.toLong())
+    }
+
+    // Primeiro uso de `eth_getCode` no Evex (E22/DEC-080). Mesmo padrão de tratamento de erro de
+    // `currentBlockNumber`/`getBlockTimestamp`: sem checagem de `hasError()` própria — falha de
+    // transporte (`IOException`) sobe crua para quem chamou. Não é candidato a `RpcRangeException`
+    // (essa é exclusiva de `eth_getLogs`, que pode ser recusado por range grande demais; `eth_getCode`
+    // é uma consulta pontual de 1 endereço em 1 bloco, sem noção de "range").
+    override fun hasCode(address: String): Boolean {
+        val code = web3j.ethGetCode(address, DefaultBlockParameter.valueOf("latest")).send().code
+        return code != "0x"
     }
 
     /**

@@ -5,6 +5,7 @@ get:
   summary: Lista eventos indexados
   parameters:
     - $ref: "../base/components/param/query/event-contract-address.yaml"
+    - $ref: "../base/components/param/query/event-wallet-address.yaml"
     - $ref: "../base/components/param/query/event-name.yaml"
     - $ref: "../base/components/param/query/from-block.yaml"
     - $ref: "../base/components/param/query/to-block.yaml"

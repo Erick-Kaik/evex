@@ -19,11 +19,14 @@ import {
   Typography,
 } from '@mui/material'
 import type { AssetBalance, AssetBalanceSnapshot, Network } from '../../api/api'
+import { AddressCell } from '../../components/AddressCell'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { NetworkSelect } from '../../components/NetworkSelect'
 import { Pagination } from '../../components/Pagination'
 import { ContractAutocomplete } from '../../components/ContractAutocomplete'
 import type { ContractRef } from '../../components/ContractAutocomplete'
+import { WalletAutocomplete } from '../../components/WalletAutocomplete'
+import type { WalletRef } from '../../components/WalletAutocomplete'
 import type { BalanceFilters } from './useBalances'
 import { useBalanceHistory, useBalances } from './useBalances'
 
@@ -43,6 +46,10 @@ function isSnapshot(row: AssetBalance | AssetBalanceSnapshot): row is AssetBalan
 export function BalanceQuerySection() {
   const [mode, setMode] = useState<Mode>('current')
   const [walletAddress, setWalletAddress] = useState('')
+  const [walletRef, setWalletRef] = useState<WalletRef | null>(null)
+  // Mesmo padrão dual do contrato (autocomplete por padrão, `manualWallet` libera texto livre) —
+  // antes era só um `TextField` livre (E22, DEC-081).
+  const [manualWallet, setManualWallet] = useState(false)
   const [contractAddress, setContractAddress] = useState('')
   const [contractRef, setContractRef] = useState<ContractRef | null>(null)
   // Por padrão o contrato vem da lista de monitorados; `manualContract` libera digitar um endereço
@@ -52,6 +59,7 @@ export function BalanceQuerySection() {
   const [network, setNetwork] = useState<Network | ''>('')
   const [date, setDate] = useState('')
 
+  const effectiveWalletAddress = manualWallet ? walletAddress : (walletRef?.address ?? '')
   const effectiveContractAddress = manualContract ? contractAddress : (contractRef?.address ?? '')
   const effectiveNetwork: Network | '' = manualContract ? network : (contractRef?.network ?? '')
 
@@ -67,7 +75,7 @@ export function BalanceQuerySection() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setFilters({
-      walletAddress: walletAddress || undefined,
+      walletAddress: effectiveWalletAddress || undefined,
       contractAddress: effectiveContractAddress || undefined,
       tokenId: tokenId || undefined,
       network: effectiveNetwork === '' ? undefined : effectiveNetwork,
@@ -94,42 +102,31 @@ export function BalanceQuerySection() {
 
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
         <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 2, alignItems: 'flex-end' }}>
-          <TextField
-            label="Carteira"
-            size="small"
-            value={walletAddress}
-            onChange={(event) => setWalletAddress(event.target.value)}
-            placeholder="0x..."
-            slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
-            sx={{ width: 240 }}
-          />
-          {manualContract ? (
-            <Stack sx={{ gap: 0.25 }}>
-              <TextField
-                label="Contrato"
-                size="small"
-                value={contractAddress}
-                onChange={(event) => setContractAddress(event.target.value)}
-                placeholder="0x..."
-                slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
-                sx={{ width: 240 }}
-              />
-              <Link component="button" type="button" variant="caption" onClick={() => setManualContract(false)}>
-                escolher da lista
-              </Link>
-            </Stack>
+          {manualWallet ? (
+            <TextField
+              label="Carteira"
+              size="small"
+              value={walletAddress}
+              onChange={(event) => setWalletAddress(event.target.value)}
+              placeholder="0x..."
+              slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+              sx={{ width: 240 }}
+            />
           ) : (
-            <Stack sx={{ gap: 0.25 }}>
-              <ContractAutocomplete
-                value={contractRef}
-                onChange={setContractRef}
-                label="Contrato"
-                sx={{ width: 260 }}
-              />
-              <Link component="button" type="button" variant="caption" onClick={() => setManualContract(true)}>
-                digitar endereço manualmente
-              </Link>
-            </Stack>
+            <WalletAutocomplete value={walletRef} onChange={setWalletRef} label="Carteira" sx={{ width: 260 }} />
+          )}
+          {manualContract ? (
+            <TextField
+              label="Contrato"
+              size="small"
+              value={contractAddress}
+              onChange={(event) => setContractAddress(event.target.value)}
+              placeholder="0x..."
+              slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+              sx={{ width: 240 }}
+            />
+          ) : (
+            <ContractAutocomplete value={contractRef} onChange={setContractRef} label="Contrato" sx={{ width: 260 }} />
           )}
           <TextField
             label="Token ID"
@@ -155,6 +152,30 @@ export function BalanceQuerySection() {
           <Button type="submit" variant="contained">
             Consultar
           </Button>
+        </Stack>
+
+        {/* Fora da `Stack` de filtros de propósito: um item mais alto (label + link) dentro de uma
+            `Stack` `alignItems: 'flex-end'` empurra os campos vizinhos mais curtos pra baixo,
+            deixando o campo de contrato visualmente "acima" dos outros. */}
+        <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 2 }}>
+          {manualWallet ? (
+            <Link component="button" type="button" variant="caption" sx={{ display: 'block', mt: 0.5 }} onClick={() => setManualWallet(false)}>
+              escolher carteira da lista
+            </Link>
+          ) : (
+            <Link component="button" type="button" variant="caption" sx={{ display: 'block', mt: 0.5 }} onClick={() => setManualWallet(true)}>
+              digitar endereço da carteira manualmente
+            </Link>
+          )}
+          {manualContract ? (
+            <Link component="button" type="button" variant="caption" sx={{ display: 'block', mt: 0.5 }} onClick={() => setManualContract(false)}>
+              escolher contrato da lista
+            </Link>
+          ) : (
+            <Link component="button" type="button" variant="caption" sx={{ display: 'block', mt: 0.5 }} onClick={() => setManualContract(true)}>
+              digitar endereço do contrato manualmente
+            </Link>
+          )}
         </Stack>
       </Box>
 
@@ -186,8 +207,12 @@ export function BalanceQuerySection() {
             <TableBody>
               {data.content.map((row, index) => (
                 <TableRow key={`${row.walletAddress}-${row.contractAddress}-${row.tokenId ?? index}`}>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{row.walletAddress}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{row.contractAddress}</TableCell>
+                  <TableCell>
+                    <AddressCell address={row.walletAddress} kind="wallet" />
+                  </TableCell>
+                  <TableCell>
+                    <AddressCell address={row.contractAddress} kind="contract" />
+                  </TableCell>
                   <TableCell>{row.tokenId ?? '—'}</TableCell>
                   <TableCell sx={{ fontFamily: 'monospace' }}>{row.balance}</TableCell>
                   {mode === 'history' && isSnapshot(row) && <TableCell>{row.blockNumber}</TableCell>}

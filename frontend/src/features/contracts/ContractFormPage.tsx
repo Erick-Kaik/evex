@@ -29,6 +29,7 @@ import { StatusToggle } from '../../components/StatusToggle'
 import type { StatusOption } from '../../components/StatusToggle'
 import type { PageMode } from '../../components/pageMode'
 import { AbiSection } from './AbiSection'
+import { ContractBalancesSection } from './ContractBalancesSection'
 import {
   useContract,
   useCreateContract,
@@ -275,6 +276,7 @@ function ContractViewEditForm({ address, mode }: { address: string; mode: PageMo
           <ContractFieldsForm key={contract.data.address} contract={contract.data} mode={mode} />
 
           <AbiSection address={address} />
+          <ContractBalancesSection address={address} />
         </>
       )}
     </Box>

@@ -1,6 +1,5 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link as RouterLink } from 'react-router'
 import {
   Box,
   Button,
@@ -19,37 +18,42 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
+import { AddressCell } from '../../components/AddressCell'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { CopyableHash } from '../../components/CopyableHash'
 import { Pagination } from '../../components/Pagination'
 import { ContractAutocomplete } from '../../components/ContractAutocomplete'
 import type { ContractRef } from '../../components/ContractAutocomplete'
+import { WalletAutocomplete } from '../../components/WalletAutocomplete'
+import type { WalletRef } from '../../components/WalletAutocomplete'
 import { EventPicker } from '../../components/EventPicker'
-import { useMonitoredContractsList } from '../../components/contractCatalog'
 import { DecodedParamValue } from './DecodedParamValue'
 import type { EventFilters } from './useEvents'
 import { useEvents } from './useEvents'
 
 const PAGE_SIZE = 20
 
-function shortenAddress(address: string): string {
-  return address.length > 12 ? `${address.slice(0, 8)}…${address.slice(-4)}` : address
-}
-
 /**
  * Visualização de eventos indexados com filtros básicos (doc §6) — raw e decodificados, parâmetros
  * decodificados formatados por tipo em runtime (E13, ver `DecodedParamValue`).
  *
  * E16: filtro de contrato via `<ContractAutocomplete>` + evento via `<EventPicker>` quando há
- * contrato selecionado (degradação natural pra texto livre quando não); coluna "Contrato" na tabela;
- * `raw` → "sem ABI" com tooltip. Como o Evex indexa a rede inteira (DEC-001) e a tabela mostra
- * contratos não-monitorados, um link discreto revela um campo de endereço livre (`0x…`) para
- * filtrar eventos de um contrato fora da lista de monitorados.
+ * contrato selecionado (degradação natural pra texto livre quando não); coluna "Contrato" na tabela
+ * (`<AddressCell>`, E22); `raw` → "sem ABI" com tooltip. Como o Evex indexa a rede inteira (DEC-001) e
+ * a tabela mostra contratos não-monitorados, um link discreto revela um campo de endereço livre
+ * (`0x…`) para filtrar eventos de um contrato fora da lista de monitorados.
+ *
+ * E22: filtro adicional "Carteira" via `<WalletAutocomplete>` (mesmo padrão dual autocomplete/manual
+ * do contrato) — `walletAddress` casa contra qualquer parâmetro decodificado do tipo `address` do
+ * evento (`jsonb_path_exists` no backend, não uma coluna fixa).
  */
 export function EventsPage() {
   const [contractRef, setContractRef] = useState<ContractRef | null>(null)
   const [manualContract, setManualContract] = useState(false)
   const [manualAddress, setManualAddress] = useState('')
+  const [walletRef, setWalletRef] = useState<WalletRef | null>(null)
+  const [manualWallet, setManualWallet] = useState(false)
+  const [manualWalletAddress, setManualWalletAddress] = useState('')
   const [eventName, setEventName] = useState('')
   const [fromBlock, setFromBlock] = useState('')
   const [toBlock, setToBlock] = useState('')
@@ -62,17 +66,8 @@ export function EventsPage() {
 
   const { data, isPending, isError, error } = useEvents(filters, page, PAGE_SIZE)
 
-  // Nomes de contrato pra coluna "Contrato" — uma consulta só, compartilhada (React Query).
-  const contractsList = useMonitoredContractsList()
-  const contractsByAddress = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const contract of contractsList.data ?? []) {
-      map.set(contract.address.toLowerCase(), contract.name)
-    }
-    return map
-  }, [contractsList.data])
-
   const contractAddress = manualContract ? manualAddress.trim() : (contractRef?.address ?? '')
+  const walletAddress = manualWallet ? manualWalletAddress.trim() : (walletRef?.address ?? '')
   // Só usa o `<EventPicker>` (catálogo) quando o contrato veio da lista de monitorados.
   const showEventPicker = !manualContract && contractAddress !== ''
 
@@ -80,6 +75,7 @@ export function EventsPage() {
     event.preventDefault()
     setFilters({
       contractAddress: contractAddress || undefined,
+      walletAddress: walletAddress || undefined,
       eventName: eventName || undefined,
       fromBlock: fromBlock === '' ? undefined : Number(fromBlock),
       toBlock: toBlock === '' ? undefined : Number(toBlock),
@@ -98,51 +94,24 @@ export function EventsPage() {
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 3 }}>
         <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 2, alignItems: 'flex-end' }}>
           {manualContract ? (
-            <Stack sx={{ gap: 0.25 }}>
-              <TextField
-                label="Contrato"
-                size="small"
-                value={manualAddress}
-                onChange={(event) => setManualAddress(event.target.value)}
-                placeholder="0x..."
-                slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
-                sx={{ width: 260 }}
-              />
-              <Link
-                component="button"
-                type="button"
-                variant="caption"
-                onClick={() => {
-                  setManualContract(false)
-                  setManualAddress('')
-                }}
-              >
-                escolher da lista
-              </Link>
-            </Stack>
+            <TextField
+              label="Contrato"
+              size="small"
+              value={manualAddress}
+              onChange={(event) => setManualAddress(event.target.value)}
+              placeholder="0x..."
+              slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+              sx={{ width: 260 }}
+            />
           ) : (
-            <Stack sx={{ gap: 0.25 }}>
-              <ContractAutocomplete
-                value={contractRef}
-                onChange={(next) => {
-                  setContractRef(next)
-                  setEventName('')
-                }}
-                sx={{ width: 260 }}
-              />
-              <Link
-                component="button"
-                type="button"
-                variant="caption"
-                onClick={() => {
-                  setManualContract(true)
-                  setContractRef(null)
-                  setEventName('')
-                }}
-              >
-                digitar endereço manualmente
-              </Link>
-            </Stack>
+            <ContractAutocomplete
+              value={contractRef}
+              onChange={(next) => {
+                setContractRef(next)
+                setEventName('')
+              }}
+              sx={{ width: 260 }}
+            />
           )}
           {showEventPicker ? (
             <EventPicker
@@ -160,6 +129,19 @@ export function EventsPage() {
               placeholder="ex.: Transfer"
               sx={{ width: 160 }}
             />
+          )}
+          {manualWallet ? (
+            <TextField
+              label="Carteira"
+              size="small"
+              value={manualWalletAddress}
+              onChange={(event) => setManualWalletAddress(event.target.value)}
+              placeholder="0x..."
+              slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+              sx={{ width: 260 }}
+            />
+          ) : (
+            <WalletAutocomplete value={walletRef} onChange={setWalletRef} sx={{ width: 260 }} />
           )}
           <TextField
             label="Bloco inicial"
@@ -199,6 +181,67 @@ export function EventsPage() {
             Filtrar
           </Button>
         </Stack>
+
+        {/* Fora da `Stack` de filtros de propósito: um item mais alto (label + link) dentro de uma
+            `Stack` `alignItems: 'flex-end'` empurra os campos vizinhos mais curtos pra baixo,
+            deixando o campo de contrato visualmente "acima" dos outros. */}
+        <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 2 }}>
+          {manualContract ? (
+            <Link
+              component="button"
+              type="button"
+              variant="caption"
+              sx={{ display: 'block', mt: 0.5 }}
+              onClick={() => {
+                setManualContract(false)
+                setManualAddress('')
+              }}
+            >
+              escolher contrato da lista
+            </Link>
+          ) : (
+            <Link
+              component="button"
+              type="button"
+              variant="caption"
+              sx={{ display: 'block', mt: 0.5 }}
+              onClick={() => {
+                setManualContract(true)
+                setContractRef(null)
+                setEventName('')
+              }}
+            >
+              digitar endereço do contrato manualmente
+            </Link>
+          )}
+          {manualWallet ? (
+            <Link
+              component="button"
+              type="button"
+              variant="caption"
+              sx={{ display: 'block', mt: 0.5 }}
+              onClick={() => {
+                setManualWallet(false)
+                setManualWalletAddress('')
+              }}
+            >
+              escolher carteira da lista
+            </Link>
+          ) : (
+            <Link
+              component="button"
+              type="button"
+              variant="caption"
+              sx={{ display: 'block', mt: 0.5 }}
+              onClick={() => {
+                setManualWallet(true)
+                setWalletRef(null)
+              }}
+            >
+              digitar endereço da carteira manualmente
+            </Link>
+          )}
+        </Stack>
       </Box>
 
       {isPending && (
@@ -229,23 +272,12 @@ export function EventsPage() {
             </TableHead>
             <TableBody>
               {data.content.map((evt) => {
-                const contractName = contractsByAddress.get(evt.contractAddress.toLowerCase())
                 return (
                   <Fragment key={evt.id}>
                     <TableRow hover>
                       <TableCell>{evt.blockNumber}</TableCell>
                       <TableCell>
-                        {contractName ? (
-                          <Link component={RouterLink} to={`/contracts/${evt.contractAddress}`}>
-                            {contractName}
-                          </Link>
-                        ) : (
-                          <Tooltip title={evt.contractAddress}>
-                            <Box component="span" sx={{ fontFamily: 'monospace' }}>
-                              {shortenAddress(evt.contractAddress)}
-                            </Box>
-                          </Tooltip>
-                        )}
+                        <AddressCell address={evt.contractAddress} kind="contract" />
                       </TableCell>
                       <TableCell>
                         <CopyableHash value={evt.txHash} />

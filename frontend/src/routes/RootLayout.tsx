@@ -4,6 +4,7 @@ import { useControlPanelAvailable } from '../features/demo/useControlPanel'
 
 const NAV_LINKS = [
   { to: '/contracts', label: 'Contratos' },
+  { to: '/wallets', label: 'Carteiras' },
   { to: '/events', label: 'Eventos' },
   { to: '/balances', label: 'Saldos' },
   { to: '/webhooks', label: 'Webhooks' },

@@ -1,0 +1,15 @@
+type: object
+description: >-
+  Corpo da atualização de uma carteira cadastrada. `address` e `network` não fazem parte deste payload
+  — são imutáveis depois de criados.
+required:
+  - label
+properties:
+  label:
+    type: string
+    minLength: 1
+    description: Nome dado pelo usuário à carteira.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre da carteira.

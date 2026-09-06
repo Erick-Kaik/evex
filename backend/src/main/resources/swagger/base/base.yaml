@@ -20,6 +20,8 @@ tags:
     description: Consulta de saldo atual e histórico (snapshots diários, doc §4.4).
   - name: Webhooks
     description: Configuração de webhooks, fila de entregas e log de tentativas (doc §4.6).
+  - name: Wallets
+    description: Cadastro e consulta de carteiras conhecidas (E22).
 
 paths:
   /v1/contracts:
@@ -70,6 +72,16 @@ paths:
     $ref: "../paths/webhook-status.yaml"
   /v1/webhooks/{id}/deliveries:
     $ref: "../paths/webhook-deliveries.yaml"
+  /v1/wallets/suggestions:
+    $ref: "../paths/wallet-suggestions.yaml"
+  /v1/wallets:
+    $ref: "../paths/wallets.yaml"
+  /v1/wallets/{address}:
+    $ref: "../paths/wallet-detail.yaml"
+  /v1/wallets/{address}/status:
+    $ref: "../paths/wallet-status.yaml"
+  /v1/wallets/{address}/contract-warning:
+    $ref: "../paths/wallet-contract-warning.yaml"
 
 # Sem seção `components:` manual aqui de propósito (ver docs/decisions.md DEC-012 / nota do bundle
 # em openapi-first-workflow.md): os arquivos de paths/ já referenciam os componentes diretamente por

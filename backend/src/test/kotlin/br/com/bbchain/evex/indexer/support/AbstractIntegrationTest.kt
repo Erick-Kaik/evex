@@ -1,5 +1,8 @@
 package br.com.bbchain.evex.indexer.support
 
+import br.com.bbchain.evex.indexer.config.FlywayMigrationOrderingConfig
+import br.com.bbchain.evex.indexer.config.PostSchemaFlywayMigrator
+import org.springframework.context.annotation.Import
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.containers.PostgreSQLContainer
@@ -10,7 +13,24 @@ import org.testcontainers.containers.PostgreSQLContainer
  * the companion object) and shared across every test class that extends this one, for the whole JVM
  * run of the test suite — never stopped explicitly, Testcontainers' Ryuk reaper cleans it up when the
  * JVM exits. Avoids paying container startup cost per test class.
+ *
+ * `@Import(FlywayMigrationOrderingConfig::class, PostSchemaFlywayMigrator::class)` (achado desta
+ * sessão, complemento à DEC-041): `@DataJpaTest` faz slice do contexto e exclui `@Configuration`/
+ * `@Component` "normais" (`TypeExcludeFilter`, mesmo mecanismo de `@WebMvcTest`/`@JsonTest`) — sem
+ * este `@Import` explícito, a reordenação Flyway-depois-do-Hibernate de `PostSchemaFlywayMigrator`
+ * nunca entra no contexto de um `@DataJpaTest`, e o `FlywayMigrationInitializer` padrão do Spring Boot
+ * volta a rodar **antes** do `ddl-auto: update` criar o schema. Contra um container Postgres
+ * realmente vazio (1ª classe de teste a tocar o banco na execução da suíte), isso derruba a
+ * `V1__contract_abis_unique_open_version.sql` com "relation contract_abis does not exist" — reproduzido
+ * de forma **intermitente** nesta sessão (a ordem de descoberta de classes de teste do JUnit5/Gradle
+ * não é garantida entre execuções; quando por acaso um `@SpringBootTest` de contexto completo — que
+ * inclui `PostSchemaFlywayMigrator` naturalmente via component scan — roda antes de qualquer
+ * `@DataJpaTest` no mesmo container compartilhado, o schema já existe e o `@DataJpaTest` nem percebe o
+ * problema; quando não, quebra). `@Import` explícito na base comum resolve de vez, independente de
+ * ordem — idempotente também para os testes que já herdam contexto completo (`@SpringBootTest`), o
+ * Spring apenas ignora o `@Import` duplicado.
  */
+@Import(FlywayMigrationOrderingConfig::class, PostSchemaFlywayMigrator::class)
 abstract class AbstractIntegrationTest {
 
     companion object {

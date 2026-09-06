@@ -6,6 +6,8 @@ const eventsApi = new EventsApi(apiConfiguration)
 
 export interface EventFilters {
   contractAddress?: string
+  /** Filtra eventos onde o endereço aparece em qualquer parâmetro decodificado do tipo `address` (E22). */
+  walletAddress?: string
   eventName?: string
   fromBlock?: number
   toBlock?: number
@@ -21,6 +23,7 @@ export function useEvents(filters: EventFilters, page: number, size: number) {
       (
         await eventsApi.listEvents(
           filters.contractAddress,
+          filters.walletAddress,
           filters.eventName,
           filters.fromBlock,
           filters.toBlock,

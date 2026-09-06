@@ -1,0 +1,11 @@
+description: Página de carteiras cadastradas.
+allOf:
+  - $ref: "./page-metadata.yaml"
+  - type: object
+    required:
+      - content
+    properties:
+      content:
+        type: array
+        items:
+          $ref: "./wallet.yaml"

@@ -129,4 +129,23 @@ class JpaAssetBalanceAdapterTest : AbstractIntegrationTest() {
 
         assertThat(yesterday.content).isEmpty()
     }
+
+    @Test
+    fun `findDistinctWalletAddresses returns distinct addresses, deduplicated across contracts, filtered by network`() {
+        val wallet = randomAddress()
+        val contractA = randomAddress()
+        val contractB = randomAddress()
+        val otherNetworkWallet = randomAddress()
+        adapter.applyDeltas(listOf(BalanceDelta(wallet, contractA, Network.TESTNET, tokenId = null, amount = BigInteger.ONE)))
+        adapter.applyDeltas(listOf(BalanceDelta(wallet, contractB, Network.TESTNET, tokenId = null, amount = BigInteger.ONE)))
+        adapter.applyDeltas(listOf(BalanceDelta(otherNetworkWallet, contractA, Network.MAINNET, tokenId = null, amount = BigInteger.ONE)))
+
+        val testnetOnly = adapter.findDistinctWalletAddresses(Network.TESTNET)
+        assertThat(testnetOnly).contains(wallet).doesNotContain(otherNetworkWallet)
+        // O mesmo wallet apareceu em 2 contratos distintos, mas só deve contar 1 vez (DISTINCT).
+        assertThat(testnetOnly.count { it == wallet }).isEqualTo(1)
+
+        val allNetworks = adapter.findDistinctWalletAddresses(null)
+        assertThat(allNetworks).contains(wallet, otherNetworkWallet)
+    }
 }

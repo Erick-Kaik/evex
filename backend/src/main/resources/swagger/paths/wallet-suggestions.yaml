@@ -1,0 +1,16 @@
+get:
+  tags:
+    - Wallets
+  operationId: suggestWallets
+  summary: Sugere carteiras a partir de endereços já observados em saldos, ainda não cadastrados
+  description: >-
+    Descoberta automática de carteiras (E22 / DEC-080) — candidatos = endereços distintos de
+    `asset_balances.wallet_address` que ainda não estão em `monitored_wallets`. Não usa Blockscout nem
+    detecção de interface: é uma consulta simples sobre dado já projetado.
+  parameters:
+    - $ref: "../base/components/param/query/network.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/wallet-address-list-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"

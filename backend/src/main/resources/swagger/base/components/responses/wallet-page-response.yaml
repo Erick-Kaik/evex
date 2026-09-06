@@ -1,0 +1,5 @@
+description: Página de carteiras cadastradas.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/wallet-page.yaml"

@@ -1,0 +1,24 @@
+type: object
+description: >-
+  Corpo do cadastro de uma nova carteira. `status` não faz parte deste payload — toda carteira nova
+  nasce com status ACTIVE no servidor; `looksLikeContract` também não — é calculado pelo servidor
+  (eth_getCode) e devolvido na resposta.
+required:
+  - address
+  - label
+  - network
+properties:
+  address:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Endereço da carteira na rede.
+  label:
+    type: string
+    minLength: 1
+    description: Nome dado pelo usuário à carteira.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre da carteira.
+  network:
+    $ref: "../enum/network.yaml"

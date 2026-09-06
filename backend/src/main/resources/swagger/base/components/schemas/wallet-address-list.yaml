@@ -1,0 +1,8 @@
+type: array
+description: >-
+  Endereços candidatos a cadastro de carteira (E22 / DEC-080) — já observados em `asset_balances` e
+  ainda não cadastrados em `monitored_wallets`. Sem paginação: lista curta por natureza (uma instância
+  do Evex por rede/cliente).
+items:
+  type: string
+  pattern: "^0x[a-fA-F0-9]{40}$"
