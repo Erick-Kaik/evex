@@ -22,6 +22,14 @@ tags:
     description: Configuração de webhooks, fila de entregas e log de tentativas (doc §4.6).
   - name: Wallets
     description: Cadastro e consulta de carteiras conhecidas (E22).
+  - name: EnrichmentProfiles
+    description: >-
+      Perfis de enriquecimento — chamadas de leitura on-chain (eth_call) reaproveitáveis por webhooks
+      (E19/DEC-082).
+  - name: EntityModels
+    description: >-
+      Modelos de entidade — acumulação de campos de eventos diferentes sobre a mesma entidade lógica,
+      reaproveitável por webhooks (E19/DEC-082).
 
 paths:
   /v1/contracts:
@@ -36,6 +44,10 @@ paths:
     $ref: "../paths/contract-abi-suggestions.yaml"
   /v1/contracts/{address}/events:
     $ref: "../paths/contract-events.yaml"
+  /v1/contracts/{address}/methods:
+    $ref: "../paths/contract-methods.yaml"
+  /v1/contracts/{address}/abi/entries:
+    $ref: "../paths/contract-abi-entries.yaml"
   /v1/events:
     $ref: "../paths/events.yaml"
   /v1/redecode:
@@ -82,6 +94,18 @@ paths:
     $ref: "../paths/wallet-status.yaml"
   /v1/wallets/{address}/contract-warning:
     $ref: "../paths/wallet-contract-warning.yaml"
+  /v1/enrichment-profiles:
+    $ref: "../paths/enrichment-profiles.yaml"
+  /v1/enrichment-profiles/{id}:
+    $ref: "../paths/enrichment-profile-detail.yaml"
+  /v1/enrichment-profiles/{id}/status:
+    $ref: "../paths/enrichment-profile-status.yaml"
+  /v1/entity-models:
+    $ref: "../paths/entity-models.yaml"
+  /v1/entity-models/{id}:
+    $ref: "../paths/entity-model-detail.yaml"
+  /v1/entity-models/{id}/status:
+    $ref: "../paths/entity-model-status.yaml"
 
 # Sem seção `components:` manual aqui de propósito (ver docs/decisions.md DEC-012 / nota do bundle
 # em openapi-first-workflow.md): os arquivos de paths/ já referenciam os componentes diretamente por

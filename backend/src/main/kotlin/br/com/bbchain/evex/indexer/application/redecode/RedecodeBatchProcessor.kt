@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.application.redecode
 
 import br.com.bbchain.evex.indexer.application.balance.BalanceProjectionService
+import br.com.bbchain.evex.indexer.application.model.EntityModelProjectionService
 import br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingService
 import br.com.bbchain.evex.indexer.domain.abi.AbiDecodingPort
 import br.com.bbchain.evex.indexer.domain.abi.RawLog
@@ -30,6 +31,7 @@ class RedecodeBatchProcessor(
     private val abiDecoding: AbiDecodingPort,
     private val balanceProjectionService: BalanceProjectionService,
     private val webhookMatchingService: WebhookMatchingService,
+    private val entityModelProjectionService: EntityModelProjectionService,
 ) {
     /**
      * Busca até [batchSize] candidatos (`decoded=false` + [filter]); tenta decodificar cada um contra
@@ -54,6 +56,10 @@ class RedecodeBatchProcessor(
             // E7: projeta saldo só pros eventos que acabaram de virar decoded=true neste lote — o
             // cenário central de "cadastrar ABI/config de saldo depois do fato" (doc §4.3/§4.4).
             balanceProjectionService.projectBatch(changed)
+            // E19/DEC-082 (achado E25, corrigido): antes do matching de webhook, mesmo racional de
+            // IngestionBatchProcessor — senão um evento nunca vê sua própria contribuição (nem a de
+            // outro evento do mesmo lote) no `{{model.*}}` da entrega que ele mesmo dispara.
+            entityModelProjectionService.projectBatch(changed)
             // E8: mesmo raciocínio, agora pra webhooks — cadastrar ABI decodifica o histórico e
             // também dispara os webhooks configurados pra esses eventos que acabaram de decodificar.
             webhookMatchingService.matchAndEnqueue(changed)

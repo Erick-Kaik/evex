@@ -4,16 +4,30 @@ import br.com.bbchain.evex.indexer.config.BlockchainProperties
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainLog
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainPort
 import br.com.bbchain.evex.indexer.domain.blockchain.RpcRangeException
+import java.math.BigInteger
 import java.time.Instant
 import org.springframework.stereotype.Component
+import org.web3j.abi.FunctionEncoder
+import org.web3j.abi.FunctionReturnDecoder
+import org.web3j.abi.TypeReference
+import org.web3j.abi.datatypes.Address
+import org.web3j.abi.datatypes.AbiTypes
+import org.web3j.abi.datatypes.Bool
+import org.web3j.abi.datatypes.BytesType
+import org.web3j.abi.datatypes.Function
+import org.web3j.abi.datatypes.NumericType
+import org.web3j.abi.datatypes.Type
+import org.web3j.abi.datatypes.Utf8String
 import org.web3j.protocol.Web3j
 import org.web3j.protocol.core.DefaultBlockParameter
 import org.web3j.protocol.core.DefaultBlockParameterNumber
 import org.web3j.protocol.core.Response
 import org.web3j.protocol.core.methods.request.EthFilter
+import org.web3j.protocol.core.methods.request.Transaction
 import org.web3j.protocol.core.methods.response.EthLog
 import org.web3j.protocol.core.methods.response.Log
 import org.web3j.protocol.http.HttpService
+import org.web3j.utils.Numeric
 
 /**
  * Implementação de [BlockchainPort] via Web3j `HttpService` direto — **sem BBChain Keeper** (regra
@@ -73,6 +87,76 @@ class Web3jBlockchainClient(
     override fun hasCode(address: String): Boolean {
         val code = web3j.ethGetCode(address, DefaultBlockParameter.valueOf("latest")).send().code
         return code != "0x"
+    }
+
+    // E19/DEC-082 ("Perfil de Enriquecimento"): eth_call de leitura no bloco histórico informado (não
+    // `latest`). Mesmo padrão de tratamento de erro de `currentBlockNumber`/`getBlockTimestamp`/
+    // `hasCode`: sem checagem de `hasError()` própria (essa é exclusiva de `getLogs`, que precisa
+    // distinguir erro de range pra disparar auto-shrink) — se o nó retornar erro JSON-RPC, o campo
+    // `result` vem nulo (JSON-RPC nunca preenche `result` e `error` juntos), e isso já basta pra
+    // detectar a falha aqui; qualquer outra falha (timeout, `IOException`) sobe crua, igual às demais.
+    override fun call(
+        contractAddress: String,
+        methodName: String,
+        inputTypes: List<String>,
+        outputTypes: List<String>,
+        args: List<String>,
+        blockNumber: Long,
+    ): List<String> {
+        val inputParameters: List<Type<*>> = inputTypes.zip(args).map { (type, value) -> toSolidityValue(type, value) }
+        val outputParameters: List<TypeReference<*>> = outputTypes.map { TypeReference.makeTypeReference(it) }
+        val function = Function(methodName, inputParameters, outputParameters)
+        val encodedFunction = FunctionEncoder.encode(function)
+        val transaction = Transaction.createEthCallTransaction(null, contractAddress, encodedFunction)
+        val response = web3j.ethCall(transaction, DefaultBlockParameter.valueOf(BigInteger.valueOf(blockNumber))).send()
+        val result = response.value
+            ?: throw IllegalStateException(
+                "eth_call em $contractAddress.$methodName (bloco $blockNumber) não retornou resultado " +
+                    "(code=${response.error?.code}): ${response.error?.message}",
+            )
+        return FunctionReturnDecoder.decode(result, function.outputParameters).map { it.toCallResultString() }
+    }
+
+    /**
+     * Converte um argumento de entrada (string, na forma como chega de
+     * [br.com.bbchain.evex.indexer.application.webhook.WebhookEnrichmentResolver]) pro [Type] Web3j
+     * correspondente ao tipo Solidity declarado — contraparte de codificação do que
+     * [AbiDecodingAdapter] já faz pra decodificar parâmetros de evento. Cobre os tipos escalares
+     * usados pelos cenários da E19 (`address`/`bool`/`string`/`bytesN`/`bytes`/`uintN`/`intN`); arrays
+     * e tuplas **não são suportados aqui** — `AbiTypes.getType` não distingue a forma de codificar um
+     * argumento de array a partir de uma única string, e nenhuma decisão foi tomada em DEC-082 sobre
+     * qual convenção usar (ex.: CSV, JSON array) pra representar isso num único `String` de [args] —
+     * registrar como complemento da DEC-082 se/quando um cenário real precisar disso.
+     */
+    private fun toSolidityValue(solidityType: String, rawValue: String): Type<*> {
+        val typeClass = AbiTypes.getType(solidityType, false)
+        return when {
+            NumericType::class.java.isAssignableFrom(typeClass) ->
+                typeClass.getConstructor(BigInteger::class.java).newInstance(BigInteger(rawValue)) as Type<*>
+            typeClass == Address::class.java -> Address(rawValue)
+            typeClass == Utf8String::class.java -> Utf8String(rawValue)
+            typeClass == Bool::class.java -> Bool(rawValue.toBoolean())
+            BytesType::class.java.isAssignableFrom(typeClass) ->
+                typeClass.getConstructor(ByteArray::class.java).newInstance(Numeric.hexStringToByteArray(rawValue)) as Type<*>
+            else -> throw IllegalArgumentException(
+                "Tipo Solidity '$solidityType' não suportado em eth_call (E19/DEC-082) — só tipos " +
+                    "escalares; arrays/tuplas ficam para uma decisão futura.",
+            )
+        }
+    }
+
+    /**
+     * Formata o valor decodificado de uma saída de `eth_call` como `String` — mesmo racional de
+     * `AbiDecodingAdapter.formatValue` (`bytes`/`bytesN` viram hex string, arrays Solidity descem um
+     * nível antes de formatar), só que devolvendo sempre `String` (não `Any?`), porque
+     * [BlockchainPort.call] devolve `List<String>` por contrato de porta (E19/DEC-082).
+     */
+    private fun Type<*>.toCallResultString(): String = when (val raw = value) {
+        is ByteArray -> Numeric.toHexString(raw)
+        is List<*> -> raw.joinToString(prefix = "[", postfix = "]") { element ->
+            if (element is Type<*>) element.toCallResultString() else element.toString()
+        }
+        else -> raw.toString()
     }
 
     /**

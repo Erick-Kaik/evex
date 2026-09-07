@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.blockchain
 
 import br.com.bbchain.evex.indexer.application.balance.BalanceProjectionService
+import br.com.bbchain.evex.indexer.application.model.EntityModelProjectionService
 import br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingService
 import br.com.bbchain.evex.indexer.config.IndexerProperties
 import br.com.bbchain.evex.indexer.domain.abi.AbiDecodingPort
@@ -30,6 +31,7 @@ class IngestionBatchProcessor(
     private val indexerProperties: IndexerProperties,
     private val balanceProjectionService: BalanceProjectionService,
     private val webhookMatchingService: WebhookMatchingService,
+    private val entityModelProjectionService: EntityModelProjectionService,
 ) {
     private val logger = LoggerFactory.getLogger(IngestionBatchProcessor::class.java)
 
@@ -80,6 +82,12 @@ class IngestionBatchProcessor(
             // E7: projeta saldo só pros eventos recém-inseridos desta janela (os já existentes foram
             // pulados pela idempotência acima, não precisam reprojetar).
             balanceProjectionService.projectBatch(toSave)
+            // E19/DEC-082 (achado E25, corrigido): roda **antes** do matching de webhook, de propósito
+            // — senão um evento nunca vê sua própria contribuição (nem a de outro evento do mesmo
+            // lote) no `{{model.*}}` da entrega que ele mesmo dispara, porque o registro acumulado só
+            // seria escrito depois de já ter sido lido pra montar o payload. Só banco, mesma transação
+            // (não precisa sair da ingestão como o enriquecimento on-chain).
+            entityModelProjectionService.projectBatch(toSave)
             // E8: casa contra webhooks ativos e enfileira as entregas que baterem — mesma transação,
             // nenhuma chamada HTTP acontece aqui (isso é WebhookDispatchJob, fora da ingestão).
             webhookMatchingService.matchAndEnqueue(toSave)

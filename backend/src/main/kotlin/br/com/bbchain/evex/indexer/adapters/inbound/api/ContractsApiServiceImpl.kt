@@ -1,12 +1,18 @@
 package br.com.bbchain.evex.indexer.adapters.inbound.api
 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.ContractsApiService
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiEntry as AbiEntryDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiEntryKind as AbiEntryKindDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiEntryParam as AbiEntryParamDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiSource as AbiSourceDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiStorageType as AbiStorageTypeDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Contract as ContractDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractAbi as ContractAbiDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractEvent as ContractEventDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractEventInput as ContractEventInputDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractMethod as ContractMethodDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractMethodInput as ContractMethodInputDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractMethodOutput as ContractMethodOutputDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractPage
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ContractStatus as ContractStatusDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.CreateContractPayload
@@ -17,11 +23,17 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Register
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractStatusPayload
 import br.com.bbchain.evex.indexer.application.abi.AbiRegistrationService
+import br.com.bbchain.evex.indexer.application.abi.ContractAbiEntryCatalogService
 import br.com.bbchain.evex.indexer.application.abi.ContractEventCatalogService
+import br.com.bbchain.evex.indexer.application.abi.ContractMethodCatalogService
 import br.com.bbchain.evex.indexer.application.abi.InterfaceDetectionService
 import br.com.bbchain.evex.indexer.application.contract.MonitoredContractService
+import br.com.bbchain.evex.indexer.domain.abi.AbiEntryKind
 import br.com.bbchain.evex.indexer.domain.abi.AbiSource
+import br.com.bbchain.evex.indexer.domain.abi.CatalogedAbiEntry
+import br.com.bbchain.evex.indexer.domain.abi.CatalogedAbiEntryParam
 import br.com.bbchain.evex.indexer.domain.abi.CatalogedEvent
+import br.com.bbchain.evex.indexer.domain.abi.CatalogedMethod
 import br.com.bbchain.evex.indexer.domain.abi.AbiStorageType
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbi
 import br.com.bbchain.evex.indexer.domain.abi.DetectionLevel
@@ -42,6 +54,8 @@ class ContractsApiServiceImpl(
     private val abiRegistrationService: AbiRegistrationService,
     private val interfaceDetectionService: InterfaceDetectionService,
     private val contractEventCatalogService: ContractEventCatalogService,
+    private val contractMethodCatalogService: ContractMethodCatalogService,
+    private val contractAbiEntryCatalogService: ContractAbiEntryCatalogService,
 ) : ContractsApiService {
 
     override fun createMonitoredContract(createContractPayload: CreateContractPayload): ContractDto {
@@ -104,6 +118,12 @@ class ContractsApiServiceImpl(
     override fun listContractEvents(address: kotlin.String): MutableList<ContractEventDto> =
         contractEventCatalogService.catalogFor(address).map { it.toDto() }.toMutableList()
 
+    override fun listContractMethods(address: kotlin.String): MutableList<ContractMethodDto> =
+        contractMethodCatalogService.catalogFor(address).map { it.toDto() }.toMutableList()
+
+    override fun listContractAbiEntries(address: kotlin.String): MutableList<AbiEntryDto> =
+        contractAbiEntryCatalogService.catalogFor(address).map { it.toDto() }.toMutableList()
+
     /**
      * 404 se o contrato não estiver cadastrado — `getByAddress` (não usado no resto deste método)
      * lança [br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException] sozinho;
@@ -153,6 +173,33 @@ class ContractsApiServiceImpl(
     private fun CatalogedEvent.toDto(): ContractEventDto = ContractEventDto(
         name = name,
         inputs = inputs.map { ContractEventInputDto(name = it.name, type = it.type, indexed = it.indexed) }.toMutableList(),
+        validFromBlock = validFromBlock,
+        validToBlock = validToBlock,
+    )
+
+    private fun CatalogedMethod.toDto(): ContractMethodDto = ContractMethodDto(
+        name = name,
+        inputs = inputs.map { ContractMethodInputDto(name = it.name, type = it.type) }.toMutableList(),
+        outputs = outputs.map { ContractMethodOutputDto(name = it.name, type = it.type) }.toMutableList(),
+        validFromBlock = validFromBlock,
+        validToBlock = validToBlock,
+    )
+
+    private fun AbiEntryKind.toDto(): AbiEntryKindDto = AbiEntryKindDto.valueOf(this.name)
+
+    private fun CatalogedAbiEntryParam.toDto(): AbiEntryParamDto = AbiEntryParamDto(
+        name = name,
+        type = type,
+        indexed = indexed,
+    )
+
+    private fun CatalogedAbiEntry.toDto(): AbiEntryDto = AbiEntryDto(
+        kind = kind.toDto(),
+        name = name,
+        stateMutability = stateMutability,
+        inputs = inputs.map { it.toDto() }.toMutableList(),
+        outputs = outputs.map { it.toDto() }.toMutableList(),
+        anonymous = anonymous,
         validFromBlock = validFromBlock,
         validToBlock = validToBlock,
     )

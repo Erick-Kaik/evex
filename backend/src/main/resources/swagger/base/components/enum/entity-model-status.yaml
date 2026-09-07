@@ -1,0 +1,7 @@
+type: string
+description: >-
+  Situação de um Modelo de Entidade (E19/DEC-082). Sem `PAUSED` — só "disponível para novos cadastros"
+  (ACTIVE) vs. "arquivado" (ARCHIVED).
+enum:
+  - ACTIVE
+  - ARCHIVED

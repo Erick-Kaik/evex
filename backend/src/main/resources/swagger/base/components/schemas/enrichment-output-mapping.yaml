@@ -1,0 +1,19 @@
+type: object
+description: >-
+  Mapeia 1 saída de retorno de uma chamada de enriquecimento para 1 token `{{enriched.<placeholder>}}`
+  no `payloadTemplate` do webhook.
+required:
+  - outputIndex
+  - placeholder
+properties:
+  outputIndex:
+    type: integer
+    format: int32
+    minimum: 0
+    description: >-
+      Posição da saída na tupla de retorno do método (não o nome — nomes de saída Solidity são só dica
+      de UI, o casamento real é sempre por posição).
+  placeholder:
+    type: string
+    minLength: 1
+    description: "Nome do placeholder exposto no `payloadTemplate` como `{{enriched.<placeholder>}}`."

@@ -15,6 +15,7 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import Button from '@mui/material/Button'
 import type { WebhookConfig } from '../../api/api'
+import { AddressCell } from '../../components/AddressCell'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { Pagination } from '../../components/Pagination'
 import { RowActions } from '../../components/RowActions'
@@ -101,7 +102,9 @@ function WebhookRow({ webhook }: { webhook: WebhookConfig }) {
 
   return (
     <TableRow hover>
-      <TableCell sx={{ fontFamily: 'monospace' }}>{webhook.contractAddress}</TableCell>
+      <TableCell>
+        <AddressCell address={webhook.contractAddress} kind="contract" />
+      </TableCell>
       <TableCell>{webhook.eventName}</TableCell>
       <TableCell>{webhook.url}</TableCell>
       <TableCell>

@@ -15,6 +15,7 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import Button from '@mui/material/Button'
 import type { BalanceMonitorConfig } from '../../api/api'
+import { AddressCell } from '../../components/AddressCell'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { Pagination } from '../../components/Pagination'
 import { RowActions } from '../../components/RowActions'
@@ -106,7 +107,9 @@ function MonitorRow({ config }: { config: BalanceMonitorConfig }) {
 
   return (
     <TableRow hover>
-      <TableCell sx={{ fontFamily: 'monospace' }}>{config.contractAddress}</TableCell>
+      <TableCell>
+        <AddressCell address={config.contractAddress} kind="contract" />
+      </TableCell>
       <TableCell>{config.eventName}</TableCell>
       <TableCell>{config.behavior}</TableCell>
       <TableCell>

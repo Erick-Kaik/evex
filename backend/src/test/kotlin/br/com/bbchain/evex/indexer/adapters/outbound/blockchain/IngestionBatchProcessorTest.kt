@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.blockchain
 
 import br.com.bbchain.evex.indexer.application.balance.BalanceProjectionService
+import br.com.bbchain.evex.indexer.application.model.EntityModelProjectionService
 import br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingService
 import br.com.bbchain.evex.indexer.config.IndexerProperties
 import br.com.bbchain.evex.indexer.domain.abi.AbiDecodingPort
@@ -35,9 +36,18 @@ class IngestionBatchProcessorTest {
     private val indexerProperties = IndexerProperties().apply { network = Network.TESTNET }
     private val balanceProjectionService: BalanceProjectionService = mockk(relaxed = true)
     private val webhookMatchingService: WebhookMatchingService = mockk(relaxed = true)
+    private val entityModelProjectionService: EntityModelProjectionService = mockk(relaxed = true)
 
-    private val processor =
-        IngestionBatchProcessor(blockchain, abiDecoding, events, cursor, indexerProperties, balanceProjectionService, webhookMatchingService)
+    private val processor = IngestionBatchProcessor(
+        blockchain,
+        abiDecoding,
+        events,
+        cursor,
+        indexerProperties,
+        balanceProjectionService,
+        webhookMatchingService,
+        entityModelProjectionService,
+    )
 
     private fun sampleLog(blockNumber: Long, logIndex: Long, txHash: String) = BlockchainLog(
         contractAddress = "0x111111111111111111111111111111111111111a",
@@ -172,6 +182,25 @@ class IngestionBatchProcessorTest {
 
         verify(exactly = 1) { balanceProjectionService.projectBatch(savedSlot.captured) }
         verify(exactly = 1) { webhookMatchingService.matchAndEnqueue(savedSlot.captured) }
+    }
+
+    @Test
+    fun `entity model projection runs before webhook matching, so a webhook sees its own event's contribution (DEC-088 regression)`() {
+        stubDefaults()
+        every { events.existsByTxHashAndLogIndex(any(), any()) } returns false
+        val savedSlot = slot<List<BlockchainEvent>>()
+        every { events.saveAll(capture(savedSlot)) } answers { savedSlot.captured }
+
+        processor.ingestRange(10, 10, listOf(sampleLog(10, 0, "0xa")))
+
+        // DEC-088: `entityModelProjectionService.projectBatch` precisa gravar a contribuição do evento
+        // ANTES de `webhookMatchingService.matchAndEnqueue` ler o registro acumulado — na ordem
+        // contrária (bug real, corrigido), um evento nunca via sua própria contribuição no
+        // `{{model.*}}` da entrega que ele mesmo dispara.
+        verifyOrder {
+            entityModelProjectionService.projectBatch(savedSlot.captured)
+            webhookMatchingService.matchAndEnqueue(savedSlot.captured)
+        }
     }
 
     @Test

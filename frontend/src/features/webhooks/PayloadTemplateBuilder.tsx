@@ -14,6 +14,12 @@ import type { ContractEventInput } from '../../api/api'
 interface PayloadTemplateBuilderProps {
   /** Parâmetros do evento escolhido — viram tokens `{{decodedParameters.<nome>}}`. */
   params: ContractEventInput[]
+  /**
+   * Tokens adicionais prontos (já formatados, ex. `{{enriched.saldo}}`/`{{model.criador}}`) vindos dos
+   * Perfis de Enriquecimento/Modelos de Entidade referenciados pelo webhook (E19/DEC-082/083, DEC-084)
+   * — mesma mecânica de chip arrastável/clicável dos tokens fixos e de evento.
+   */
+  extraTokens?: string[]
   /** Template mustache atual (mesma string que o modo manual edita à mão). */
   value: string
   onChange: (next: string) => void
@@ -29,12 +35,16 @@ const DROP_ID = 'payload-template-drop'
  * insere no fim do template — o resultado continua sendo a mesma string mustache que o modo manual
  * edita. Template vazio => envelope JSON padrão (comportamento atual mantido).
  */
-export function PayloadTemplateBuilder({ params, value, onChange }: PayloadTemplateBuilderProps) {
+export function PayloadTemplateBuilder({ params, extraTokens = [], value, onChange }: PayloadTemplateBuilderProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
   )
-  const tokens = [...FIXED_TOKENS, ...params.map((param) => `{{decodedParameters.${param.name}}}`)]
+  // `Set` de-duplica tokens repetidos (ex. 2 chamadas de enriquecimento expondo o mesmo `placeholder`)
+  // — evita `key` duplicada no `DraggableToken` abaixo.
+  const tokens = [
+    ...new Set([...FIXED_TOKENS, ...params.map((param) => `{{decodedParameters.${param.name}}}`), ...extraTokens]),
+  ]
 
   function insertToken(token: string) {
     const separator = value.length === 0 || value.endsWith(' ') || value.endsWith('\n') ? '' : ' '

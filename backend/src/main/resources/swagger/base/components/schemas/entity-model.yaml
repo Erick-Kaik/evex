@@ -1,0 +1,37 @@
+type: object
+description: >-
+  Modelo de entidade (E19/DEC-082) — acumula campos de eventos diferentes, possivelmente de contratos
+  diferentes, ocorridos em blocos/transações diferentes, sobre a mesma entidade lógica. Referenciável
+  por 0+ webhooks via `entityModelIds`.
+required:
+  - id
+  - name
+  - network
+  - status
+  - contributors
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  name:
+    type: string
+    description: Nome dado pelo usuário ao modelo.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre do modelo.
+  network:
+    $ref: "../enum/network.yaml"
+  status:
+    $ref: "../enum/entity-model-status.yaml"
+  contributors:
+    type: array
+    description: Eventos contribuintes deste modelo.
+    items:
+      $ref: "./model-contributor.yaml"
+  createdAt:
+    type: string
+    format: date-time
+    description: Momento em que este modelo foi cadastrado.

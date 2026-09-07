@@ -11,6 +11,10 @@ import br.com.bbchain.evex.indexer.domain.balance.InvalidBalanceMonitorConfigExc
 import br.com.bbchain.evex.indexer.domain.contract.ContractAlreadyExistsException
 import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
 import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutUnavailableException
+import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentProfileNotFoundException
+import br.com.bbchain.evex.indexer.domain.enrichment.InvalidEnrichmentProfileException
+import br.com.bbchain.evex.indexer.domain.model.EntityModelNotFoundException
+import br.com.bbchain.evex.indexer.domain.model.InvalidEntityModelException
 import br.com.bbchain.evex.indexer.domain.wallet.WalletAlreadyExistsException
 import br.com.bbchain.evex.indexer.domain.wallet.WalletNotFoundException
 import br.com.bbchain.evex.indexer.domain.webhook.InvalidWebhookConfigException
@@ -152,6 +156,34 @@ class ApiExceptionHandler {
     fun handleWalletAlreadyExists(ex: WalletAlreadyExistsException): ResponseEntity<ApiError> =
         ResponseEntity.status(HttpStatus.CONFLICT).body(
             ApiError(code = "WALLET_ALREADY_EXISTS", message = ex.message ?: "Carteira já cadastrada", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `POST`/`PUT /v1/enrichment-profiles` com `EnrichmentCall` apontando pra contrato/método/outputIndex inválido (E19/DEC-082). */
+    @ExceptionHandler(InvalidEnrichmentProfileException::class)
+    fun handleInvalidEnrichmentProfile(ex: InvalidEnrichmentProfileException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "INVALID_ENRICHMENT_PROFILE", message = ex.message ?: "Perfil de enriquecimento inválido", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Nenhum Perfil de Enriquecimento cadastrado com o id informado (E19/DEC-082). */
+    @ExceptionHandler(EnrichmentProfileNotFoundException::class)
+    fun handleEnrichmentProfileNotFound(ex: EnrichmentProfileNotFoundException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiError(code = "ENRICHMENT_PROFILE_NOT_FOUND", message = ex.message ?: "Perfil de enriquecimento não encontrado", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `POST`/`PUT /v1/entity-models` com `ModelContributor` apontando pra contrato/evento/parâmetro inválido (E19/DEC-082). */
+    @ExceptionHandler(InvalidEntityModelException::class)
+    fun handleInvalidEntityModel(ex: InvalidEntityModelException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "INVALID_ENTITY_MODEL", message = ex.message ?: "Modelo de entidade inválido", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Nenhum Modelo de Entidade cadastrado com o id informado (E19/DEC-082). */
+    @ExceptionHandler(EntityModelNotFoundException::class)
+    fun handleEntityModelNotFound(ex: EntityModelNotFoundException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+            ApiError(code = "ENTITY_MODEL_NOT_FOUND", message = ex.message ?: "Modelo de entidade não encontrado", timestamp = OffsetDateTime.now()),
         )
 
     /** `@Valid @RequestBody` inválido (ex.: POST /v1/contracts com campo obrigatório ausente). */

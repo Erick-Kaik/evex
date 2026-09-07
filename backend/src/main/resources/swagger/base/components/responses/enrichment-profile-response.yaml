@@ -1,0 +1,5 @@
+description: Um Perfil de Enriquecimento.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/enrichment-profile.yaml"

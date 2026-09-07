@@ -1,0 +1,7 @@
+type: array
+description: >-
+  Todos os itens do ABI de um contrato monitorado (E24) — funções de qualquer `stateMutability`,
+  eventos, erros customizados, constructor/fallback/receive —, um item por par "item de ABI x faixa de
+  validade de ABI" (DEC-007). Lista vazia quando o contrato não tem nenhuma ABI cadastrada.
+items:
+  $ref: "./abi-entry.yaml"

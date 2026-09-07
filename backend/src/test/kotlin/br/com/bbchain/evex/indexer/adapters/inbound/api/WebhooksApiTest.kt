@@ -39,6 +39,8 @@ class WebhooksApiTest(
         url: String = "https://example.test/hook",
         filters: List<Map<String, String>>? = null,
         payloadTemplate: String? = null,
+        enrichmentProfileIds: List<String>? = null,
+        entityModelIds: List<String>? = null,
     ) = mapOf(
         "contractAddress" to contractAddress,
         "network" to "TESTNET",
@@ -46,7 +48,87 @@ class WebhooksApiTest(
         "url" to url,
         "filters" to filters,
         "payloadTemplate" to payloadTemplate,
+        "enrichmentProfileIds" to enrichmentProfileIds,
+        "entityModelIds" to entityModelIds,
     )
+
+    // ABI combinada (evento Transfer + método view balanceOf) — reaproveitada pelos 3 recursos da E19
+    // (webhook, Perfil de Enriquecimento, Modelo de Entidade), todos precisam de um contrato/ABI real
+    // cadastrado pra passar na validação de cadastro.
+    private val transferAndBalanceOfAbi = """
+        [
+          {
+            "type": "event",
+            "name": "Transfer",
+            "inputs": [
+              {"name": "to", "type": "address", "indexed": true},
+              {"name": "value", "type": "uint256", "indexed": false}
+            ]
+          },
+          {
+            "type": "function",
+            "name": "balanceOf",
+            "stateMutability": "view",
+            "inputs": [{"name": "owner", "type": "address"}],
+            "outputs": [{"name": "balance", "type": "uint256"}]
+          }
+        ]
+    """.trimIndent()
+
+    private fun registerContractWithAbi(address: String) {
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(mapOf("address" to address, "name" to "Token", "network" to "TESTNET"))),
+        ).andExpect(status().isCreated)
+        mockMvc.perform(
+            post("/v1/contracts/$address/abi")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(mapOf("abi" to transferAndBalanceOfAbi, "source" to "UPLOAD_TEXT"))),
+        ).andExpect(status().isCreated)
+    }
+
+    private fun createEnrichmentProfileAndExtractId(targetAddress: String): String {
+        val payload = mapOf(
+            "name" to "Perfil de teste",
+            "network" to "TESTNET",
+            "calls" to listOf(
+                mapOf(
+                    "targetContractAddress" to targetAddress,
+                    "methodName" to "balanceOf",
+                    "args" to listOf("{{decodedParameters.to}}"),
+                    "outputs" to listOf(mapOf("outputIndex" to 0, "placeholder" to "saldo")),
+                ),
+            ),
+        )
+        val response = mockMvc.perform(
+            post("/v1/enrichment-profiles")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+        return objectMapper.readValue(response, Map::class.java)["id"] as String
+    }
+
+    private fun createEntityModelAndExtractId(contractAddress: String, eventName: String = "Transfer"): String {
+        val payload = mapOf(
+            "name" to "Modelo de teste",
+            "network" to "TESTNET",
+            "contributors" to listOf(
+                mapOf(
+                    "contractAddress" to contractAddress,
+                    "eventName" to eventName,
+                    "correlationParam" to "to",
+                    "fieldMappings" to listOf(mapOf("decodedParam" to "value", "modelField" to "valor")),
+                ),
+            ),
+        )
+        val response = mockMvc.perform(
+            post("/v1/entity-models")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        ).andExpect(status().isCreated).andReturn().response.contentAsString
+        return objectMapper.readValue(response, Map::class.java)["id"] as String
+    }
 
     @Test
     fun `create returns 201 with the created webhook, active by default`() {
@@ -201,6 +283,99 @@ class WebhooksApiTest(
         mockMvc.perform(get("/v1/webhooks/${UUID.randomUUID()}/deliveries"))
             .andExpect(status().isNotFound)
             .andExpect(jsonPath("$.code").value("WEBHOOK_CONFIG_NOT_FOUND"))
+    }
+
+    // --- E19/DEC-082: enrichmentProfileIds/entityModelIds ---
+
+    @Test
+    fun `create with a valid enrichmentProfileIds returns 201 and echoes the ids back`() {
+        val address = randomAddress()
+        registerContractWithAbi(address)
+        val profileId = createEnrichmentProfileAndExtractId(address)
+        val payload = createPayload(contractAddress = address, enrichmentProfileIds = listOf(profileId))
+
+        mockMvc.perform(
+            post("/v1/webhooks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.enrichmentProfileIds[0]").value(profileId))
+    }
+
+    @Test
+    fun `create with a non-existent enrichmentProfileIds returns 400`() {
+        val payload = createPayload(enrichmentProfileIds = listOf(UUID.randomUUID().toString()))
+
+        mockMvc.perform(
+            post("/v1/webhooks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("INVALID_WEBHOOK_CONFIG"))
+    }
+
+    @Test
+    fun `create with entityModelIds whose contributor matches this webhook's own event returns 201`() {
+        val address = randomAddress()
+        registerContractWithAbi(address)
+        val modelId = createEntityModelAndExtractId(address, eventName = "Transfer")
+        val payload = createPayload(contractAddress = address, eventName = "Transfer", entityModelIds = listOf(modelId))
+
+        mockMvc.perform(
+            post("/v1/webhooks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.entityModelIds[0]").value(modelId))
+    }
+
+    @Test
+    fun `create with entityModelIds whose contributor does NOT match this webhook's own event returns 400`() {
+        val address = randomAddress()
+        registerContractWithAbi(address)
+        // O modelo contribui pra "Transfer", mas o webhook está configurado pra "Approval" (evento
+        // diferente) — não existe no ABI de teste, mas a regra é sobre casamento contra o
+        // ModelContributor, não sobre o webhook apontar pra um evento que exista de fato.
+        val modelId = createEntityModelAndExtractId(address, eventName = "Transfer")
+        val payload = createPayload(contractAddress = address, eventName = "Approval", entityModelIds = listOf(modelId))
+
+        mockMvc.perform(
+            post("/v1/webhooks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("INVALID_WEBHOOK_CONFIG"))
+    }
+
+    @Test
+    fun `create with a non-existent entityModelIds returns 400`() {
+        val payload = createPayload(entityModelIds = listOf(UUID.randomUUID().toString()))
+
+        mockMvc.perform(
+            post("/v1/webhooks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("INVALID_WEBHOOK_CONFIG"))
+    }
+
+    @Test
+    fun `create without enrichmentProfileIds or entityModelIds returns 201 with both as empty lists - zero regression`() {
+        mockMvc.perform(
+            post("/v1/webhooks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createPayload())),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.enrichmentProfileIds").isArray)
+            .andExpect(jsonPath("$.enrichmentProfileIds").isEmpty)
+            .andExpect(jsonPath("$.entityModelIds").isArray)
+            .andExpect(jsonPath("$.entityModelIds").isEmpty)
     }
 
     private fun createAndExtractId(): String {

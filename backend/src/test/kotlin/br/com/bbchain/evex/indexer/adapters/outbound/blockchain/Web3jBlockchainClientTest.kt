@@ -3,12 +3,20 @@ package br.com.bbchain.evex.indexer.adapters.outbound.blockchain
 import br.com.bbchain.evex.indexer.config.BlockchainProperties
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import java.math.BigInteger
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.web3j.abi.FunctionEncoder
+import org.web3j.abi.datatypes.Utf8String
+import org.web3j.abi.datatypes.generated.Uint256
 import org.web3j.protocol.Web3j
 import org.web3j.protocol.core.DefaultBlockParameter
+import org.web3j.protocol.core.DefaultBlockParameterNumber
 import org.web3j.protocol.core.Request
 import org.web3j.protocol.core.Response
+import org.web3j.protocol.core.methods.request.Transaction
+import org.web3j.protocol.core.methods.response.EthCall
 import org.web3j.protocol.core.methods.response.EthGetCode
 import org.web3j.protocol.core.methods.response.Log
 
@@ -98,5 +106,88 @@ class Web3jBlockchainClientTest {
         client.web3j = web3j
 
         assertThat(client.hasCode(address)).isFalse()
+    }
+
+    // --- call (E19/DEC-082, "Perfil de Enriquecimento") -----------------------------------------
+    //
+    // `EthCall.getValue()` devolve o hex ABI-encoded da tupla de retorno, no mesmo formato de
+    // `FunctionEncoder.encodeConstructor(parameters)` (encode de parâmetros sem seletor de método —
+    // é exatamente o formato de um retorno de função, já que Solidity codifica `returns (...)` do
+    // mesmo jeito que argumentos). Fabricar a resposta assim evita depender de um valor hex "mágico"
+    // copiado à mão, e ainda garante que o teste exercita o par (encode fabricado / decode real do
+    // client) de forma consistente.
+
+    @Test
+    fun `call decodes a single uint256 output`() {
+        val contractAddress = "0x4444444444444444444444444444444444444d"
+        val encodedReturn = "0x" + FunctionEncoder.encodeConstructor(listOf(Uint256(BigInteger.valueOf(42))))
+        val request = mockk<Request<*, EthCall>>()
+        every { request.send() } returns EthCall().apply { setResult(encodedReturn) }
+        val web3j = mockk<Web3j>()
+        every { web3j.ethCall(any<Transaction>(), any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+
+        val result = client.call(
+            contractAddress = contractAddress,
+            methodName = "balanceOf",
+            inputTypes = listOf("address"),
+            outputTypes = listOf("uint256"),
+            args = listOf("0x1111111111111111111111111111111111111a"),
+            blockNumber = 12345L,
+        )
+
+        assertThat(result).containsExactly("42")
+    }
+
+    @Test
+    fun `call decodes multiple outputs in declaration order`() {
+        val contractAddress = "0x5555555555555555555555555555555555555e"
+        val returnValues = listOf(
+            Utf8String("Aurora"),
+            Utf8String("RTX"),
+            Utf8String("Intel"),
+            Uint256(BigInteger.valueOf(500)),
+        )
+        val encodedReturn = "0x" + FunctionEncoder.encodeConstructor(returnValues)
+        val request = mockk<Request<*, EthCall>>()
+        every { request.send() } returns EthCall().apply { setResult(encodedReturn) }
+        val web3j = mockk<Web3j>()
+        every { web3j.ethCall(any<Transaction>(), any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+
+        val result = client.call(
+            contractAddress = contractAddress,
+            methodName = "getConfig",
+            inputTypes = listOf("uint256"),
+            outputTypes = listOf("string", "string", "string", "uint256"),
+            args = listOf("1"),
+            blockNumber = 999L,
+        )
+
+        assertThat(result).containsExactly("Aurora", "RTX", "Intel", "500")
+    }
+
+    @Test
+    fun `call queries the exact historical block number, not latest`() {
+        val contractAddress = "0x6666666666666666666666666666666666666f"
+        val encodedReturn = "0x" + FunctionEncoder.encodeConstructor(listOf(Uint256(BigInteger.TEN)))
+        val request = mockk<Request<*, EthCall>>()
+        every { request.send() } returns EthCall().apply { setResult(encodedReturn) }
+        val blockParameterSlot = slot<DefaultBlockParameter>()
+        val web3j = mockk<Web3j>()
+        every { web3j.ethCall(any<Transaction>(), capture(blockParameterSlot)) } returns request
+        client.web3j = web3j
+
+        client.call(
+            contractAddress = contractAddress,
+            methodName = "totalSupply",
+            inputTypes = emptyList(),
+            outputTypes = listOf("uint256"),
+            args = emptyList(),
+            blockNumber = 777_777L,
+        )
+
+        val capturedBlockNumber = (blockParameterSlot.captured as DefaultBlockParameterNumber).blockNumber
+        assertThat(capturedBlockNumber).isEqualTo(BigInteger.valueOf(777_777L))
     }
 }

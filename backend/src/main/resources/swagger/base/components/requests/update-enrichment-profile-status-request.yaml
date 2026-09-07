@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de atualização de status de um Perfil de Enriquecimento.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/update-enrichment-profile-status-payload.yaml"

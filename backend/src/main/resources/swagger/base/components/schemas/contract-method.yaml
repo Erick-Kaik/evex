@@ -1,0 +1,32 @@
+type: object
+description: >-
+  Um método de leitura (view/pure) decodificável de um contrato monitorado, já associado à faixa de
+  blocos da versão de ABI que o declara (DEC-007/E19-DEC-082).
+required:
+  - name
+  - inputs
+  - outputs
+  - validFromBlock
+properties:
+  name:
+    type: string
+    description: Nome do método Solidity.
+  inputs:
+    type: array
+    description: Parâmetros de entrada do método, na ordem de declaração Solidity.
+    items:
+      $ref: "./contract-method-input.yaml"
+  outputs:
+    type: array
+    description: Parâmetros de saída (retorno) do método, na ordem de declaração Solidity.
+    items:
+      $ref: "./contract-method-output.yaml"
+  validFromBlock:
+    type: integer
+    format: int64
+    description: Primeiro bloco (inclusive) em que a versão de ABI que declara este método é válida.
+  validToBlock:
+    type: integer
+    format: int64
+    nullable: true
+    description: "Último bloco (inclusive) em que a versão é válida; `null` = ainda vigente."

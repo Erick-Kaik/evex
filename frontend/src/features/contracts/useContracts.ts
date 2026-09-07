@@ -92,6 +92,21 @@ export function useRegisterAbi(address: string) {
 }
 
 /**
+ * Catálogo completo do ABI de um contrato — funções de qualquer `stateMutability`, eventos, erros
+ * customizados e constructor/fallback/receive (`GET /v1/contracts/{address}/abi/entries`, E24).
+ * Diferente de `useContractAbiVersions` (metadados da versão), aqui cada item já vem "achatado" com
+ * a faixa de blocos da versão que o declara — o mesmo item pode repetir entre versões distintas
+ * (proxy upgradável, DEC-007); não é de-duplicado aqui, a tela decide como apresentar.
+ */
+export function useContractAbiEntries(address: string | undefined) {
+  return useQuery({
+    queryKey: ['contract-abi-entries', address],
+    queryFn: async () => (await contractsApi.listContractAbiEntries(address as string)).data,
+    enabled: Boolean(address),
+  })
+}
+
+/**
  * Sugere interfaces padrão (ERC20/ERC721/ERC1155) pra um contrato — sob demanda (botão), não
  * automático no carregamento da tela (`GET /v1/contracts/{address}/abi/suggestions`, via `mutate()`
  * sem parâmetros).

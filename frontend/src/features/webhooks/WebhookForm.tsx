@@ -29,6 +29,10 @@ import type { FormMode } from '../../components/formMode'
 import { LabeledField } from '../../components/LabeledField'
 import type { PageMode } from '../../components/pageMode'
 import { matchesParamKind, useContractEventCatalog } from '../../components/contractCatalog'
+import { ENRICHMENT_PROFILE_CATALOG_PAGE_SIZE, useEnrichmentProfiles } from '../enrichment/useEnrichmentProfiles'
+import { ENTITY_MODEL_CATALOG_PAGE_SIZE, useEntityModels } from '../models/useEntityModels'
+import { EnrichmentProfileMultiSelect } from './EnrichmentProfileMultiSelect'
+import { EntityModelMultiSelect } from './EntityModelMultiSelect'
 import { PayloadTemplateBuilder } from './PayloadTemplateBuilder'
 
 export type WebhookFormValues = CreateWebhookPayload
@@ -86,6 +90,10 @@ export function WebhookForm({
   const [url, setUrl] = useState(initialValues?.url ?? '')
   const [filters, setFilters] = useState<FilterCondition[]>(initialValues?.filters ?? [])
   const [payloadTemplate, setPayloadTemplate] = useState(initialValues?.payloadTemplate ?? '')
+  const [enrichmentProfileIds, setEnrichmentProfileIds] = useState<string[]>(
+    initialValues?.enrichmentProfileIds ?? [],
+  )
+  const [entityModelIds, setEntityModelIds] = useState<string[]>(initialValues?.entityModelIds ?? [])
 
   const isGuided = formMode === 'guided'
   const isVisual = formMode === 'visual'
@@ -98,6 +106,36 @@ export function WebhookForm({
   // pra resolver os `inputs` do evento já selecionado (edição de um webhook existente).
   const catalog = useContractEventCatalog(usesContractRef ? effectiveAddress || undefined : undefined)
   const eventInputs = catalog.inputsByEvent.get(eventName) ?? []
+
+  // Tokens `{{enriched.*}}`/`{{model.*}}` disponíveis a mais no `payloadTemplate` (E19/DEC-082/083,
+  // DEC-084) — derivados dos Perfis/Modelos já referenciados por este webhook. As mesmas consultas já
+  // rodam dentro de `<EnrichmentProfileMultiSelect>`/`<EntityModelMultiSelect>` (React Query deduplica
+  // por `queryKey`, sem round-trip extra).
+  const enrichmentProfilesQuery = useEnrichmentProfiles(
+    effectiveNetwork === '' ? undefined : effectiveNetwork,
+    0,
+    ENRICHMENT_PROFILE_CATALOG_PAGE_SIZE,
+  )
+  const entityModelsQuery = useEntityModels(
+    effectiveNetwork === '' ? undefined : effectiveNetwork,
+    0,
+    ENTITY_MODEL_CATALOG_PAGE_SIZE,
+  )
+  const enrichedTokens = (enrichmentProfilesQuery.data?.content ?? [])
+    .filter((profile) => enrichmentProfileIds.includes(profile.id))
+    .flatMap((profile) => profile.calls.flatMap((call) => call.outputs.map((output) => `{{enriched.${output.placeholder}}}`)))
+  const modelTokens = (entityModelsQuery.data?.content ?? [])
+    .filter((model) => entityModelIds.includes(model.id))
+    .flatMap((model) =>
+      model.contributors
+        .filter(
+          (contributor) =>
+            contributor.contractAddress.toLowerCase() === effectiveAddress.toLowerCase() &&
+            contributor.eventName === eventName,
+        )
+        .flatMap((contributor) => contributor.fieldMappings.map((mapping) => `{{model.${mapping.modelField}}}`)),
+    )
+  const enrichmentTemplateTokens = [...enrichedTokens, ...modelTokens]
 
   function addFilter() {
     setFilters([...filters, { paramName: '', operator: FilterOperator.Eq, value: '' }])
@@ -185,6 +223,8 @@ export function WebhookForm({
       url,
       filters: filters.length > 0 ? filters : undefined,
       payloadTemplate: payloadTemplate || undefined,
+      enrichmentProfileIds: enrichmentProfileIds.length > 0 ? enrichmentProfileIds : undefined,
+      entityModelIds: entityModelIds.length > 0 ? entityModelIds : undefined,
     })
   }
 
@@ -218,6 +258,30 @@ export function WebhookForm({
           multiline
           monospace
         />
+        <Box>
+          <Typography variant="caption" color="text.secondary" component="div">
+            Perfis de Enriquecimento referenciados
+          </Typography>
+          <Typography variant="body2">
+            {enrichmentProfileIds.length === 0
+              ? '—'
+              : enrichmentProfileIds
+                  .map((id) => enrichmentProfilesQuery.data?.content.find((p) => p.id === id)?.name ?? id)
+                  .join(', ')}
+          </Typography>
+        </Box>
+        <Box>
+          <Typography variant="caption" color="text.secondary" component="div">
+            Modelos de Entidade referenciados
+          </Typography>
+          <Typography variant="body2">
+            {entityModelIds.length === 0
+              ? '—'
+              : entityModelIds
+                  .map((id) => entityModelsQuery.data?.content.find((m) => m.id === id)?.name ?? id)
+                  .join(', ')}
+          </Typography>
+        </Box>
       </Box>
     )
   }
@@ -333,9 +397,30 @@ export function WebhookForm({
         )}
       </Box>
 
+      <Box>
+        <Typography variant="subtitle2" gutterBottom>
+          Enriquecimento do payload (opcional, E19)
+        </Typography>
+        <Stack sx={{ gap: 2 }}>
+          <EnrichmentProfileMultiSelect
+            network={effectiveNetwork}
+            value={enrichmentProfileIds}
+            onChange={setEnrichmentProfileIds}
+          />
+          <EntityModelMultiSelect
+            network={effectiveNetwork}
+            contractAddress={effectiveAddress}
+            eventName={eventName}
+            value={entityModelIds}
+            onChange={setEntityModelIds}
+          />
+        </Stack>
+      </Box>
+
       {isVisual ? (
         <PayloadTemplateBuilder
           params={eventInputs}
+          extraTokens={enrichmentTemplateTokens}
           value={payloadTemplate}
           onChange={setPayloadTemplate}
         />
@@ -348,7 +433,11 @@ export function WebhookForm({
           value={payloadTemplate}
           onChange={(event) => setPayloadTemplate(event.target.value)}
           placeholder='{"evento": "{{eventName}}", "valor": "{{decodedParameters.value}}"}'
-          helperText="Vazio = usa o envelope JSON padrão (evento completo)."
+          helperText={
+            enrichmentTemplateTokens.length > 0
+              ? `Vazio = usa o envelope JSON padrão (evento completo). Também disponíveis: ${enrichmentTemplateTokens.join(', ')}.`
+              : 'Vazio = usa o envelope JSON padrão (evento completo). Perfis/Modelos referenciados acima habilitam {{enriched.*}}/{{model.*}}.'
+          }
           slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.75rem' } } }}
         />
       )}

@@ -1,0 +1,5 @@
+description: Catálogo de métodos de leitura (view/pure) de um contrato monitorado.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/contract-method-list.yaml"

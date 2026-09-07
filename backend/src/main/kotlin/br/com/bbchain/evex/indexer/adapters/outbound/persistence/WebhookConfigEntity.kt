@@ -24,6 +24,10 @@ import org.springframework.data.domain.Persistable
  * `filters` é JSONB (`@JdbcTypeCode(SqlTypes.JSON)`), mas mapeado como `String` (JSON já serializado)
  * — mesmo padrão de `BlockchainEventEntity.raw_topics`/`decoded_parameters` (DEC-021/DEC-024): o
  * (de)serialize acontece explicitamente em [JpaWebhookConfigAdapter] (Jackson 2 local, DEC-020).
+ *
+ * `enrichmentProfileIds`/`entityModelIds` (E19/DEC-082) são JSONB pelo mesmo motivo — arrays de
+ * `UUID`, ordem preservada (significativa pra `enrichmentProfileIds`, ver
+ * `br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentProfilePort.findAllByIds`).
  */
 @Entity
 @Table(
@@ -51,6 +55,12 @@ class WebhookConfigEntity(
     var active: Boolean,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant,
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "enrichment_profile_ids", nullable = false)
+    var enrichmentProfileIds: String = "[]",
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "entity_model_ids", nullable = false)
+    var entityModelIds: String = "[]",
     @Transient
     private val new: Boolean = false,
 ) : Persistable<UUID> {

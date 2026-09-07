@@ -1,0 +1,19 @@
+type: object
+description: >-
+  Um parâmetro (input ou output) de qualquer item de ABI (E24), na ordem de declaração Solidity.
+  `name` pode ser ausente (nem toda saída de função/erro é nomeada no Solidity); `indexed` só se
+  aplica a inputs de evento.
+required:
+  - type
+properties:
+  name:
+    type: string
+    nullable: true
+    description: Nome do parâmetro Solidity, quando declarado.
+  type:
+    type: string
+    description: "Tipo Solidity do parâmetro (ex.: `address`, `uint256`, `bytes32`)."
+  indexed:
+    type: boolean
+    nullable: true
+    description: "`true` quando o parâmetro é `indexed` (só se aplica a inputs de evento)."

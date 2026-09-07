@@ -4,6 +4,13 @@ import br.com.bbchain.evex.indexer.adapters.outbound.webhook.WebhookPayloadRende
 import br.com.bbchain.evex.indexer.config.IndexerProperties
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent
+import br.com.bbchain.evex.indexer.domain.model.EntityModel
+import br.com.bbchain.evex.indexer.domain.model.EntityModelPort
+import br.com.bbchain.evex.indexer.domain.model.EntityModelRecord
+import br.com.bbchain.evex.indexer.domain.model.EntityModelRecordPort
+import br.com.bbchain.evex.indexer.domain.model.EntityModelStatus
+import br.com.bbchain.evex.indexer.domain.model.ModelContributor
+import br.com.bbchain.evex.indexer.domain.model.ModelFieldMapping
 import br.com.bbchain.evex.indexer.domain.webhook.FilterOperator
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfig
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfigPort
@@ -21,16 +28,18 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 /**
- * Unit test — [WebhookConfigPort]/[WebhookDeliveryPort] mocked via MockK (DEC-009); real
- * [WebhookPayloadRenderer] (pure computation, not worth mocking, same reasoning as
- * `BalanceProjectionServiceTest` reusing real `BalanceBehaviorStrategy` implementations).
+ * Unit test — [WebhookConfigPort]/[WebhookDeliveryPort]/[EntityModelPort]/[EntityModelRecordPort]
+ * mocked via MockK (DEC-009); real [WebhookPayloadRenderer] (pure computation, not worth mocking, same
+ * reasoning as `BalanceProjectionServiceTest` reusing real `BalanceBehaviorStrategy` implementations).
  */
 class WebhookMatchingServiceTest {
 
     private val webhookConfigs: WebhookConfigPort = mockk()
     private val deliveries: WebhookDeliveryPort = mockk(relaxed = true)
+    private val entityModels: EntityModelPort = mockk()
+    private val entityModelRecords: EntityModelRecordPort = mockk()
     private val indexerProperties = IndexerProperties()
-    private val service = WebhookMatchingService(webhookConfigs, deliveries, WebhookPayloadRenderer(), indexerProperties)
+    private val service = WebhookMatchingService(webhookConfigs, deliveries, WebhookPayloadRenderer(), entityModels, entityModelRecords, indexerProperties)
 
     private val contractAddress = "0xaaaa000000000000000000000000000000aaaa"
 
@@ -52,7 +61,11 @@ class WebhookMatchingServiceTest {
         createdAt = Instant.now(),
     )
 
-    private fun webhookConfig(filters: List<WebhookFilterCondition> = emptyList(), payloadTemplate: String? = null) = WebhookConfig(
+    private fun webhookConfig(
+        filters: List<WebhookFilterCondition> = emptyList(),
+        payloadTemplate: String? = null,
+        entityModelIds: List<UUID> = emptyList(),
+    ) = WebhookConfig(
         id = UUID.randomUUID(),
         contractAddress = contractAddress,
         network = Network.TESTNET,
@@ -62,6 +75,7 @@ class WebhookMatchingServiceTest {
         payloadTemplate = payloadTemplate,
         active = true,
         createdAt = Instant.now(),
+        entityModelIds = entityModelIds,
     )
 
     @Test
@@ -153,5 +167,77 @@ class WebhookMatchingServiceTest {
 
             assertThat(captor.warnMessages().count { it.contains("Falha ao casar webhookConfig") }).isEqualTo(1)
         }
+    }
+
+    @Test
+    fun `snapshots blockNumber and decodedParameters into the enqueued delivery`() {
+        every { webhookConfigs.findActive(contractAddress, "Transfer") } returns listOf(webhookConfig())
+        val slot = slot<WebhookDelivery>()
+        every { deliveries.enqueue(capture(slot)) } answers { slot.captured }
+        val event = decodedEvent(parameters = mapOf("value" to "1500")).copy(blockNumber = 42)
+
+        service.matchAndEnqueue(listOf(event))
+
+        assertThat(slot.captured.blockNumber).isEqualTo(42)
+        assertThat(slot.captured.decodedParameters).isEqualTo(mapOf("value" to "1500"))
+    }
+
+    @Test
+    fun `an enriched token is left untouched in the payload, resolved only in Phase 2`() {
+        val config = webhookConfig(payloadTemplate = """{"amount":"{{enriched.total}}"}""")
+        every { webhookConfigs.findActive(contractAddress, "Transfer") } returns listOf(config)
+        val slot = slot<WebhookDelivery>()
+        every { deliveries.enqueue(capture(slot)) } answers { slot.captured }
+
+        service.matchAndEnqueue(listOf(decodedEvent()))
+
+        assertThat(slot.captured.payload).isEqualTo("""{"amount":"{{enriched.total}}"}""")
+    }
+
+    @Test
+    fun `a model token is resolved from the accumulated entity model record, in Phase 1`() {
+        val modelId = UUID.randomUUID()
+        val config = webhookConfig(payloadTemplate = """{"creator":{{model.criador}}}""", entityModelIds = listOf(modelId))
+        every { webhookConfigs.findActive(contractAddress, "Transfer") } returns listOf(config)
+        val model = EntityModel(
+            id = modelId,
+            name = "Fluxo de mint",
+            description = null,
+            network = Network.TESTNET,
+            status = EntityModelStatus.ACTIVE,
+            contributors = listOf(
+                ModelContributor(
+                    contractAddress = contractAddress,
+                    eventName = "Transfer",
+                    correlationParam = "value",
+                    fieldMappings = listOf(ModelFieldMapping(decodedParam = "value", modelField = "criador")),
+                ),
+            ),
+            createdAt = Instant.now(),
+        )
+        every { entityModels.findAllByIds(listOf(modelId)) } returns listOf(model)
+        every { entityModelRecords.findRecord(modelId, "1500", Network.TESTNET) } returns EntityModelRecord(
+            modelId = modelId,
+            correlationValue = "1500",
+            network = Network.TESTNET,
+            data = mapOf("criador" to "0xcreator"),
+            updatedAt = Instant.now(),
+        )
+        val slot = slot<WebhookDelivery>()
+        every { deliveries.enqueue(capture(slot)) } answers { slot.captured }
+
+        service.matchAndEnqueue(listOf(decodedEvent(parameters = mapOf("value" to "1500"))))
+
+        assertThat(slot.captured.payload).isEqualTo("""{"creator":"0xcreator"}""")
+    }
+
+    @Test
+    fun `a webhook without entityModelIds never touches EntityModelPort - zero regression`() {
+        every { webhookConfigs.findActive(contractAddress, "Transfer") } returns listOf(webhookConfig(payloadTemplate = """{"v":"{{decodedParameters.value}}"}"""))
+
+        service.matchAndEnqueue(listOf(decodedEvent()))
+
+        verify(exactly = 0) { entityModels.findAllByIds(any()) }
+        verify(exactly = 0) { entityModelRecords.findRecord(any(), any(), any()) }
     }
 }

@@ -1,0 +1,16 @@
+patch:
+  tags:
+    - EnrichmentProfiles
+  operationId: updateEnrichmentProfileStatus
+  summary: Atualiza o status de um Perfil de Enriquecimento
+  parameters:
+    - $ref: "../base/components/param/path/enrichment-profile-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-enrichment-profile-status-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/enrichment-profile-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

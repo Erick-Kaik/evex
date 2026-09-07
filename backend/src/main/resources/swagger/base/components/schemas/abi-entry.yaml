@@ -1,0 +1,44 @@
+type: object
+description: >-
+  Um item do ABI de um contrato monitorado (E24) — função de qualquer `stateMutability`, evento, erro
+  customizado, constructor, fallback ou receive —, já associado à faixa de blocos da versão de ABI que
+  o declara (DEC-007, proxy upgradável).
+required:
+  - kind
+  - inputs
+  - outputs
+  - validFromBlock
+properties:
+  kind:
+    $ref: "../enum/abi-entry-kind.yaml"
+  name:
+    type: string
+    nullable: true
+    description: "Nome do item Solidity; `null` para `CONSTRUCTOR`/`FALLBACK`/`RECEIVE` (não têm nome)."
+  stateMutability:
+    type: string
+    nullable: true
+    description: "Mutabilidade declarada (ex.: `view`, `pure`, `nonpayable`, `payable`); só se aplica a `FUNCTION`/`CONSTRUCTOR`."
+  inputs:
+    type: array
+    description: Parâmetros de entrada do item, na ordem de declaração Solidity.
+    items:
+      $ref: "./abi-entry-param.yaml"
+  outputs:
+    type: array
+    description: "Parâmetros de saída do item; só `FUNCTION` declara de fato (os demais ficam com lista vazia)."
+    items:
+      $ref: "./abi-entry-param.yaml"
+  anonymous:
+    type: boolean
+    nullable: true
+    description: "`true` quando o evento é `anonymous`; só se aplica a `EVENT`."
+  validFromBlock:
+    type: integer
+    format: int64
+    description: Primeiro bloco (inclusive) em que a versão de ABI que declara este item é válida.
+  validToBlock:
+    type: integer
+    format: int64
+    nullable: true
+    description: "Último bloco (inclusive) em que a versão é válida; `null` = ainda vigente."

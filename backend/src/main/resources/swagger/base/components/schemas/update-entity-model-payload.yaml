@@ -1,0 +1,22 @@
+type: object
+description: >-
+  Corpo da atualização de um Modelo de Entidade. `network` não faz parte deste payload — imutável
+  depois de criado.
+required:
+  - name
+  - contributors
+properties:
+  name:
+    type: string
+    minLength: 1
+    description: Nome dado pelo usuário ao modelo.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre do modelo.
+  contributors:
+    type: array
+    minItems: 1
+    description: Eventos contribuintes deste modelo.
+    items:
+      $ref: "./model-contributor.yaml"

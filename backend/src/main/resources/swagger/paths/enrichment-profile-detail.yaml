@@ -1,0 +1,30 @@
+get:
+  tags:
+    - EnrichmentProfiles
+  operationId: getEnrichmentProfile
+  summary: Consulta um Perfil de Enriquecimento pelo id
+  parameters:
+    - $ref: "../base/components/param/path/enrichment-profile-id.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/enrichment-profile-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+put:
+  tags:
+    - EnrichmentProfiles
+  operationId: updateEnrichmentProfile
+  summary: Atualiza um Perfil de Enriquecimento
+  parameters:
+    - $ref: "../base/components/param/path/enrichment-profile-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-enrichment-profile-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/enrichment-profile-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

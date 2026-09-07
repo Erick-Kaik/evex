@@ -1,0 +1,8 @@
+type: string
+description: >-
+  Situação de um Perfil de Enriquecimento (E19/DEC-082). Sem `PAUSED` — só "disponível para novos
+  cadastros" (ACTIVE) vs. "arquivado" (ARCHIVED). Um perfil arquivado continua resolvível se
+  referenciado por um webhook — arquivar não bloqueia, só sinaliza.
+enum:
+  - ACTIVE
+  - ARCHIVED

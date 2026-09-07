@@ -1,0 +1,14 @@
+type: object
+description: Um campo decodificado de um evento contribuinte mapeado para um nome de campo do modelo acumulado.
+required:
+  - decodedParam
+  - modelField
+properties:
+  decodedParam:
+    type: string
+    minLength: 1
+    description: Nome do parâmetro decodificado do evento contribuinte.
+  modelField:
+    type: string
+    minLength: 1
+    description: Nome do campo no registro acumulado do modelo de entidade.

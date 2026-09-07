@@ -45,3 +45,17 @@ properties:
     type: string
     format: date-time
     description: Momento em que este webhook foi cadastrado.
+  enrichmentProfileIds:
+    type: array
+    description: >-
+      Perfis de Enriquecimento (E19/DEC-082) referenciados, na ordem em que suas chamadas são
+      resolvidas no dispatch. Lista vazia = sem enriquecimento on-chain.
+    items:
+      type: string
+      format: uuid
+  entityModelIds:
+    type: array
+    description: Modelos de Entidade (E19/DEC-082) referenciados. Lista vazia = sem campos `{{model.*}}`.
+    items:
+      type: string
+      format: uuid

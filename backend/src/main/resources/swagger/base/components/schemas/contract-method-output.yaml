@@ -1,0 +1,15 @@
+type: object
+description: >-
+  Uma saída de um método de leitura, na ordem de declaração Solidity (`returns (...)`). `name` pode
+  ser ausente — nem toda saída de uma tupla de retorno é nomeada no Solidity; o casamento de
+  `EnrichmentOutputMapping.outputIndex` (E19/DEC-082) é sempre por posição, nunca por nome.
+required:
+  - type
+properties:
+  name:
+    type: string
+    nullable: true
+    description: Nome do parâmetro de saída Solidity, quando declarado.
+  type:
+    type: string
+    description: "Tipo Solidity da saída (ex.: `uint256`, `address`)."

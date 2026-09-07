@@ -12,6 +12,8 @@ import jakarta.persistence.Table
 import jakarta.persistence.Transient
 import java.time.Instant
 import java.util.UUID
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import org.springframework.data.domain.Persistable
 
 /**
@@ -20,6 +22,10 @@ import org.springframework.data.domain.Persistable
  * `repository.save()` normal**: diferente de `AssetBalanceEntity`/E7 (upsert por chave natural), aqui
  * não há chave natural — é sempre update-por-PK-já-conhecida (`enqueue` cria, `WebhookDeliveryRecorder`
  * atualiza status/tentativas), então o padrão `Persistable` padrão serve sem desvio.
+ *
+ * `blockNumber`/`decodedParameters` (E19/DEC-082) — snapshot do evento tirado no `enqueue` (Fase 1),
+ * nullable (entregas persistidas antes da E19 não têm). `decodedParameters` é JSONB, mesmo padrão de
+ * `BlockchainEventEntity.decoded_parameters`.
  */
 @Entity
 @Table(
@@ -50,6 +56,11 @@ class WebhookDeliveryEntity(
     val nextAttemptAt: Instant? = null,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant,
+    @Column(name = "block_number")
+    val blockNumber: Long? = null,
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "decoded_parameters")
+    val decodedParameters: String? = null,
     @Transient
     private val new: Boolean = false,
 ) : Persistable<UUID> {

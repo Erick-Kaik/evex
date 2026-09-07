@@ -141,6 +141,76 @@ yarn deploy --tags TestContracts`,
       env: { ...process.env, RPC_URL },
     }),
   },
+  {
+    id: "computer-vault-scenario",
+    label: "Cenário Computador+Cofre (eventos enriquecidos, E19)",
+    description:
+      "Roda seed/computer-vault-scenario.ts: cria um TestComputer e troca peças 3x em blocos bem espaçados " +
+      "(hardhat_mine), depositando/sacando no cofre proporcionalmente a cada troca. Prova que um Perfil de " +
+      "Enriquecimento lê o eth_call no bloco do evento, não no bloco atual. Requer 'Deploy dos contratos de teste' " +
+      "(já incluindo TestComputer) e o cofre já upgradado pra V2 ('Upgrade do cofre pra V2').",
+    command: (p) => `COMPUTER_ID=${p.computerId ?? 1} npx tsx seed/computer-vault-scenario.ts`,
+    params: [{ name: "computerId", label: "Id do computador", type: "number", default: 1 }],
+    run: (p) => ({
+      cmd: "npx",
+      args: ["tsx", "seed/computer-vault-scenario.ts"],
+      cwd: LOCAL_ENV_DIR,
+      env: { ...process.env, RPC_URL, COMPUTER_ID: String(p.computerId ?? 1) },
+    }),
+  },
+  {
+    id: "change-computer-power",
+    label: "Ajustar poder do Computador (aumentar/diminuir)",
+    description:
+      "Roda seed/change-computer-power.ts: ajuste avulso de processingPower num TestComputer já criado — mantém as " +
+      "peças, aplica o delta informado (positivo aumenta + deposit no cofre, negativo diminui + withdraw). Útil pra " +
+      "gerar mais eventos/entregas sem repetir o roteiro fixo do 'Cenário Computador+Cofre'. Requer o computador já " +
+      "criado (rode 'Cenário Computador+Cofre' antes) e o cofre em V2 se o delta for negativo.",
+    command: (p) => `COMPUTER_ID=${p.computerId ?? 1} POWER_DELTA=${p.powerDelta ?? 50} npx tsx seed/change-computer-power.ts`,
+    params: [
+      { name: "computerId", label: "Id do computador", type: "number", default: 1 },
+      { name: "powerDelta", label: "Delta de poder (+/-)", type: "number", default: 50 },
+    ],
+    run: (p) => ({
+      cmd: "npx",
+      args: ["tsx", "seed/change-computer-power.ts"],
+      cwd: LOCAL_ENV_DIR,
+      env: { ...process.env, RPC_URL, COMPUTER_ID: String(p.computerId ?? 1), POWER_DELTA: String(p.powerDelta ?? 50) },
+    }),
+  },
+  {
+    id: "deploy-game-library",
+    label: "Deploy da Biblioteca de Jogos",
+    description:
+      "Roda seed/deploy-game-library.ts: deploya TestGameLibrary apontando pro TestComputer já deployado. Imprime o " +
+      "endereço e o caminho da ABI a cadastrar no Evex (cenário de validação do Modelo de Entidade, E25). Requer " +
+      "'Deploy dos contratos de teste' já rodado ao menos uma vez (com TestGameLibrary.sol já copiado).",
+    command: () => "npx tsx seed/deploy-game-library.ts",
+    params: [],
+    run: () => ({
+      cmd: "npx",
+      args: ["tsx", "seed/deploy-game-library.ts"],
+      cwd: LOCAL_ENV_DIR,
+      env: { ...process.env, RPC_URL },
+    }),
+  },
+  {
+    id: "game-library-scenario",
+    label: "Cenário Biblioteca de Jogos (Modelo de Entidade, E25)",
+    description:
+      "Roda seed/game-library-scenario.ts: cria um TestComputer, cadastra 2 jogos, tenta rodar o jogo difícil (reverte " +
+      "com InsufficientPower — motivo de revert real), aumenta o poder e roda de novo (sucesso). Prova que um Modelo " +
+      "de Entidade acumula campos de ComputerCreated + PartsChanged + GameRunSucceeded. Requer 'Deploy da Biblioteca " +
+      "de Jogos' já rodado antes.",
+    command: (p) => `COMPUTER_ID=${p.computerId ?? 1000} npx tsx seed/game-library-scenario.ts`,
+    params: [{ name: "computerId", label: "Id do computador", type: "number", default: 1000 }],
+    run: (p) => ({
+      cmd: "npx",
+      args: ["tsx", "seed/game-library-scenario.ts"],
+      cwd: LOCAL_ENV_DIR,
+      env: { ...process.env, RPC_URL, COMPUTER_ID: String(p.computerId ?? 1000) },
+    }),
+  },
 ];
 
 /** Só uma ação por vez — os scripts mexem no mesmo nó Hardhat / deployedContracts.ts. */

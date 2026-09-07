@@ -1,0 +1,12 @@
+type: object
+description: Um parâmetro de entrada de um método de leitura (view/pure) de ABI, na ordem de declaração Solidity.
+required:
+  - name
+  - type
+properties:
+  name:
+    type: string
+    description: Nome do parâmetro Solidity.
+  type:
+    type: string
+    description: "Tipo Solidity do parâmetro (ex.: `address`, `uint256`, `bytes32`)."

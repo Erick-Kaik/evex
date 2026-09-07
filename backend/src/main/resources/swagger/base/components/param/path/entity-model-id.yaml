@@ -1,0 +1,7 @@
+name: id
+in: path
+required: true
+description: Identificador interno do Modelo de Entidade.
+schema:
+  type: string
+  format: uuid

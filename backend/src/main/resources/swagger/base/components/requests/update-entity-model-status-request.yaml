@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de atualização de status de um Modelo de Entidade.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/update-entity-model-status-payload.yaml"

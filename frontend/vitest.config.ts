@@ -13,5 +13,11 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
+    // Default (5000ms) ficou justo pra `WebhookForm.test.tsx` depois da E19/DEC-084 — o form passou
+    // a montar 2 `<Autocomplete>` a mais (Perfis de Enriquecimento/Modelos de Entidade) incondicionalmente
+    // em todo teste do arquivo, e sob contenção de CPU (múltiplos workers em paralelo) isso empurrava o
+    // 1º teste do arquivo pra cima do timeout mesmo passando isolado. 10s dá folga sem mascarar teste
+    // realmente travado.
+    testTimeout: 10000,
   },
 })

@@ -1,0 +1,18 @@
+get:
+  tags:
+    - Contracts
+  operationId: listContractMethods
+  summary: Lista os métodos de leitura (view/pure) decodificáveis de um contrato monitorado
+  description: >-
+    Catálogo dos métodos `view`/`pure` que o Evex sabe decodificar (nome + inputs + outputs) para este
+    contrato, derivado das versões de ABI já cadastradas (E19/DEC-082) — base para configurar chamadas
+    de leitura em Perfis de Enriquecimento. Um item por par "método x faixa de validade de ABI" — num
+    contrato proxy upgradável (DEC-007) o mesmo método pode aparecer mais de uma vez, com faixas de
+    blocos distintas. Contrato sem nenhuma ABI cadastrada devolve `200` com lista vazia (não é erro).
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-method-list-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

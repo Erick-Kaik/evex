@@ -3,6 +3,9 @@ package br.com.bbchain.evex.indexer.application.webhook
 import br.com.bbchain.evex.indexer.adapters.outbound.webhook.WebhookPayloadRenderer
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
+import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentProfilePort
+import br.com.bbchain.evex.indexer.domain.model.EntityModel
+import br.com.bbchain.evex.indexer.domain.model.EntityModelPort
 import br.com.bbchain.evex.indexer.domain.webhook.InvalidWebhookConfigException
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfig
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfigNotFoundException
@@ -19,6 +22,8 @@ import org.springframework.stereotype.Service
 class WebhookConfigService(
     private val webhooks: WebhookConfigPort,
     private val payloadRenderer: WebhookPayloadRenderer,
+    private val enrichmentProfiles: EnrichmentProfilePort,
+    private val entityModels: EntityModelPort,
 ) {
     fun register(
         contractAddress: String,
@@ -27,12 +32,17 @@ class WebhookConfigService(
         url: String,
         filters: List<WebhookFilterCondition>,
         payloadTemplate: String?,
+        enrichmentProfileIds: List<UUID> = emptyList(),
+        entityModelIds: List<UUID> = emptyList(),
     ): WebhookConfig {
+        val normalizedAddress = contractAddress.lowercase()
         validatePayloadTemplate(payloadTemplate)
         validateUrl(url)
+        validateEnrichmentProfileIds(enrichmentProfileIds)
+        validateEntityModelIds(entityModelIds, normalizedAddress, eventName)
         val config = WebhookConfig(
             id = UUID.randomUUID(),
-            contractAddress = contractAddress.lowercase(),
+            contractAddress = normalizedAddress,
             network = network,
             eventName = eventName,
             url = url,
@@ -40,6 +50,8 @@ class WebhookConfigService(
             payloadTemplate = payloadTemplate,
             active = true,
             createdAt = Instant.now(),
+            enrichmentProfileIds = enrichmentProfileIds,
+            entityModelIds = entityModelIds,
         )
         return webhooks.save(config)
     }
@@ -56,17 +68,24 @@ class WebhookConfigService(
         url: String,
         filters: List<WebhookFilterCondition>,
         payloadTemplate: String?,
+        enrichmentProfileIds: List<UUID> = emptyList(),
+        entityModelIds: List<UUID> = emptyList(),
     ): WebhookConfig {
+        val normalizedAddress = contractAddress.lowercase()
         validatePayloadTemplate(payloadTemplate)
         validateUrl(url)
+        validateEnrichmentProfileIds(enrichmentProfileIds)
+        validateEntityModelIds(entityModelIds, normalizedAddress, eventName)
         val existing = get(id)
         val updated = existing.copy(
-            contractAddress = contractAddress.lowercase(),
+            contractAddress = normalizedAddress,
             network = network,
             eventName = eventName,
             url = url,
             filters = filters,
             payloadTemplate = payloadTemplate,
+            enrichmentProfileIds = enrichmentProfileIds,
+            entityModelIds = entityModelIds,
         )
         return webhooks.save(updated)
     }
@@ -107,6 +126,49 @@ class WebhookConfigService(
         }
         if (!uri.isAbsolute || uri.scheme?.lowercase() !in setOf("http", "https")) {
             throw InvalidWebhookConfigException("url precisa ser absoluta com esquema http/https: $url")
+        }
+    }
+
+    /**
+     * Falha cedo (E19/DEC-082): cada `id` de [enrichmentProfileIds] precisa existir — sem isso, um id
+     * inválido só apareceria silenciosamente no 1º disparo real ([WebhookEnrichmentResolver] resolveria
+     * uma lista vazia pra ele, os tokens `{{enriched.*}}` daquele perfil nunca sendo preenchidos).
+     */
+    private fun validateEnrichmentProfileIds(ids: List<UUID>) {
+        if (ids.isEmpty()) return
+        val found = enrichmentProfiles.findAllByIds(ids).map { it.id }.toSet()
+        val missing = ids.toSet() - found
+        if (missing.isNotEmpty()) {
+            throw InvalidWebhookConfigException("enrichmentProfileIds inexistentes: $missing")
+        }
+    }
+
+    /**
+     * Falha cedo (E19/DEC-082): cada `id` de [entityModelIds] precisa existir **e** ter algum
+     * `ModelContributor` cujo `(contractAddress, eventName)` bata com o `(contractAddress, eventName)`
+     * deste próprio webhook — "o webhook só pode ler um modelo do qual o próprio evento dele também
+     * participa" (regra do roadmap E19). Sem esta checagem, `{{model.*}}` daquele modelo nunca teria
+     * como resolver em runtime (o casamento de contribuidor em
+     * [WebhookMatchingService.resolveModelPlaceholders] é sempre contra o evento que disparou o
+     * próprio webhook).
+     */
+    private fun validateEntityModelIds(ids: List<UUID>, contractAddress: String, eventName: String) {
+        if (ids.isEmpty()) return
+        val models: List<EntityModel> = entityModels.findAllByIds(ids)
+        val found = models.map { it.id }.toSet()
+        val missing = ids.toSet() - found
+        if (missing.isNotEmpty()) {
+            throw InvalidWebhookConfigException("entityModelIds inexistentes: $missing")
+        }
+        models.forEach { model ->
+            val hasMatchingContributor = model.contributors.any {
+                it.contractAddress.equals(contractAddress, ignoreCase = true) && it.eventName == eventName
+            }
+            if (!hasMatchingContributor) {
+                throw InvalidWebhookConfigException(
+                    "entityModel ${model.id} não tem nenhum contribuidor casando com (contractAddress=$contractAddress, eventName=$eventName) deste webhook",
+                )
+            }
         }
     }
 }

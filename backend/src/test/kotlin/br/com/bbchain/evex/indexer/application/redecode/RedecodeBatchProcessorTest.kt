@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.application.redecode
 
 import br.com.bbchain.evex.indexer.application.balance.BalanceProjectionService
+import br.com.bbchain.evex.indexer.application.model.EntityModelProjectionService
 import br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingService
 import br.com.bbchain.evex.indexer.domain.abi.AbiDecodingPort
 import br.com.bbchain.evex.indexer.domain.abi.DecodedEvent
@@ -13,6 +14,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import io.mockk.verifyOrder
 import java.time.Instant
 import java.util.UUID
 import org.assertj.core.api.Assertions.assertThat
@@ -25,7 +27,8 @@ class RedecodeBatchProcessorTest {
     private val abiDecoding: AbiDecodingPort = mockk()
     private val balanceProjectionService: BalanceProjectionService = mockk(relaxed = true)
     private val webhookMatchingService: WebhookMatchingService = mockk(relaxed = true)
-    private val processor = RedecodeBatchProcessor(events, abiDecoding, balanceProjectionService, webhookMatchingService)
+    private val entityModelProjectionService: EntityModelProjectionService = mockk(relaxed = true)
+    private val processor = RedecodeBatchProcessor(events, abiDecoding, balanceProjectionService, webhookMatchingService, entityModelProjectionService)
 
     private fun rawEvent(
         address: String = "0xaaaa000000000000000000000000000000aaaa",
@@ -72,6 +75,29 @@ class RedecodeBatchProcessorTest {
         verify(exactly = 1) { events.updateAll(any()) }
         verify(exactly = 1) { balanceProjectionService.projectBatch(updatedSlot.captured) }
         verify(exactly = 1) { webhookMatchingService.matchAndEnqueue(updatedSlot.captured) }
+    }
+
+    @Test
+    fun `entity model projection runs before webhook matching, so a webhook sees its own event's contribution (DEC-088 regression)`() {
+        val event = rawEvent()
+        val filter = RedecodeFilter()
+        every { events.findPendingCandidates(filter, 100) } returns listOf(event)
+        every {
+            abiDecoding.decode(event.contractAddress, event.blockNumber, RawLog(topics = event.rawTopics, data = event.rawData))
+        } returns DecodedEvent(eventName = "Transfer", parameters = mapOf("value" to "1"))
+        val updatedSlot = slot<List<BlockchainEvent>>()
+        every { events.updateAll(capture(updatedSlot)) } answers { updatedSlot.captured }
+
+        processor.processBatch(filter, 100)
+
+        // DEC-088: `entityModelProjectionService.projectBatch` precisa gravar a contribuição do evento
+        // ANTES de `webhookMatchingService.matchAndEnqueue` ler o registro acumulado — na ordem
+        // contrária (bug real, corrigido), um evento nunca via sua própria contribuição no
+        // `{{model.*}}` da entrega que ele mesmo dispara.
+        verifyOrder {
+            entityModelProjectionService.projectBatch(updatedSlot.captured)
+            webhookMatchingService.matchAndEnqueue(updatedSlot.captured)
+        }
     }
 
     @Test

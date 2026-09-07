@@ -1,0 +1,5 @@
+description: Catálogo completo do ABI (funções, eventos, erros, constructor/fallback/receive) de um contrato monitorado.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/abi-entry-list.yaml"

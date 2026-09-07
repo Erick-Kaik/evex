@@ -1,0 +1,38 @@
+type: object
+description: >-
+  Perfil de enriquecimento (E19/DEC-082) — lista ordenada e reaproveitável de chamadas de leitura
+  on-chain, cadastrada como recurso próprio, referenciável por 0+ webhooks via `enrichmentProfileIds`.
+  Resolução ao vivo no dispatch — editar um perfil muda imediatamente todos os webhooks que o
+  referenciam.
+required:
+  - id
+  - name
+  - network
+  - status
+  - calls
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Identificador interno do registro.
+  name:
+    type: string
+    description: Nome dado pelo usuário ao perfil.
+  description:
+    type: string
+    nullable: true
+    description: Descrição livre do perfil.
+  network:
+    $ref: "../enum/network.yaml"
+  status:
+    $ref: "../enum/enrichment-profile-status.yaml"
+  calls:
+    type: array
+    description: Chamadas de leitura, na ordem em que são resolvidas.
+    items:
+      $ref: "./enrichment-call.yaml"
+  createdAt:
+    type: string
+    format: date-time
+    description: Momento em que este perfil foi cadastrado.

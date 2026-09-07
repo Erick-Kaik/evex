@@ -246,6 +246,92 @@ control-panel) já tenha rodado ao menos uma vez — é o que compila os 3 `.sol
 Também disponível pela aba "Demonstração" (seção 3.8): ações "Deploy do cofre upgradeável (V1)" e
 "Upgrade do cofre pra V2".
 
+### 3.10 Cenário Computador+Cofre (eventos enriquecidos) — cenário de validação oficial da E19
+
+`contracts/TestComputer.sol` + `seed/computer-vault-scenario.ts` provam de ponta a ponta o ponto mais
+crítico da E19 (`docs/roadmap.md`): um Perfil de Enriquecimento resolve o `eth_call` **no bloco em que
+o evento disparador ocorreu**, não no bloco atual. Reaproveita o `TestUpgradeableVault` (3.9, já
+deployado/upgradado pra V2) como "a moeda":
+
+```bash
+cd local-env
+npx tsx seed/deploy-upgradeable-vault.ts      # se ainda não tiver rodado
+npx tsx seed/upgrade-upgradeable-vault.ts     # obrigatório — a 3ª rodada do cenário saca (withdraw), só existe em V2
+npx tsx seed/computer-vault-scenario.ts       # cria o Computador, troca peças 3x em blocos espaçados (hardhat_mine)
+```
+
+O script cria o computador `id=1` (`COMPUTER_ID` sobrescreve) e dispara `create()`/`deposit()`, depois
+3 rodadas de `changeParts()` + `deposit()`/`withdraw()` proporcional ao `powerDelta`, em blocos bem
+espaçados (`hardhat_mine` avança blocos vazios entre cada rodada, sem gastar gas à toa). Imprime os
+blocos de cada evento do Cofre e a config esperada do Computador em cada um, e grava um resumo em
+`.logs/computer-vault-scenario.json`. Também disponível pela aba "Demonstração": ação "Cenário
+Computador+Cofre (eventos enriquecidos, E19)", com `computerId` como campo.
+
+Pra gerar mais eventos/entregas sem repetir o roteiro fixo (ex.: testar o webhook de novo depois de já
+ter configurado tudo), `seed/change-computer-power.ts` faz um ajuste avulso — mantém as peças do
+computador `id` informado e aplica só o `powerDelta` que você quiser (positivo deposita, negativo saca):
+
+```bash
+npx tsx seed/change-computer-power.ts   # COMPUTER_ID=1 POWER_DELTA=50 por padrão
+```
+
+Também disponível na aba "Demonstração": ação "Ajustar poder do Computador (aumentar/diminuir)", com
+`computerId`/`powerDelta` como campos (aceita negativo). Reverte com uma mensagem clara se o computador
+ainda não existir, ou com o erro do próprio contrato se o delta deixaria o poder negativo.
+
+**Passos manuais no Evex** (o script não automatiza cadastro via API, só imprime os valores exatos):
+registrar o `TestComputer` (ação "Registrar os 4 contratos no Evex" — passa a registrar 5), criar um
+Perfil de Enriquecimento apontando `getConfig(id)` do Computador (4 saídas mapeadas por posição), e um
+webhook no `Deposited`/`Withdrawn` do Cofre referenciando esse perfil. **Importante**: crie/atualize o
+Perfil com o `id` do computador **antes** de rodar o script — a config é resolvida "ao vivo" (referência
+viva, DEC-082) pelo poller assim que cada evento é ingerido, não só quando você consulta depois; atualizar
+o perfil depois que os eventos já foram processados só afeta entregas futuras, não as já disparadas.
+
+**Validado de ponta a ponta** (2026-09-06, sessão principal, DEC-085): 3 entregas de webhook reais
+(payload capturado por um HTTP local de teste) trouxeram 3 configs **visivelmente diferentes** — a
+inicial, a intermediária e a do "bloco-prova" —, batendo exatamente com o `eth_call` bruto feito nos
+mesmos blocos via `curl` direto no nó Hardhat. Achado real corrigido no processo: `ddl-auto: update` não
+conseguia adicionar as colunas `enrichment_profile_ids`/`entity_model_ids` (JSONB `NOT NULL`) num banco
+com `webhook_configs` pré-existente — mesma classe de bug já documentada na DEC-041/V2, resolvida com a
+migration `V4__webhook_config_enrichment_columns.sql` (`ADD COLUMN IF NOT EXISTS ... DEFAULT '[]'::jsonb`).
+
+### 3.11 Cenário Biblioteca de Jogos (Modelo de Entidade) — cenário de validação da E25
+
+`contracts/TestGameLibrary.sol` + `seed/game-library-scenario.ts` provam o 3º pilar da E19 nunca
+validado ao vivo antes: um Modelo de Entidade acumula campos de **eventos diferentes** (`ComputerCreated`/
+`PartsChanged`, do `TestComputer` — E19 — e `GameRunSucceeded`, do `TestGameLibrary`) sobre a mesma
+entidade lógica, correlacionados por `id`/`computerId`. `TestGameLibrary` só deixa um jogo rodar se o
+`TestComputer` referenciado tiver poder suficiente — a checagem é um `eth_call` on-chain de verdade
+(`ITestComputer.getConfig`), e a falta de poder reverte com um erro customizado real
+(`InsufficientPower`), útil também pro Explorador de ABI (E24):
+
+```bash
+cd local-env
+npx tsx seed/deploy-game-library.ts     # deploya apontando pro TestComputer já deployado
+npx tsx seed/game-library-scenario.ts   # cria o computador, registra 2 jogos, revert real + sucesso
+```
+
+Também disponíveis na aba "Demonstração": ações "Deploy da Biblioteca de Jogos" e "Cenário Biblioteca
+de Jogos (Modelo de Entidade, E25)" (esta com campo `computerId`, default `1000` — bem longe dos ids
+usados por `computer-vault-scenario.ts`, pra não colidir).
+
+**Passos manuais no Evex antes de rodar o script** (referência viva, mesma lição da E19 — configure
+**antes**, não depois): registre `TestGameLibrary` (endereço impresso pelo `deploy-game-library.ts`),
+crie um Modelo de Entidade com 3 contribuintes — `(TestComputer, ComputerCreated, correlationParam=id)`,
+`(TestComputer, PartsChanged, correlationParam=id)`, `(TestGameLibrary, GameRunSucceeded,
+correlationParam=computerId)` —, e um webhook no `GameRunSucceeded` do `TestGameLibrary` referenciando
+esse Modelo, com `payloadTemplate` usando `{{model.<campo>}}` pros campos mapeados em cada contribuinte.
+
+**Validado de ponta a ponta** (2026-09-06, sessão principal, DEC-088): a entrega do evento-prova
+(`GameRunSucceeded` do jogo que só passou a rodar depois do poder aumentar) trouxe corretamente os
+campos acumulados dos 3 eventos, **incluindo a própria contribuição do evento que disparou o webhook** —
+o que só passou a funcionar depois de um bug real corrigido: `EntityModelProjectionService.projectBatch`
+precisava rodar **antes** de `WebhookMatchingService.matchAndEnqueue` (estava na ordem inversa desde a
+E19), senão um evento nunca via sua própria contribuição no `{{model.*}}` da entrega que ele mesmo
+dispara. Achado secundário nos scripts (não no produto): `ethers.NonceManager` incrementa o nonce antes
+de saber que uma transação vai reverter — precisa de `signer.reset()` logo após capturar um revert
+esperado, senão a próxima transação real usa nonce errado.
+
 ### Máquina com pouco fôlego pra tudo isso junto?
 
 Mesmo com Blockscout e a UI do scaffold-eth-2 fora do dia a dia (DEC-059), `yarn chain` + Gradle/Kotlin

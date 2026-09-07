@@ -1,0 +1,12 @@
+type: string
+description: >-
+  Tipo bruto de um item de ABI (E24) — o campo `"type"` do Solidity, sem tradução: cobre funções de
+  qualquer `stateMutability`, eventos, erros customizados (motivos de revert declarados) e
+  constructor/fallback/receive.
+enum:
+  - FUNCTION
+  - EVENT
+  - ERROR
+  - CONSTRUCTOR
+  - FALLBACK
+  - RECEIVE

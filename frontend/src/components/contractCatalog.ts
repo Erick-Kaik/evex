@@ -1,6 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { ContractsApi } from '../api/api'
-import type { Contract, ContractEvent, ContractEventInput, Network } from '../api/api'
+import type {
+  Contract,
+  ContractEvent,
+  ContractEventInput,
+  ContractMethod,
+  ContractMethodInput,
+  ContractMethodOutput,
+  Network,
+} from '../api/api'
 import { apiConfiguration } from '../api/config'
 
 const contractsApi = new ContractsApi(apiConfiguration)
@@ -83,6 +91,67 @@ export function useContractEventCatalog(address: string | undefined): ContractEv
     eventNames,
     inputsByEvent,
     hasNoAbi: query.isSuccess && events.length === 0,
+  }
+}
+
+/** Um método do catálogo com `inputs`/`outputs` já mesclados entre faixas de bloco (proxy, E19/DEC-082). */
+export interface CatalogMethod {
+  name: string
+  inputs: ContractMethodInput[]
+  outputs: ContractMethodOutput[]
+}
+
+interface ContractMethodCatalog {
+  /** Resultado bruto do React Query (`isPending`/`isError`/`data`...). */
+  query: ReturnType<typeof useContractMethodCatalogQuery>
+  /** Nomes de método de-duplicados, na ordem em que aparecem. */
+  methodNames: string[]
+  /** Método pelo nome — já mesclado entre versões de ABI. */
+  methodsByName: Map<string, CatalogMethod>
+  /** `true` quando o contrato respondeu 200 com catálogo vazio (sem ABI cadastrada — não é erro). */
+  hasNoAbi: boolean
+}
+
+function useContractMethodCatalogQuery(address: string | undefined) {
+  return useQuery({
+    queryKey: ['contract-method-catalog', address?.toLowerCase() ?? null],
+    queryFn: async (): Promise<ContractMethod[]> =>
+      (await contractsApi.listContractMethods(address as string)).data,
+    enabled: Boolean(address),
+  })
+}
+
+/**
+ * Catálogo de métodos `view`/`pure` decodificáveis de um contrato (`GET /v1/contracts/{address}/methods`,
+ * E19/DEC-082/083) — mirror exato de `useContractEventCatalog`, trocando evento por método. O mesmo
+ * `name` pode vir N vezes (uma por faixa de validade de ABI, proxy upgradável): de-duplica por nome e
+ * mescla `inputs`/`outputs`, prevalecendo a faixa mais recente.
+ */
+export function useContractMethodCatalog(address: string | undefined): ContractMethodCatalog {
+  const query = useContractMethodCatalogQuery(address)
+  const methods = query.data ?? []
+
+  const methodsByName = new Map<string, CatalogMethod>()
+  const recencyByMethod = new Map<string, number>()
+  const methodNames: string[] = []
+
+  for (const method of methods) {
+    if (!methodsByName.has(method.name)) {
+      methodNames.push(method.name)
+    }
+    const recency = method.validToBlock == null ? Number.MAX_SAFE_INTEGER : method.validFromBlock
+    const previous = recencyByMethod.get(method.name)
+    if (previous === undefined || recency >= previous) {
+      recencyByMethod.set(method.name, recency)
+      methodsByName.set(method.name, { name: method.name, inputs: method.inputs, outputs: method.outputs })
+    }
+  }
+
+  return {
+    query,
+    methodNames,
+    methodsByName,
+    hasNoAbi: query.isSuccess && methods.length === 0,
   }
 }
 

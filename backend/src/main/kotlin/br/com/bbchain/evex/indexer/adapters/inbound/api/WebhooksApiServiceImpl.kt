@@ -46,6 +46,8 @@ class WebhooksApiServiceImpl(
             url = createWebhookPayload.url.toString(),
             filters = createWebhookPayload.filters.orEmpty().map { it.toDomain() },
             payloadTemplate = createWebhookPayload.payloadTemplate,
+            enrichmentProfileIds = createWebhookPayload.enrichmentProfileIds.orEmpty(),
+            entityModelIds = createWebhookPayload.entityModelIds.orEmpty(),
         )
         return config.toDto()
     }
@@ -72,6 +74,8 @@ class WebhooksApiServiceImpl(
             url = updateWebhookPayload.url.toString(),
             filters = updateWebhookPayload.filters.orEmpty().map { it.toDomain() },
             payloadTemplate = updateWebhookPayload.payloadTemplate,
+            enrichmentProfileIds = updateWebhookPayload.enrichmentProfileIds.orEmpty(),
+            entityModelIds = updateWebhookPayload.entityModelIds.orEmpty(),
         )
         return config.toDto()
     }
@@ -125,6 +129,8 @@ class WebhooksApiServiceImpl(
         payloadTemplate = payloadTemplate,
         active = active,
         createdAt = createdAt.atOffset(ZoneOffset.UTC),
+        enrichmentProfileIds = enrichmentProfileIds.toMutableList(),
+        entityModelIds = entityModelIds.toMutableList(),
     )
 
     private fun WebhookDeliveryAttempt.toDto(): WebhookDeliveryAttemptDto = WebhookDeliveryAttemptDto(

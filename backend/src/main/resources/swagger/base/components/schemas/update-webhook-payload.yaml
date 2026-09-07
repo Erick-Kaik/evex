@@ -33,3 +33,20 @@ properties:
     description: >-
       Template JSON opcional com placeholders `{{campo}}`/`{{decodedParameters.nome}}`. Validado na
       edição: precisa renderizar como JSON válido, senão a requisição é rejeitada com 400.
+  enrichmentProfileIds:
+    type: array
+    description: >-
+      Perfis de Enriquecimento (E19/DEC-082) referenciados, na ordem em que suas chamadas são
+      resolvidas no dispatch. Ausente/vazio = sem enriquecimento on-chain (comportamento pré-E19).
+    items:
+      type: string
+      format: uuid
+  entityModelIds:
+    type: array
+    description: >-
+      Modelos de Entidade (E19/DEC-082) referenciados — cada modelo precisa ter algum contribuinte que
+      case com o `(contractAddress, eventName)` deste próprio webhook. Ausente/vazio = sem campos
+      `{{model.*}}` (comportamento pré-E19).
+    items:
+      type: string
+      format: uuid

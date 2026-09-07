@@ -31,6 +31,7 @@ class WebhookDispatchJob(
     private val webhookDispatchPort: WebhookDispatchPort,
     private val recorder: WebhookDeliveryRecorder,
     private val properties: WebhookProperties,
+    private val enrichmentResolver: WebhookEnrichmentResolver,
 ) {
     private val logger = LoggerFactory.getLogger(WebhookDispatchJob::class.java)
 
@@ -49,7 +50,11 @@ class WebhookDispatchJob(
                 logger.warn("WebhookDelivery {} referencia um webhookConfigId {} que não existe mais — pulando.", delivery.id, delivery.webhookConfigId)
                 return
             }
-            val result = webhookDispatchPort.send(config.url, delivery.payload)
+            // E19/DEC-082 — Fase 2 do render em 2 fases: resolve {{enriched.*}} ao vivo (referência viva
+            // ao perfil, não snapshot) só agora, fora de transação, imediatamente antes do POST. Config
+            // sem enrichmentProfileIds -> resolve() devolve o payload sem tocar (regressão zero).
+            val payload = enrichmentResolver.resolve(delivery, config.enrichmentProfileIds)
+            val result = webhookDispatchPort.send(config.url, payload)
             recorder.recordAttempt(delivery, result)
         } catch (ex: Exception) {
             logger.warn("Falha ao processar WebhookDelivery {} neste ciclo de dispatch — seguindo pro próximo item do lote: {}", delivery.id, ex.message)

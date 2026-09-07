@@ -63,6 +63,8 @@ class JpaWebhookConfigAdapter(
         payloadTemplate = payloadTemplate,
         active = active,
         createdAt = createdAt,
+        enrichmentProfileIds = objectMapper.writeValueAsString(enrichmentProfileIds),
+        entityModelIds = objectMapper.writeValueAsString(entityModelIds),
         new = isNew,
     )
 
@@ -76,5 +78,7 @@ class JpaWebhookConfigAdapter(
         payloadTemplate = payloadTemplate,
         active = active,
         createdAt = createdAt,
+        enrichmentProfileIds = objectMapper.readValue(enrichmentProfileIds, object : TypeReference<List<UUID>>() {}),
+        entityModelIds = objectMapper.readValue(entityModelIds, object : TypeReference<List<UUID>>() {}),
     )
 }

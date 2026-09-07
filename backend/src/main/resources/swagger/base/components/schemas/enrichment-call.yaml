@@ -1,0 +1,33 @@
+type: object
+description: >-
+  Uma chamada de leitura (`eth_call`) dentro de um Perfil de Enriquecimento, resolvida em ordem dentro
+  da lista `calls` do perfil (permite encadeamento entre chamadas via `{{enriched.x}}`).
+required:
+  - targetContractAddress
+  - methodName
+  - args
+  - outputs
+properties:
+  targetContractAddress:
+    type: string
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: >-
+      Contrato-alvo da leitura — não precisa ser o contrato do evento que disparou o webhook; pode ser
+      qualquer outro contrato monitorado já cadastrado no Evex.
+  methodName:
+    type: string
+    minLength: 1
+    description: Nome do método `view`/`pure` a chamar.
+  args:
+    type: array
+    description: >-
+      Um argumento por posição de entrada do método, na ordem declarada no Solidity. Cada item é
+      literal, `{{decodedParameters.x}}` (campo do evento que disparou o webhook) ou `{{enriched.y}}`
+      (saída de uma chamada anterior já resolvida na sequência).
+    items:
+      type: string
+  outputs:
+    type: array
+    description: 1 por saída do método que se quer expor no payload — nem toda saída precisa ser mapeada.
+    items:
+      $ref: "./enrichment-output-mapping.yaml"

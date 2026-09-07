@@ -8,6 +8,8 @@ const NAV_LINKS = [
   { to: '/events', label: 'Eventos' },
   { to: '/balances', label: 'Saldos' },
   { to: '/webhooks', label: 'Webhooks' },
+  { to: '/enrichment-profiles', label: 'Enriquecimentos' },
+  { to: '/entity-models', label: 'Modelos' },
 ]
 
 /** Layout raiz — barra de navegação com as 4 telas da UI mínima da PoC (doc §6). */

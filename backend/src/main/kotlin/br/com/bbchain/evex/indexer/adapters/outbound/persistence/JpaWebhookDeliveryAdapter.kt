@@ -5,6 +5,8 @@ import br.com.bbchain.evex.indexer.domain.webhook.WebhookDelivery
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryAttempt
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryPort
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryStatus
+import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
 import java.util.UUID
 import org.springframework.data.domain.PageRequest
@@ -12,12 +14,19 @@ import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
 import org.springframework.stereotype.Component
 
-/** Implementação JPA/Postgres de [WebhookDeliveryPort]. */
+/**
+ * Implementação JPA/Postgres de [WebhookDeliveryPort]. `decodedParameters` (de)serializado
+ * manualmente via `ObjectMapper` Jackson 2 local (DEC-020) — mesmo padrão de
+ * `JpaBlockchainEventAdapter.decodedParameters` (`Map<String, Any?>`, tipo genérico, sem necessidade
+ * de `KotlinModule`).
+ */
 @Component
 class JpaWebhookDeliveryAdapter(
     private val repository: WebhookDeliveryJpaRepository,
     private val attemptRepository: WebhookDeliveryAttemptJpaRepository,
 ) : WebhookDeliveryPort {
+
+    private val objectMapper = ObjectMapper()
 
     override fun enqueue(delivery: WebhookDelivery): WebhookDelivery = repository.save(delivery.toEntity(isNew = true)).toDomain()
 
@@ -61,6 +70,8 @@ class JpaWebhookDeliveryAdapter(
         attemptCount = attemptCount,
         nextAttemptAt = nextAttemptAt,
         createdAt = createdAt,
+        blockNumber = blockNumber,
+        decodedParameters = decodedParameters?.let { objectMapper.writeValueAsString(it) },
         new = isNew,
     )
 
@@ -74,6 +85,8 @@ class JpaWebhookDeliveryAdapter(
         attemptCount = attemptCount,
         nextAttemptAt = nextAttemptAt,
         createdAt = createdAt,
+        blockNumber = blockNumber,
+        decodedParameters = decodedParameters?.let { objectMapper.readValue(it, object : TypeReference<Map<String, Any?>>() {}) },
     )
 
     private fun WebhookDeliveryAttempt.toEntity() = WebhookDeliveryAttemptEntity(

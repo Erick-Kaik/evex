@@ -1,0 +1,6 @@
+required: true
+description: Corpo da requisição de cadastro de um Modelo de Entidade.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/create-entity-model-payload.yaml"

@@ -1,0 +1,20 @@
+get:
+  tags:
+    - Contracts
+  operationId: listContractAbiEntries
+  summary: Lista todos os itens do ABI (funções, eventos, erros, constructor/fallback/receive) de um contrato monitorado
+  description: >-
+    Catálogo completo do ABI deste contrato — funções de qualquer `stateMutability`, eventos, erros
+    customizados (motivos de revert declarados) e constructor/fallback/receive —, derivado das versões
+    de ABI já cadastradas (E24). Diferente de `GET /v1/contracts/{address}/methods` (só `view`/`pure`)
+    e `GET /v1/contracts/{address}/events` (só eventos), este endpoint não filtra nada. Um item por par
+    "item de ABI x faixa de validade de ABI" — num contrato proxy upgradável (DEC-007) o mesmo item
+    pode aparecer mais de uma vez, com faixas de blocos distintas. Contrato sem nenhuma ABI cadastrada
+    devolve `200` com lista vazia (não é erro).
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/abi-entry-list-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

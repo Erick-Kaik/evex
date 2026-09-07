@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router'
 import {
   Alert,
   Box,
@@ -7,16 +8,19 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  IconButton,
   Stack,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import AddIcon from '@mui/icons-material/Add'
+import ListAltIcon from '@mui/icons-material/ListAlt'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { useContractAbiVersions } from './useContracts'
 import { useRedecodeStatus } from './useRedecodeStatus'
@@ -30,8 +34,12 @@ interface AbiSectionProps {
 /**
  * Seção de ABI da tela de detalhe do contrato (doc §4.1): tabela de versões cadastradas + 2 ações
  * pontuais em modal (E13/DEC-060) — cadastrar nova versão e espiar sugestões de detecção automática.
+ * Cada linha da tabela ganhou (E24) um botão "Ver métodos e eventos" que navega para
+ * `/contracts/:address/abi-entries` (Explorador de ABI) — não filtra pela versão da linha clicada, o
+ * catálogo já mostra a faixa de blocos de cada item.
  */
 export function AbiSection({ address }: AbiSectionProps) {
+  const navigate = useNavigate()
   const abiVersions = useContractAbiVersions(address)
   const redecode = useRedecodeStatus()
   const [registerOpen, setRegisterOpen] = useState(false)
@@ -88,6 +96,7 @@ export function AbiSection({ address }: AbiSectionProps) {
                   <TableCell>Origem</TableCell>
                   <TableCell>Storage</TableCell>
                   <TableCell>Cadastrada em</TableCell>
+                  <TableCell />
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -98,6 +107,17 @@ export function AbiSection({ address }: AbiSectionProps) {
                     <TableCell>{version.source}</TableCell>
                     <TableCell>{version.storageType}</TableCell>
                     <TableCell>{new Date(version.createdAt).toLocaleString('pt-BR')}</TableCell>
+                    <TableCell align="right">
+                      <Tooltip title="Ver métodos e eventos">
+                        <IconButton
+                          size="small"
+                          aria-label="ver métodos e eventos"
+                          onClick={() => navigate(`/contracts/${address}/abi-entries`)}
+                        >
+                          <ListAltIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

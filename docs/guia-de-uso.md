@@ -37,6 +37,7 @@ campo `network` (`MAINNET` | `TESTNET`).
 - [10. Aba "Demonstração" — disparar scripts sem terminal](#10-aba-demonstração--disparar-scripts-sem-terminal)
 - [11. Contrato proxy upgradável (ABI versionada por faixa de blocos)](#11-contrato-proxy-upgradável-abi-versionada-por-faixa-de-blocos)
 - [12. Consultar saldo numa data / histórico](#12-consultar-saldo-numa-data--histórico)
+- [13. Eventos enriquecidos no payload de webhook](#13-eventos-enriquecidos-no-payload-de-webhook)
 - [Referência rápida](#referência-rápida)
 - [Troubleshooting](#troubleshooting)
 
@@ -531,6 +532,89 @@ Sem carteira ou contrato preenchido, a consulta traz a página inteira (útil pa
 
 ---
 
+## 13. Eventos enriquecidos no payload de webhook
+
+**Cenário:** o `payloadTemplate` de um webhook (seção 7) só traz o que já veio no próprio evento
+decodificado (`{{decodedParameters.x}}`). Às vezes o payload precisa de **estado on-chain que não está
+no evento** — de qualquer contrato já cadastrado, lido **no bloco em que o evento disparou**, não no
+bloco atual. É pra isso que serve o "Perfil de Enriquecimento" (`{{enriched.*}}`) e, pra acumular
+campos de eventos diferentes ao longo do tempo sobre a mesma entidade, o "Modelo de Entidade"
+(`{{model.*}}`).
+
+- **Perfil de Enriquecimento** (`/enrichment-profiles`): lista ordenada de chamadas de leitura
+  (`view`/`pure`) — contrato-alvo (pode ser diferente do contrato do evento), método, argumentos
+  (literais, `{{decodedParameters.x}}` do evento, ou `{{enriched.y}}` de uma chamada anterior no mesmo
+  perfil) e as saídas que viram `{{enriched.<placeholder>}}` no payload. É um recurso **próprio e
+  reaproveitável**, referenciado por 1+ webhooks — editar o perfil depois afeta todo webhook que o
+  referencia (referência viva, não uma cópia).
+- **Modelo de Entidade** (`/entity-models`): acumula campos de **eventos diferentes** sobre a mesma
+  entidade lógica (ex.: `Created`→`Approved`→`Minted` de um NFT) num registro persistente, correlacionado
+  por um campo comum (ex.: `id`). Um webhook só pode referenciar um modelo do qual seu **próprio**
+  evento também participa como contribuinte.
+
+**Contrato real pra testar isso** (não precisa simular): `local-env/contracts/TestComputer.sol` — um
+"computador" com peças trocáveis (`motherboard`/`gpu`/`cpu`) e um `processingPower` que muda a cada
+`changeParts()` — e `TestUpgradeableVault` (seção 11, já cadastrado) representando "a moeda": a cada
+troca de peça, deposita ou saca no cofre proporcionalmente. `local-env/seed/computer-vault-scenario.ts`
+roda o roteiro inteiro (criação + 3 trocas de peça em blocos **bem espaçados**, pra que a config no meio
+do caminho seja visivelmente diferente da final):
+
+```bash
+cd local-env
+npx tsx seed/computer-vault-scenario.ts     # requer TestUpgradeableVault já em V2 (seção 11)
+```
+
+O script imprime os blocos exatos de cada evento do Cofre e a config esperada do Computador em cada
+um — guarde esses números pra conferir o resultado no passo 5.
+
+**Passo a passo (UI) — configure ANTES de rodar o script** (o perfil é referência viva; o poller
+ingere/despacha quase em tempo real, então configurar depois que os eventos já passaram só afeta
+entregas futuras):
+
+1. **Cadastre o Computador**: `TestComputer` sai registrado sozinho se você rodar a ação "Registrar os
+   4 contratos no Evex" da aba Demonstração (passa a registrar 5) — ou cadastre manualmente pelo
+   endereço que o `yarn deploy --tags TestContracts` imprime.
+2. **Crie o Perfil de Enriquecimento** (`/enrichment-profiles` → "Cadastrar"): escolha o Computador
+   como contrato-alvo da chamada — o seletor de método (`<MethodPicker>`) carrega os métodos
+   `view`/`pure` da ABI cadastrada dele automaticamente. Escolha `getConfig`, preencha o argumento
+   `id` (literal, com o id do computador que o script vai usar — por padrão `1`, sobrescrevível via
+   `COMPUTER_ID`). As 4 saídas (`motherboard`/`gpu`/`cpu`/`power`) vêm pré-marcadas com um placeholder
+   sugerido cada uma — mantenha ou renomeie.
+3. **Crie/edite um webhook** (`/webhooks`) no evento `Deposited` (ou `Withdrawn`) do **Cofre**
+   (contrato diferente do Perfil, de propósito) apontando pra uma URL que você controle (ex.:
+   [webhook.site](https://webhook.site), ou um servidor HTTP local só de teste). Na seção
+   "Enriquecimento do payload (opcional)", selecione o Perfil criado no passo 2. No editor do
+   `payloadTemplate`, use os placeholders novos que aparecem no hint — ex.:
+   ```json
+   {"block": {{blockNumber}}, "amount": {{decodedParameters.amount}}, "config": {"motherboard": {{enriched.motherboard}}, "gpu": {{enriched.gpu}}, "cpu": {{enriched.cpu}}, "power": {{enriched.power}}}}
+   ```
+   **Nunca coloque aspas ao redor de um placeholder de valor** (`{{campo}}`, não `"{{campo}}"`) — quem
+   decide se o valor final é string/número/`null` é sempre o renderer, botar aspas na mão gera JSON
+   inválido (aspas duplicadas).
+4. Rode `npx tsx seed/computer-vault-scenario.ts`. O poller ingere/decodifica os eventos e dispara o
+   webhook sozinho — não precisa de `POST /v1/redecode` manual pra eventos novos (só pra reprocessar
+   histórico já indexado).
+5. Abra `/webhooks/<id>` → aba de entregas. **A prova**: a entrega do bloco "do meio" (a 2ª troca de
+   peça) tem que trazer uma config **visivelmente diferente** da entrega final (3ª troca) — motherboard/
+   gpu/cpu/power diferentes, não só um número que cresceu. Se o `eth_call` estivesse lendo o bloco
+   atual em vez do bloco do evento, as duas entregas trariam a config final, idênticas.
+
+**Modelo de Entidade, resumo rápido:** em `/entity-models` → "Cadastrar", cada contribuinte é
+`(contrato, evento, campo de correlação, mapeamento de campos decodificados → campo do modelo)`. Depois
+de referenciado por um webhook (`entityModelIds`), os campos acumulados aparecem como
+`{{model.<campo>}}` no `payloadTemplate` **daquele mesmo webhook** — só funciona se o próprio evento do
+webhook também for um dos contribuintes do modelo. **Contrato real pra testar isso**:
+`local-env/contracts/TestGameLibrary.sol` + `seed/game-library-scenario.ts` — jogos que só rodam se o
+`TestComputer` (contrato acima) tiver poder suficiente, acumulando `ComputerCreated`+`PartsChanged`+
+`GameRunSucceeded` (2 contratos diferentes, 3 eventos diferentes) num só Modelo (`local-env/README.md`
+§3.11).
+
+**Limitação conhecida (não bloqueia os cenários acima):** argumento de `EnrichmentCall` só aceita tipos
+escalares (`address`/`bool`/`string`/`bytesN`/`uintN`/`intN`) — array/tupla como **entrada** de uma
+chamada ainda não tem convenção definida (saída com múltiplos valores funciona normalmente).
+
+---
+
 ## Referência rápida
 
 ### Telas (UI mínima — doc §6)
@@ -542,6 +626,9 @@ Sem carteira ou contrato preenchido, a consulta traz a página inteira (útil pa
 | `/events` | Eventos indexados com filtros (contrato, evento, blocos, datas) + "ver parâmetros" |
 | `/balances` | Consulta de saldo (atual / por data) + configs de monitoramento + backfill |
 | `/webhooks` · `/webhooks/<id>` | Lista/cadastro + detalhe com entregas e tentativas |
+| `/wallets` · `/wallets/<endereço>` | Lista/cadastro + detalhe de carteiras conhecidas (E22) |
+| `/enrichment-profiles` · `/enrichment-profiles/<id>` | Perfis de Enriquecimento — `eth_call` reaproveitável por webhooks (E19) |
+| `/entity-models` · `/entity-models/<id>` | Modelos de Entidade — acumulação de campos entre eventos, reaproveitável por webhooks (E19) |
 | `/demo` | Aba "Demonstração" (só com `VITE_LOCALENV_CONTROL_URL` + control-panel no ar) |
 
 ### Enums
@@ -590,6 +677,15 @@ GET/POST   /v1/webhooks
 GET/PATCH  /v1/webhooks/{id}
 PATCH      /v1/webhooks/{id}/status
 GET        /v1/webhooks/{id}/deliveries
+
+# Eventos enriquecidos (E19)
+GET        /v1/contracts/{address}/methods          # catálogo de métodos view/pure p/ o <MethodPicker>
+GET/POST   /v1/enrichment-profiles
+GET/PUT    /v1/enrichment-profiles/{id}
+PATCH      /v1/enrichment-profiles/{id}/status
+GET/POST   /v1/entity-models
+GET/PUT    /v1/entity-models/{id}
+PATCH      /v1/entity-models/{id}/status
 ```
 
 Swagger UI completo em `http://localhost:8080/swagger-ui.html`.

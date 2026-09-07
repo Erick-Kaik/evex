@@ -19,6 +19,21 @@ import org.springframework.stereotype.Component
  * pegar template malformado na hora, não silenciosamente no primeiro disparo real.
  *
  * `ObjectMapper` local (Jackson 2, DEC-020) — mesmo padrão do resto do projeto.
+ *
+ * [renderTemplate] ganhou 2 parâmetros (E19/DEC-082), ambos com default preservando 100% o
+ * comportamento pré-E19 pra quem não usa a feature:
+ * - [reservedPrefixes]: quando um token bate com algum prefixo reservado (ex.: `"enriched."`), fica
+ *   **intacto** no resultado (`{{enriched.x}}` continua literalmente no `payload` salvo) em vez de
+ *   virar `null` — resolvido de verdade só na Fase 2
+ *   ([br.com.bbchain.evex.indexer.application.webhook.WebhookEnrichmentResolver], fora de transação).
+ *   [br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingService] (Fase 1) sempre chama com
+ *   `setOf("enriched.")`.
+ * - [extraPlaceholders]: valores resolvidos fora do próprio [event] (hoje só `{{model.*}}` — os campos
+ *   acumulados de um Modelo de Entidade, resolvidos em memória por `WebhookMatchingService` **antes**
+ *   de chamar este método, sem prefixo reservado — diferente do `{{enriched.*}}`, essa resolução não
+ *   precisa de rede, cabe inteira na Fase 1). Chave presente em [extraPlaceholders] tem prioridade
+ *   sobre os campos do próprio evento (não há colisão de nomes na prática — namespaces diferentes,
+ *   `model.<campo>` vs. campos soltos do evento).
  */
 @Component
 class WebhookPayloadRenderer {
@@ -41,8 +56,22 @@ class WebhookPayloadRenderer {
         return objectMapper.writeValueAsString(envelope)
     }
 
-    fun renderTemplate(template: String, event: BlockchainEvent): String =
-        placeholderPattern.replace(template) { match -> toJsonLiteral(resolvePlaceholder(match.groupValues[1], event)) }
+    fun renderTemplate(
+        template: String,
+        event: BlockchainEvent,
+        reservedPrefixes: Set<String> = emptySet(),
+        extraPlaceholders: Map<String, Any?> = emptyMap(),
+    ): String =
+        placeholderPattern.replace(template) { match ->
+            val key = match.groupValues[1]
+            if (reservedPrefixes.any { prefix -> key.startsWith(prefix) }) {
+                // Token reservado (ex.: {{enriched.x}}) — mantém o texto literal intacto, resolvido só
+                // na Fase 2 (WebhookEnrichmentResolver), fora desta chamada.
+                match.value
+            } else {
+                toJsonLiteral(resolvePlaceholder(key, event, extraPlaceholders))
+            }
+        }
 
     /** Renderiza [template] com um evento-dummy e tenta parsear o resultado como JSON — nunca lança. */
     fun validateTemplate(template: String): Boolean =
@@ -53,7 +82,10 @@ class WebhookPayloadRenderer {
             false
         }
 
-    private fun resolvePlaceholder(key: String, event: BlockchainEvent): Any? {
+    private fun resolvePlaceholder(key: String, event: BlockchainEvent, extraPlaceholders: Map<String, Any?>): Any? {
+        if (extraPlaceholders.containsKey(key)) {
+            return extraPlaceholders[key]
+        }
         if (key.startsWith("decodedParameters.")) {
             return event.decodedParameters?.get(key.removePrefix("decodedParameters."))
         }

@@ -4,10 +4,18 @@ import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
 import { WebhookForm } from './WebhookForm'
 
-const { listMonitoredContracts, listContractEvents, listWallets } = vi.hoisted(() => ({
+const {
+  listMonitoredContracts,
+  listContractEvents,
+  listWallets,
+  listEnrichmentProfiles,
+  listEntityModels,
+} = vi.hoisted(() => ({
   listMonitoredContracts: vi.fn(),
   listContractEvents: vi.fn(),
   listWallets: vi.fn(),
+  listEnrichmentProfiles: vi.fn(),
+  listEntityModels: vi.fn(),
 }))
 
 vi.mock('../../api/api', async (importOriginal) => {
@@ -16,6 +24,8 @@ vi.mock('../../api/api', async (importOriginal) => {
     ...actual,
     ContractsApi: vi.fn(() => ({ listMonitoredContracts, listContractEvents })),
     WalletsApi: vi.fn(() => ({ listWallets })),
+    EnrichmentProfilesApi: vi.fn(() => ({ listEnrichmentProfiles })),
+    EntityModelsApi: vi.fn(() => ({ listEntityModels })),
   }
 })
 
@@ -25,6 +35,38 @@ const CONTRACT = {
   name: 'Token A',
   network: 'TESTNET',
   status: 'ACTIVE',
+}
+
+const ENRICHMENT_PROFILE = {
+  id: 'ep1',
+  name: 'Perfil Saldo',
+  network: 'TESTNET',
+  status: 'ACTIVE',
+  calls: [
+    {
+      targetContractAddress: CONTRACT.address,
+      methodName: 'balanceOf',
+      args: ['{{decodedParameters.from}}'],
+      outputs: [{ outputIndex: 0, placeholder: 'saldo' }],
+    },
+  ],
+  createdAt: '2026-01-01T00:00:00Z',
+}
+
+const ENTITY_MODEL = {
+  id: 'em1',
+  name: 'Modelo X',
+  network: 'TESTNET',
+  status: 'ACTIVE',
+  contributors: [
+    {
+      contractAddress: CONTRACT.address,
+      eventName: 'Transfer',
+      correlationParam: 'from',
+      fieldMappings: [{ decodedParam: 'value', modelField: 'valor' }],
+    },
+  ],
+  createdAt: '2026-01-01T00:00:00Z',
 }
 
 const baseProps = {
@@ -70,6 +112,12 @@ describe('WebhookForm', () => {
           },
         ],
       },
+    })
+    listEnrichmentProfiles.mockResolvedValue({
+      data: { page: 0, size: 200, totalElements: 1, totalPages: 1, content: [ENRICHMENT_PROFILE] },
+    })
+    listEntityModels.mockResolvedValue({
+      data: { page: 0, size: 200, totalElements: 1, totalPages: 1, content: [ENTITY_MODEL] },
     })
   })
 
@@ -275,6 +323,39 @@ describe('WebhookForm', () => {
 
     expect(onSubmit.mock.calls[0][0]).toMatchObject({
       filters: [{ paramName: 'from', operator: 'EQ', value: '0xfeed000000000000000000000000000000000009' }],
+    })
+  })
+
+  it('E19/DEC-084: seleciona Perfil de Enriquecimento e Modelo de Entidade, envia os ids no payload', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    renderWithProviders(<WebhookForm {...baseProps} onSubmit={onSubmit} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Contrato' }))
+    await user.click(await screen.findByRole('option', { name: /Token A/ }))
+    await user.click(screen.getByRole('combobox', { name: 'Nome do evento' }))
+    await user.click(await screen.findByRole('option', { name: 'Transfer' }))
+    await user.type(screen.getByRole('textbox', { name: 'URL de destino' }), 'https://example.test/hook')
+
+    await user.click(screen.getByRole('combobox', { name: 'Perfis de Enriquecimento (opcional)' }))
+    await user.click(await screen.findByRole('option', { name: 'Perfil Saldo' }))
+
+    await user.click(screen.getByRole('combobox', { name: 'Modelos de Entidade (opcional)' }))
+    await user.click(await screen.findByRole('option', { name: 'Modelo X' }))
+
+    // os tokens do perfil/modelo selecionados viram hint no template manual
+    expect(screen.getByText(/enriched\.saldo/)).toBeInTheDocument()
+    expect(screen.getByText(/model\.valor/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      contractAddress: CONTRACT.address,
+      network: 'TESTNET',
+      eventName: 'Transfer',
+      enrichmentProfileIds: ['ep1'],
+      entityModelIds: ['em1'],
     })
   })
 

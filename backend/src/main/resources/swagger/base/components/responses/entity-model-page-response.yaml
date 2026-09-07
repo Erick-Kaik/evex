@@ -1,0 +1,5 @@
+description: Página de Modelos de Entidade.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/entity-model-page.yaml"

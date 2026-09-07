@@ -1,0 +1,30 @@
+get:
+  tags:
+    - EntityModels
+  operationId: getEntityModel
+  summary: Consulta um Modelo de Entidade pelo id
+  parameters:
+    - $ref: "../base/components/param/path/entity-model-id.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/entity-model-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+put:
+  tags:
+    - EntityModels
+  operationId: updateEntityModel
+  summary: Atualiza um Modelo de Entidade
+  parameters:
+    - $ref: "../base/components/param/path/entity-model-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/update-entity-model-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/entity-model-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

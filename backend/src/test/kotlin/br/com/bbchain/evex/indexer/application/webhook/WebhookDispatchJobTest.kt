@@ -24,7 +24,16 @@ class WebhookDispatchJobTest {
     private val dispatchPort: WebhookDispatchPort = mockk()
     private val recorder: WebhookDeliveryRecorder = mockk(relaxed = true)
     private val properties = WebhookProperties().apply { dispatchBatchSize = 50 }
-    private val job = WebhookDispatchJob(deliveries, webhookConfigs, dispatchPort, recorder, properties)
+
+    // E19/DEC-082: por padrão devolve o payload sem alteração (equivalente a "sem enrichmentProfileIds",
+    // regressão zero) — testes específicos de enriquecimento sobrescrevem este stub.
+    private val enrichmentResolver: WebhookEnrichmentResolver = mockk()
+
+    private val job = WebhookDispatchJob(deliveries, webhookConfigs, dispatchPort, recorder, properties, enrichmentResolver)
+
+    init {
+        every { enrichmentResolver.resolve(any(), any()) } answers { firstArg<WebhookDelivery>().payload }
+    }
 
     private fun config(url: String = "https://example.test/hook") = WebhookConfig(
         id = UUID.randomUUID(),
@@ -124,5 +133,24 @@ class WebhookDispatchJobTest {
         verify(exactly = 1) { recorder.recordAttempt(deliveryB, result) }
         verify(exactly = 1) { recorder.recordAttempt(deliveryC, result) }
         verify(exactly = 1) { dispatchPort.send(cfgC.url, deliveryC.payload) }
+    }
+
+    @Test
+    fun `dispatch sends the payload resolved by WebhookEnrichmentResolver, not the raw stored payload`() {
+        // E19/DEC-082 — Fase 2: a resolução acontece aqui, fora de transação, imediatamente antes do
+        // POST; o `send` precisa receber o payload já com {{enriched.*}} substituído.
+        val cfg = config().copy(enrichmentProfileIds = listOf(UUID.randomUUID()))
+        val due = delivery(cfg.id).copy(payload = """{"amount":"{{enriched.total}}"}""")
+        val resolvedPayload = """{"amount":"125000"}"""
+        every { deliveries.findDue(50) } returns listOf(due)
+        every { webhookConfigs.findById(cfg.id) } returns cfg
+        every { enrichmentResolver.resolve(due, cfg.enrichmentProfileIds) } returns resolvedPayload
+        every { dispatchPort.send(cfg.url, resolvedPayload) } returns WebhookAttemptResult(success = true, httpStatus = 200, responseBody = null, errorMessage = null)
+
+        job.dispatch()
+
+        verify(exactly = 1) { enrichmentResolver.resolve(due, cfg.enrichmentProfileIds) }
+        verify(exactly = 1) { dispatchPort.send(cfg.url, resolvedPayload) }
+        verify(exactly = 0) { dispatchPort.send(cfg.url, due.payload) }
     }
 }
