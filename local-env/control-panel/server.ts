@@ -17,10 +17,14 @@
  *   EVEX_API_URL         default "http://localhost:8080" — repassado pro register-contracts
  *   RPC_URL              default "http://127.0.0.1:8545" — repassado pro emit-events
  *   SCAFFOLD_ETH_DIR     default "../local-env-scaffold-eth-2" (relativo a este arquivo) — o clone
+ *   FRONTEND_ORIGIN      default "http://localhost:5173" — única origem liberada no CORS (abaixo)
  *
- * Segurança: escuta só em `127.0.0.1` (nunca exposto na rede). CORS liberado porque o frontend do
- * Evex (`localhost:5173`) roda em outra origem. Não valida nada além do id da ação — é ambiente local
- * descartável, não recebe input não-confiável.
+ * Segurança: escuta só em `127.0.0.1` (nunca exposto na rede). CORS restrito a `FRONTEND_ORIGIN`
+ * (default a porta padrão do `npm run dev` do frontend do Evex, mesmo default de
+ * `indexer.cors.allowed-origins` no backend) — não `*` (achado de revisão registrado em
+ * `docs/decisions.md`, complemento da DEC-075: `*` deixava qualquer página aberta no browser do dev
+ * disparar `deploy`/`emit-events` sem precisar nem saber a origem certa, tipo CSRF). Não valida nada
+ * além do id da ação — é ambiente local descartável, não recebe input não-confiável.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
@@ -29,6 +33,7 @@ import { resolve } from "node:path";
 const PORT = Number.parseInt(process.env.CONTROL_PANEL_PORT ?? "8899", 10);
 const EVEX_API_URL = process.env.EVEX_API_URL ?? "http://localhost:8080";
 const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:5173";
 const LOCAL_ENV_DIR = resolve(import.meta.dirname, "..");
 const SCAFFOLD_ETH_DIR = process.env.SCAFFOLD_ETH_DIR ?? resolve(LOCAL_ENV_DIR, "local-env-scaffold-eth-2");
 
@@ -216,8 +221,15 @@ yarn deploy --tags TestContracts`,
 /** Só uma ação por vez — os scripts mexem no mesmo nó Hardhat / deployedContracts.ts. */
 let running: string | null = null;
 
+/**
+ * Restrito a `FRONTEND_ORIGIN` (default `localhost:5173`), não `*` — achado de revisão corrigido
+ * (complemento da DEC-075, ver KDoc do arquivo). Uma origem fixa (não uma lista) é suficiente aqui:
+ * diferente do CORS do backend (`indexer.cors.allowed-origins`, pensado pra múltiplos ambientes),
+ * este serviço só existe pra rodar ao lado de **um** frontend local — sem caso de uso real com mais de
+ * uma origem legítima ao mesmo tempo.
+ */
 function setCors(res: ServerResponse): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Origin", FRONTEND_ORIGIN);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }

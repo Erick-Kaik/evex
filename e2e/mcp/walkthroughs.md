@@ -22,7 +22,7 @@ reiniciado depois — DEC-070).
 ## 1 — Cadastro de contrato + ABI colada
 
 1. Ir pra `/contracts` → "Contratos monitorados" visível.
-2. "Novo contrato" → preencher Endereço (um `0x…` de 40 hex qualquer, inventado), Nome, Rede = TESTNET → "Cadastrar".
+2. "Cadastrar" → preencher Endereço (um `0x…` de 40 hex qualquer, inventado), Nome, Rede = TESTNET → "Cadastrar" (E18: página dedicada `/contracts/new`, não mais modal).
 3. Deve redirecionar pra `/contracts/<endereço>` e mostrar o nome + chip TESTNET.
 4. Seção ABI: "Cadastrar nova versão" → origem "Colar texto" → colar um ABI mínimo
    (`[{"type":"event","name":"Transfer","inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"anonymous":false}]`)
@@ -36,7 +36,7 @@ alerta de erro (`INVALID_ABI_CONTENT`).
 
 _Precisa de Blockscout indexando + `verify-contracts.ts` já rodado._
 
-1. `/contracts` → "Novo contrato". Na coluna "Importar do Blockscout" deve listar os contratos verificados
+1. `/contracts` → "Cadastrar". Na coluna "Importar do Blockscout" deve listar os contratos verificados
    (TestERC20, TestEventEmitter).
 2. Clicar num item → o Endereço e o Nome do form são preenchidos.
 3. Escolher Rede TESTNET → "Cadastrar" → vai pro detalhe.
@@ -75,15 +75,20 @@ _O fluxo central: "pegar eventos já gravados e decriptar"._
 
 ## 5 — Monitoramento de saldo ao vivo
 
+_(E18: cadastro virou página dedicada, não seção inline — `<StatusToggle>` substitui os antigos botões "Pausar"/"Ativar".)_
+
 1. Garantir TestERC20 cadastrado **com ABI**.
-2. `/balances` → seção "Configurações de monitoramento" → "Nova configuração": Contrato = TestERC20,
-   Rede TESTNET, Nome do evento `Transfer`, Comportamento `CREDIT`, Parâmetro da carteira `to`,
-   Parâmetro do montante `value` → "Cadastrar" → "Configuração cadastrada com sucesso.".
+2. `/balances` → listagem "Configurações de monitoramento" → "Cadastrar" (navega pra
+   `/balances/monitors/new`): Contrato = TestERC20, Rede TESTNET, Nome do evento `Transfer`,
+   Comportamento `CREDIT`, Parâmetro da carteira `to`, Parâmetro do montante `value` → "Cadastrar" →
+   pousa direto no detalhe da config recém-criada (`/balances/monitors/:id`, sem mensagem inline de
+   sucesso — a navegação já é a confirmação).
 3. Emitir um mint (`emitEvents(1)` — o mint manda Transfer 0x0 → conta 1 do Hardhat
    `0x70997970…79C8`).
 4. Esperar decodificar. Em "Consultar saldos", filtrar por Carteira = `0x70997970…79C8` + Contrato =
    TestERC20 → deve aparecer uma linha com saldo > 0.
-5. Na tabela de configs, "Pausar" → coluna "Ativa" vira "não" → "Ativar" → volta pra "sim".
+5. Na listagem de configs, clicar no `Chip` de status da linha (mostra "Ativa") → menu abre → clicar
+   "Pausada" → chip vira "Pausada" → clicar de novo → menu → "Ativa" → volta.
 
 ## 6 — Backfill de saldo sob demanda
 
@@ -91,11 +96,12 @@ _Precisa de estado limpo — peça o truncate antes._
 
 1. Truncar tabelas do Evex. Cadastrar TestERC20 **sem ABI**, emitir eventos (`emitEvents(2)`),
    **depois** cadastrar a ABI → redecode decodifica o histórico (nenhuma config de saldo existe ainda).
-2. `/balances` → criar a config de saldo (igual walkthrough 5).
+2. `/balances` → criar a config de saldo (igual walkthrough 5) → já pousa no detalhe dela.
 3. Consultar saldo pra a carteira `0x70997970…79C8` + TestERC20 → **vazio** (a config nasceu depois do
    redecode; a projeção ao vivo não reprocessa o histórico).
-4. Na linha da config → botão "Reprocessar histórico" → aparece o progresso inline
-   ("processados N · deltas N · restam N"), depois "Reprocessamento concluído.".
+4. No detalhe da config (card "Reprocessar histórico" — E18 moveu esse card da listagem pro detalhe) →
+   "Reprocessar histórico" → aparece o progresso ao vivo via SSE ("processados N · deltas N · restam
+   N"), depois "concluído".
 5. Consultar o saldo de novo → agora aparece, com o valor certo.
 6. Clicar "Reprocessar histórico" de novo → no-op (o saldo não muda; status global `caughtUp: true`).
 
@@ -106,13 +112,14 @@ _Precisa de internet de saída._
 1. Claude cria um token no `https://webhook.site` (`createToken` do `helpers/webhook-site.ts`) e abre a
    página desse token numa aba (pra você ver as requisições chegando ao vivo).
 2. Garantir TestERC20 **com ABI**.
-3. `/webhooks` → "Novo webhook": Contrato = TestERC20, Rede TESTNET, Nome do evento `Transfer`,
-   URL de destino = a URL do token → "Cadastrar" → "Webhook cadastrado com sucesso.".
-4. Abrir o detalhe do webhook (clicar na linha da tabela).
-5. Emitir um Transfer (`emitEvents(1)`). Esperar decodificar.
-6. Na aba do webhook.site: uma requisição `POST` chega, com o payload do evento (contém `Transfer` e o
+3. `/webhooks` → "Cadastrar" (navega pra `/webhooks/new`): Contrato = TestERC20, Rede TESTNET, Nome do
+   evento `Transfer`, URL de destino = a URL do token → "Cadastrar" → pousa direto no detalhe do
+   webhook recém-criado (`/webhooks/:id` — a submissão já leva pra lá, não precisa abrir a linha da
+   tabela depois).
+4. Emitir um Transfer (`emitEvents(1)`). Esperar decodificar.
+5. Na aba do webhook.site: uma requisição `POST` chega, com o payload do evento (contém `Transfer` e o
    endereço do contrato).
-7. Recarregar o detalhe do webhook no Evex → seção "Entregas" tem uma linha, status **`DELIVERED`**;
+6. Recarregar o detalhe do webhook no Evex → seção "Entregas" tem uma linha, status **`DELIVERED`**;
    "ver tentativas" mostra a tentativa com "Sucesso: sim" e HTTP 200.
 
 **Variação (filtro):** no toggle "Guiado / Visual / Manual" do form, trocar pra **Manual**; cadastrar
@@ -126,7 +133,7 @@ um webhook pra um evento que os seeds não emitem (`EventoQueNaoExiste`, texto l
 _Não precisa de internet nem Blockscout._
 
 1. Garantir TestEventEmitter **com ABI** (`ensureContract` + `ensureAbi`).
-2. `/balances` → seção "Nova configuração" → toggle **Visual**.
+2. `/balances` → "Cadastrar" (`/balances/monitors/new`) → toggle **Visual**.
 3. Contrato = TestEventEmitter no `<ContractAutocomplete>` (repare: **não há campo "Rede"** — é herdada).
 4. Nome do evento = `WidgetCreated` no `<EventPicker>`.
 5. No canvas: clicar no chip `creator (address)`, depois no slot **"Carteira"** → vincula. Clicar no
@@ -134,13 +141,15 @@ _Não precisa de internet nem Blockscout._
 6. Trocar "Comportamento" pra **TRANSFER** → os slots viram "Origem (from)" / "Destino (to)".
 7. Clicar no chip `value (uint256)`, depois no slot **"Origem (from)"** → **recusado** ("Tipo
    incompatível"), slot continua vazio.
-8. Voltar pra **CREDIT** → "Cadastrar" → "Configuração cadastrada com sucesso.". Conferir em
-   `GET /v1/balance-monitors` que `network=TESTNET`, `walletParam=creator`, `valueParam=value`.
-9. `/webhooks` → toggle **Visual** → contrato/evento iguais → "adicionar filtro" → vincular `value` no
-   slot "Filtro 1" pelo canvas, preencher o valor → no `<PayloadTemplateBuilder>` clicar em
-   "Inserir `{{eventName}}`" e ver o token entrar no "Template montado" → "Cadastrar".
-10. **Persistência:** trocar o toggle pra **Manual**, recarregar a página → o form volta em **Manual**.
-    Trocar pra **Visual**, recarregar → volta em **Visual**.
+8. Voltar pra **CREDIT** → "Cadastrar" → pousa no detalhe da config recém-criada (sem mensagem inline
+   de sucesso). Conferir em `GET /v1/balance-monitors` que `network=TESTNET`, `walletParam=creator`,
+   `valueParam=value`.
+9. `/webhooks` → "Cadastrar" (`/webhooks/new`) → toggle **Visual** → contrato/evento iguais →
+   "adicionar filtro" → vincular `value` no slot "Filtro 1" pelo canvas, preencher o valor → no
+   `<PayloadTemplateBuilder>` clicar em "Inserir `{{eventName}}`" e ver o token entrar no "Template
+   montado" → "Cadastrar" → pousa no detalhe do webhook.
+10. **Persistência:** na página de cadastro, trocar o toggle pra **Manual**, recarregar a página → o
+    form volta em **Manual**. Trocar pra **Visual**, recarregar → volta em **Visual**.
 
 ---
 
@@ -161,12 +170,15 @@ _Precisa de um contrato **sem ABI** com histórico raw — trunque antes e reini
    `event: done` do SSE) — sem reload.
 5. Abrir `/contracts/<outro contrato>` enquanto o redecode ainda roda → o mesmo indicador aparece lá
    (o redecode é global, DEC-078 — o texto é genérico de propósito).
-6. `/balances` → devtools mostra outra requisição **eventsource** pro
-   `balance-monitors/backfill/status/stream`.
-7. **Queda graciosa:** com o `/balances` aberto, `docker stop` no container do backend (ou pare o
-   `bootRun`) → a UI não quebra; ao voltar o backend, o progresso volta a atualizar **via polling**
-   (o `EventSource` não re-assina sozinho pro mesmo path — comportamento conhecido, DEC-074
-   complemento).
+6. Abrir o **detalhe** de uma config de saldo já cadastrada (`/balances/monitors/:id`, card
+   "Reprocessar histórico") → devtools mostra outra requisição **eventsource** pro
+   `balance-monitors/backfill/status/stream` (E18 moveu essa assinatura da listagem `/balances` pro
+   detalhe de cada config — não é mais em `/balances` direto).
+7. **Queda e recuperação:** com o detalhe da config aberto, `docker stop` no container do backend (ou
+   pare o `bootRun`) → a UI não quebra, cai pra polling REST. Suba o backend de novo → o
+   `EventSource` **reconecta sozinho** (nativo do browser, achado de 2026-09-07 corrigido — antes disso
+   o código fechava a conexão no erro e nunca mais tentava de novo) e o indicador volta a atualizar via
+   SSE, sem precisar recarregar a página.
 
 ## 10 — Aba "Demonstração" (dispara os scripts do local-env sem terminal, E17/DEC-075)
 

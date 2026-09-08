@@ -151,6 +151,7 @@ export function EnrichmentCallRow({ index, call, network, onChange, onRemove }: 
             <Stack sx={{ gap: 1 }}>
               {Array.from({ length: argCount }).map((_, argIndex) => {
                 const input = method?.inputs[argIndex]
+                const isArrayInput = input ? /\[\d*]$/.test(input.type) : false
                 return (
                   <TextField
                     key={argIndex}
@@ -159,7 +160,12 @@ export function EnrichmentCallRow({ index, call, network, onChange, onRemove }: 
                     label={input ? `${input.name} (${input.type})` : `arg ${argIndex + 1}`}
                     value={call.args[argIndex] ?? ''}
                     onChange={(event) => updateArg(argIndex, event.target.value)}
-                    placeholder="literal ou {{decodedParameters.x}}"
+                    placeholder={
+                      isArrayInput
+                        ? 'JSON array de strings, ex. ["1","2"] — ou {{decodedParameters.x}}'
+                        : 'literal ou {{decodedParameters.x}}'
+                    }
+                    helperText={isArrayInput ? 'Tipo array (DEC-090): cada elemento como string dentro de um JSON array' : undefined}
                   />
                 )
               })}

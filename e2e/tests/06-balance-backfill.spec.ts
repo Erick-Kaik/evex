@@ -37,16 +37,14 @@ test('backfill reprojeta o histórico já decodificado contra uma config criada 
   await evexApi.waitForDecodedEvent(address, 'TransferSingle')
 
   // 2. config de saldo criada AGORA (depois do redecode) → saldo vazio
-  //    E17/DEC-074: ao abrir /balances a UI assina o status do backfill via SSE (EventSource),
-  //    não polling — o progresso inline abaixo chega por esse stream.
+  //    E17/DEC-074: a UI assina o status do backfill via SSE (EventSource), não polling — o card
+  //    "Reprocessamento de histórico" só existe no detalhe de uma configuração (E18 tirou o backfill
+  //    da listagem), então a assinatura acontece quando `createMonitor` termina lá, não em `/balances`.
   const backfillStream = page.waitForRequest(
     (r) => r.url().includes('/v1/balance-monitors/backfill/status/stream'),
     { timeout: 30_000 },
   )
   await balancesPage.open()
-  const streamResponse = await (await backfillStream).response()
-  expect(streamResponse?.headers()['content-type'] ?? '').toContain('text/event-stream')
-
   await balancesPage.createMonitor({
     contract: address,
     eventName: 'TransferSingle',
@@ -55,16 +53,17 @@ test('backfill reprojeta o histórico já decodificado contra uma config criada 
     valueParam: 'value',
     tokenIdParam: 'id',
   })
+  const streamResponse = await (await backfillStream).response()
+  expect(streamResponse?.headers()['content-type'] ?? '').toContain('text/event-stream')
 
   const empty = await evexApi.getBalances({ walletAddress: RECIPIENT, contractAddress: address })
   expect(empty.content, 'saldo deve estar vazio antes do backfill').toHaveLength(0)
 
-  // 3. dispara o backfill pela UI
-  await balancesPage.triggerBackfill(address)
+  // 3. dispara o backfill pela UI — `createMonitor` já deixou a página no detalhe desta configuração
+  await balancesPage.triggerBackfill()
 
-  const monitorRow = balancesPage.monitorRow(address)
   // progresso inline aparece e depois some (ou vira "Reprocessamento concluído.")
-  await expect(monitorRow).toContainText(/processados|Reprocessamento concluído/i, { timeout: 30_000 })
+  await expect(balancesPage.backfillProgressText).toBeVisible({ timeout: 30_000 })
 
   // 4. espera o job global terminar e o saldo aparecer
   await evexApi.waitForBackfillIdle()
@@ -76,7 +75,7 @@ test('backfill reprojeta o histórico já decodificado contra uma config criada 
   const balanceAfter = BigInt(filled.content[0]!.balance)
 
   // 5. re-disparar é no-op (não conta em dobro)
-  await balancesPage.triggerBackfill(address)
+  await balancesPage.triggerBackfill()
   await evexApi.waitForBackfillIdle()
   const again = await evexApi.getBalances({ walletAddress: RECIPIENT, contractAddress: address, tokenId: TOKEN_ID })
   expect(BigInt(again.content[0]!.balance)).toBe(balanceAfter)

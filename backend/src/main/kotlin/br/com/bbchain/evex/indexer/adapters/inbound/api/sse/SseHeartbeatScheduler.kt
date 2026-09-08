@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component
  * ociosas (~30–60 s típico) — o intervalo default (15 s) fica abaixo disso. O `EventSource` já
  * reconecta sozinho, mas reconexão perde o frame inicial e gera ruído; heartbeat evita.
  *
- * `@Scheduled` (mesmo mecanismo já usado por `BlockchainPoller`/`BalanceSnapshotJob` — Spring não roda
+ * `@Scheduled` (mesmo mecanismo já usado por `ScheduledPollTrigger`/`BalanceSnapshotJob` — Spring não roda
  * 2 execuções do mesmo método em paralelo). Itera os dois brokers. O intervalo vem do bean
  * [SseProperties][br.com.bbchain.evex.indexer.config.SseProperties] via SpEL (`#{@sseProperties...}`)
  * — fonte única, sem duplicar o default aqui.

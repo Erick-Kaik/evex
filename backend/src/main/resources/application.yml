@@ -79,10 +79,15 @@ indexer:
     batch-size: ${EVEX_POLL_BATCH_SIZE:1000}
     min-batch-size: ${EVEX_POLL_MIN_BATCH_SIZE:1}
     poll-interval-ms: ${EVEX_POLL_INTERVAL_MS:5000}
-    # false em testes — setado via @DynamicPropertySource em AbstractIntegrationTest, nunca em
-    # src/test/resources/application.yml (DEC-024: esse arquivo faz shadow deste application.yml no
-    # classpath de teste). Evita o @Scheduled bater em RPC inexistente durante @SpringBootTest.
-    polling-enabled: ${EVEX_POLLING_ENABLED:true}
+    # POLLING (default) | WEBSOCKET | NONE — qual gatilho dispara a ingestão (E26/DEC-091). POLLING é o
+    # @Scheduled de intervalo fixo (poll-interval-ms acima), já validado em produção (E4/E12). WEBSOCKET
+    # assina eth_subscribe("newHeads") numa 2ª conexão Web3j (ws-url abaixo) e dispara o mesmo tick a
+    # cada bloco novo — troque só se o nó tiver WS habilitado; NÃO validado ao vivo ainda, só via mock
+    # (ver DEC-091). NONE desliga os dois gatilhos (usado só em teste, AbstractIntegrationTest).
+    transport: ${EVEX_BLOCKCHAIN_TRANSPORT:POLLING}
+    # Só usado quando transport=WEBSOCKET — URL do WebSocketService do Web3j (instância separada da
+    # usada por Web3jBlockchainClient, que continua 100% HTTP via rpc-url acima).
+    ws-url: ${EVEX_BLOCKCHAIN_WS_URL:ws://localhost:8546}
   redecode:
     # Tamanho do lote da reindexação assíncrona (ingestion-pipeline-reference.md §4) — orquestrador
     # RedecodeOrchestrator/RedecodeRunner/RedecodeBatchProcessor (E5).
@@ -101,7 +106,7 @@ indexer:
   balance:
     # Cron do job noturno de consolidação de saldo (doc §4.4, BalanceSnapshotJob) — default meia-noite,
     # diário. Sem guarda de concorrência própria: o Spring não roda 2 execuções do mesmo método
-    # @Scheduled em paralelo (mesma garantia já usada pelo BlockchainPoller, E4).
+    # @Scheduled em paralelo (mesma garantia já usada pelo ScheduledPollTrigger, E4/E26).
     snapshot-cron: ${EVEX_BALANCE_SNAPSHOT_CRON:0 0 0 * * *}
     # Tamanho do lote do backfill de saldo sob demanda (E14, DEC-066) — orquestrador
     # BalanceBackfillOrchestrator/BalanceBackfillRunner/BalanceBackfillBatchProcessor, espelha

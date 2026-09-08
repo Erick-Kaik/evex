@@ -16,8 +16,8 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 /**
  * End-to-end test through the real API (generated controller -> [RedecodeApiServiceImpl] ->
  * [br.com.bbchain.evex.indexer.application.redecode.RedecodeOrchestrator] -> real Postgres via
- * Testcontainers) — DEC-009, same pattern as [EventsApiTest]. `indexer.blockchain.polling-enabled: false`
- * (via [AbstractIntegrationTest]) keeps `BlockchainPoller` off; `@EnableAsync` is real here
+ * Testcontainers) — DEC-009, same pattern as [EventsApiTest]. `indexer.blockchain.transport: NONE`
+ * (via [AbstractIntegrationTest]) keeps `ScheduledPollTrigger`/`WebSocketPollTrigger` off; `@EnableAsync` is real here
  * (`@SpringBootTest`, not `@Transactional` — the async runner needs its own transaction, so this class
  * deliberately does **not** use `@Transactional` like the other `*ApiTest` classes).
  */

@@ -23,14 +23,22 @@ class BlockchainProperties {
     /** Piso do auto-shrink — abaixo disso, erro de range sobe cru em vez de dividir mais. */
     var minBatchSize: Long = 1
 
-    /** Intervalo entre ticks do `@Scheduled`. */
+    /** Intervalo entre ticks do `@Scheduled` (só usado quando [transport] é [BlockchainTransport.POLLING]). */
     var pollIntervalMs: Long = 5000
 
     /**
-     * `false` em testes — setado via `@DynamicPropertySource` em `AbstractIntegrationTest`, nunca em
-     * `src/test/resources/application.yml` (DEC-024: esse arquivo faz shadow do
-     * `src/main/resources/application.yml` no classpath de teste). Evita o `@Scheduled` batendo em RPC
-     * inexistente durante `@SpringBootTest`.
+     * Qual gatilho dispara a ingestão — `POLLING` (default, `@Scheduled` de intervalo fixo, E4/E12) ou
+     * `WEBSOCKET` (`eth_subscribe("newHeads")`, E26/DEC-091). `NONE` desliga os dois — usado só em
+     * teste (`AbstractIntegrationTest`), substitui a antiga property `polling-enabled` (DEC-091).
+     * Default `POLLING` preserva 100% o comportamento anterior a esta property existir.
      */
-    var pollingEnabled: Boolean = true
+    var transport: BlockchainTransport = BlockchainTransport.POLLING
+
+    /**
+     * URL do `WebSocketService` do Web3j — só usada quando [transport] é [BlockchainTransport.WEBSOCKET].
+     * Instância de `Web3j` **separada** da usada por [br.com.bbchain.evex.indexer.adapters.outbound
+     * .blockchain.Web3jBlockchainClient] (essa continua 100% HTTP, DEC-091) — só pra assinar
+     * `newHeadsNotifications()` e disparar o mesmo `PollTickService.tick()` do polling.
+     */
+    var wsUrl: String = "ws://localhost:8546"
 }

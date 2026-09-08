@@ -193,6 +193,28 @@ export async function getBalanceMonitors(): Promise<Page<BalanceMonitorDto>> {
   return apiGet<Page<BalanceMonitorDto>>('/v1/balance-monitors?page=0&size=100')
 }
 
+export interface CreateBalanceMonitorInput {
+  contractAddress: string
+  network: string
+  eventName: string
+  behavior: 'CREDIT' | 'DEBIT' | 'DELTA' | 'TRANSFER'
+  walletParam?: string
+  fromParam?: string
+  toParam?: string
+  valueParam: string
+  tokenIdParam?: string
+}
+
+/**
+ * Cadastra uma config de monitoramento de saldo diretamente pela API — precondição pra testes que
+ * não estão exercitando o próprio formulário de cadastro (ex.: assinatura do SSE de backfill no
+ * detalhe de uma config, spec 09), evitando passar pela UI só pra montar estado.
+ */
+export async function createBalanceMonitor(input: CreateBalanceMonitorInput): Promise<BalanceMonitorDto> {
+  const res = await apiPost('/v1/balance-monitors', input, [201])
+  return (await res.json()) as BalanceMonitorDto
+}
+
 /** Espera aparecer uma config de saldo pro par contrato+evento e devolve a mais recente. */
 export async function waitForBalanceMonitor(
   contractAddress: string,

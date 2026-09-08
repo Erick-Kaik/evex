@@ -30,9 +30,9 @@ test('cadastra contrato monitorado e registra ABI colada como texto', async ({ p
 
   // --- cadastro do contrato ---
   await contractsPage.open()
-  const dialog = await contractsPage.openNewContractDialog()
-  await dialog.fill({ address, name: `e2e-${address.slice(2, 8)}`, network: 'TESTNET' })
-  await dialog.submit()
+  const form = await contractsPage.goToNewContract()
+  await form.fill({ address, name: `e2e-${address.slice(2, 8)}`, network: 'TESTNET' })
+  await form.submit()
 
   // redireciona pro detalhe do contrato recém-criado
   await expect(page).toHaveURL(new RegExp(`/contracts/${address}`, 'i'))
@@ -54,9 +54,9 @@ test('cadastra contrato monitorado e registra ABI colada como texto', async ({ p
 test('rejeita ABI malformada com erro na própria modal', async ({ page, contractsPage, contractDetailPage }) => {
   const address = randomAddress()
   await contractsPage.open()
-  const dialog = await contractsPage.openNewContractDialog()
-  await dialog.fill({ address, name: `e2e-bad-${address.slice(2, 8)}` })
-  await dialog.submit()
+  const form = await contractsPage.goToNewContract()
+  await form.fill({ address, name: `e2e-bad-${address.slice(2, 8)}` })
+  await form.submit()
   await expect(page).toHaveURL(new RegExp(`/contracts/${address}`, 'i'))
 
   const abiDialog = await contractDetailPage.openAbiRegisterDialog()

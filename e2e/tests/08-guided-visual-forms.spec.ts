@@ -28,6 +28,7 @@ test('config de saldo no modo visual: vincula params por clique, recusa tipo inc
   await evexApi.ensureAbi(address, JSON.stringify(TestEventEmitter.abi))
 
   await balancesPage.open()
+  await balancesPage.goToNewMonitor()
   await balancesPage.setMonitorFormMode('visual')
   await balancesPage.selectMonitorContract(address) // <ContractAutocomplete> — sem <NetworkSelect>
   await balancesPage.pickMonitorEvent('WidgetCreated')
@@ -68,6 +69,7 @@ test('webhook no modo visual: filtro pelo canvas + token de payloadTemplate por 
   await evexApi.ensureAbi(address, JSON.stringify(TestEventEmitter.abi))
 
   await webhooksPage.open()
+  await webhooksPage.goToNew()
   await webhooksPage.setFormMode('visual')
   await webhooksPage.selectContract(address)
   await webhooksPage.pickEvent('WidgetCreated')
@@ -96,6 +98,8 @@ test('persistência do <FormModeToggle>: o modo escolhido sobrevive ao reload', 
   balancesPage,
 }) => {
   await balancesPage.open()
+  // E18: o `<FormModeToggle>` só existe na página dedicada de cadastro/edição, não mais em `/balances`.
+  await balancesPage.goToNewMonitor()
 
   await balancesPage.setMonitorFormMode('manual')
   await page.reload()

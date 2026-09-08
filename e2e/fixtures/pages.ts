@@ -6,6 +6,13 @@
  * E16: os formulários de saldo e webhook ganharam 3 modos (guiado / visual / manual, DEC-072). O
  * default é o **guiado** (`<ContractAutocomplete>` + `<EventPicker>` + `<EventParamSelect>`), sem
  * `<NetworkSelect>` visível (a rede é herdada do contrato). Os helpers abaixo cobrem os 3 modos.
+ *
+ * E18 (DEC-079): os 3 módulos de cadastro (Contratos, Configurações de saldo, Webhooks) pararam de
+ * usar modal/formulário inline — viraram listagem + botão "Cadastrar" → página dedicada
+ * (`/contracts/new`, `/balances/monitors/new`, `/webhooks/new`), com "Ver"/"Editar" por linha
+ * (`<RowActions>`) e um `<StatusToggle>` (Chip clicável + Menu) no lugar dos antigos botões
+ * "Pausar"/"Ativar" por linha. Reescrita desta passada (2026-09-08) pra bater com isso — ver a nota
+ * de execução no roadmap (E18, débito técnico de `e2e/`) pro detalhe de cada mudança de estrutura.
  */
 import type { Page, Locator } from '@playwright/test'
 import { expect } from '@playwright/test'
@@ -23,15 +30,15 @@ function escapeRegExp(value: string): string {
  * O `<input>` de um MUI `Autocomplete`, escopado por `role="combobox"` + nome exato. **Não** usar
  * `getByLabel(nome)`: (1) o `<ul role="listbox">` do popup aberto compartilha o mesmo label via
  * `aria-labelledby` → `getByLabel` casa input + listbox (strict mode violation); (2) na tela de
- * Eventos, o `aria-label` do chip "sem ABI" ("…cadastre a ABI do contrato") casa por substring com
- * `getByLabel('Contrato')`. `role="combobox"` + `exact` evita os dois.
+ * Eventos, o `aria-label` do link "digitar endereço..." casa por substring com `getByLabel('Contrato')`.
+ * `role="combobox"` + `exact` evita os dois.
  */
 function autocompleteInput(page: Page, name: string, nth?: 'first' | 'last'): Locator {
   const loc = page.getByRole('combobox', { name, exact: true })
   return nth === 'first' ? loc.first() : nth === 'last' ? loc.last() : loc
 }
 
-/** Campo de texto livre (`role="textbox"`) — idem, evita o substring do chip e o listbox. */
+/** Campo de texto livre (`role="textbox"`) — idem, evita o substring do link e o listbox. */
 function textboxInput(page: Page, name: string, nth?: 'first' | 'last'): Locator {
   const loc = page.getByRole('textbox', { name, exact: true })
   return nth === 'first' ? loc.first() : nth === 'last' ? loc.last() : loc
@@ -62,6 +69,27 @@ async function pickSelectOption(page: Page, comboboxName: string, optionName: st
   await page.getByRole('combobox', { name: comboboxName }).click()
   const matcher = typeof optionName === 'string' ? { name: optionName, exact: true } : { name: optionName }
   await page.getByRole('option', matcher).first().click()
+}
+
+/**
+ * Prefixo pra casar uma linha de tabela cuja coluna de endereço é renderizada por `<AddressCell>`
+ * (E22, `shortenAddress` = 8 chars + "…" + 4) — **diferente** do `<CopyableHash>` (default 10 + "…" +
+ * 8) usado em outras colunas (ex.: "Endereço" da listagem de Contratos, que continua com
+ * `address.slice(0, 10)` direto). Confundir os dois faz `getByRole('row').filter({ hasText })` nunca
+ * casar — o prefixo de 10 chars não é substring do texto truncado em 8 (achado ao vivo nesta passada,
+ * 2026-09-08, em `balanceRow`/`monitorRow`/`WebhooksPage.row` — ver nota de execução no roadmap).
+ */
+function addressCellPrefix(address: string): string {
+  return address.slice(0, 8)
+}
+
+/**
+ * Interage com um `<StatusToggle>` (padrão E18: `Chip` clicável + `Menu`) dentro de `scope` (uma linha
+ * de tabela, ou a página inteira no detalhe) — clica no chip do rótulo atual e escolhe `to` no menu.
+ */
+async function toggleStatus(page: Page, scope: Locator, to: string): Promise<void> {
+  await scope.getByRole('button', { name: /^(ACTIVE|PAUSED|ARCHIVED|Ativa|Pausada|Ativo|Pausado)$/ }).click()
+  await page.getByRole('menuitem', { name: to, exact: true }).click()
 }
 
 // ---------- Navegação ----------
@@ -97,11 +125,14 @@ export class ContractsPage {
     await expect(this.page.getByRole('heading', { name: 'Contratos monitorados' })).toBeVisible()
   }
 
-  async openNewContractDialog(): Promise<ContractFormDialog> {
-    await this.page.getByRole('button', { name: 'Novo contrato' }).click()
-    const dialog = this.page.getByRole('dialog', { name: 'Novo contrato monitorado' })
-    await expect(dialog).toBeVisible()
-    return new ContractFormDialog(this.page, dialog)
+  /**
+   * Clica em "Cadastrar" na listagem → navega pra `/contracts/new` (página dedicada, padrão
+   * E18/DEC-079, substitui o antigo `ContractFormDialog`/`openNewContractDialog`).
+   */
+  async goToNewContract(): Promise<NewContractForm> {
+    await this.page.getByRole('button', { name: 'Cadastrar' }).click()
+    await expect(this.page.getByRole('heading', { name: 'Novo contrato monitorado' })).toBeVisible()
+    return new NewContractForm(this.page)
   }
 
   row(address: string): Locator {
@@ -114,34 +145,36 @@ export class ContractsPage {
   }
 }
 
-export class ContractFormDialog {
-  constructor(
-    private readonly page: Page,
-    private readonly root: Locator,
-  ) {}
+/**
+ * Formulário de "Novo contrato monitorado" (`/contracts/new`, `ContractFormPage mode="create"`) — não
+ * é mais um `<dialog>` (E18), é a página inteira; os campos não precisam de escopo porque só existe 1
+ * instância de cada um nela.
+ */
+export class NewContractForm {
+  constructor(private readonly page: Page) {}
 
   async fill(opts: { address: string; name: string; network?: 'MAINNET' | 'TESTNET' }) {
-    await this.root.getByLabel('Endereço').fill(opts.address)
-    await this.root.getByLabel('Nome').fill(opts.name)
+    await this.page.getByLabel('Endereço').fill(opts.address)
+    await this.page.getByLabel('Nome').fill(opts.name)
     await this.selectNetwork(opts.network ?? 'TESTNET')
   }
 
   async selectNetwork(network: 'MAINNET' | 'TESTNET') {
-    await this.root.getByRole('combobox', { name: 'Rede' }).click()
+    await this.page.getByRole('combobox', { name: 'Rede' }).click()
     await this.page.getByRole('option', { name: network }).click()
   }
 
   /** Item da lista "Importar do Blockscout" — clicar preenche endereço+nome no form. */
   discoveryItem(nameOrAddress: string): Locator {
-    return this.root.getByRole('button').filter({ hasText: nameOrAddress })
+    return this.page.getByRole('button').filter({ hasText: nameOrAddress })
   }
 
   get discoveryUnavailable(): Locator {
-    return this.root.getByText('Discovery via Blockscout não está disponível')
+    return this.page.getByText('Discovery via Blockscout não está disponível')
   }
 
   async submit() {
-    await this.root.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+    await this.page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
   }
 }
 
@@ -213,9 +246,13 @@ export class EventsPage {
     await pickAutocompleteByOptionText(this.page, autocompleteInput(this.page, 'Contrato'), address.slice(0, 10).toLowerCase())
   }
 
-  /** Revela o campo de endereço livre (`0x…`) — pra filtrar um contrato fora da lista de monitorados. */
+  /**
+   * Revela o campo de endereço livre (`0x…`) — pra filtrar um contrato fora da lista de monitorados.
+   * E22 renomeou o link de "digitar endereço manualmente" pra "digitar endereço do contrato
+   * manualmente" (ganhou um par equivalente pra carteira, `<WalletAutocomplete>`).
+   */
   async useManualAddress() {
-    await this.page.getByRole('button', { name: 'digitar endereço manualmente' }).click()
+    await this.page.getByRole('button', { name: 'digitar endereço do contrato manualmente' }).click()
   }
 
   async fillManualAddress(address: string) {
@@ -282,35 +319,42 @@ export class BalancesPage {
     await expect(this.page.getByRole('heading', { name: 'Saldos', exact: true })).toBeVisible()
   }
 
-  // ----- Consulta de saldos (primeira ocorrência dos campos = seção de consulta) -----
+  // ----- Consulta de saldos (`BalanceQuerySection`, não é CRUD — fora do padrão E18) -----
+  // E22: "Carteira" também virou `<WalletAutocomplete>` por padrão (antes era só texto livre) — o
+  // toggle "digitar endereço da carteira manualmente" revela o `TextField`.
   async query(opts: { wallet?: string; contract?: string; contractManual?: boolean }) {
     const p = this.page
-    if (opts.wallet) await textboxInput(p, 'Carteira', 'first').fill(opts.wallet)
+    if (opts.wallet) {
+      await p.getByRole('button', { name: 'digitar endereço da carteira manualmente' }).click()
+      await textboxInput(p, 'Carteira').fill(opts.wallet)
+    }
     if (opts.contract) {
       if (opts.contractManual) {
-        await p.getByRole('button', { name: 'digitar endereço manualmente' }).first().click()
-        await textboxInput(p, 'Contrato', 'first').fill(opts.contract)
+        await p.getByRole('button', { name: 'digitar endereço do contrato manualmente' }).click()
+        await textboxInput(p, 'Contrato').fill(opts.contract)
       } else {
-        await pickAutocompleteByOptionText(
-          p,
-          autocompleteInput(p, 'Contrato', 'first'),
-          opts.contract.slice(0, 10).toLowerCase(),
-        )
+        await pickAutocompleteByOptionText(p, autocompleteInput(p, 'Contrato'), opts.contract.slice(0, 10).toLowerCase())
       }
     }
     await p.getByRole('button', { name: 'Consultar' }).click()
   }
 
   balanceRow(wallet: string): Locator {
-    return this.page.getByRole('row').filter({ hasText: wallet.slice(0, 10) })
+    return this.page.getByRole('row').filter({ hasText: addressCellPrefix(wallet) })
   }
 
-  // ----- Configuração de monitoramento -----
-  get monitorSection(): Locator {
-    return this.page.getByRole('region').filter({ hasText: 'Configurações de monitoramento' })
+  // ----- Configurações de monitoramento (`BalanceMonitorListSection`, padrão E18) -----
+
+  /**
+   * Clica em "Cadastrar" na listagem de configurações → navega pra `/balances/monitors/new`
+   * (`BalanceMonitorFormPage mode="create"`, substitui o antigo formulário inline).
+   */
+  async goToNewMonitor() {
+    await this.page.getByRole('button', { name: 'Cadastrar' }).click()
+    await expect(this.page.getByRole('heading', { name: 'Nova configuração de monitoramento' })).toBeVisible()
   }
 
-  /** Alterna o modo do formulário "Nova configuração" (Guiado / Visual / Manual). */
+  /** Alterna o modo do formulário (Guiado / Visual / Manual) — só existe em `/balances/monitors/new|:id/edit`. */
   async setMonitorFormMode(mode: FormMode) {
     await this.page.getByRole('button', { name: FORM_MODE_LABEL[mode], exact: true }).click()
   }
@@ -323,13 +367,9 @@ export class BalancesPage {
     )
   }
 
-  /** `<ContractAutocomplete>` da seção de monitoramento (2ª ocorrência de "Contrato" na página). */
+  /** `<ContractAutocomplete>` do formulário — página dedicada, única ocorrência de "Contrato" nela. */
   async selectMonitorContract(address: string) {
-    await pickAutocompleteByOptionText(
-      this.page,
-      autocompleteInput(this.page, 'Contrato', 'last'),
-      address.slice(0, 10).toLowerCase(),
-    )
+    await pickAutocompleteByOptionText(this.page, autocompleteInput(this.page, 'Contrato'), address.slice(0, 10).toLowerCase())
   }
 
   async pickMonitorEvent(eventName: string) {
@@ -362,14 +402,20 @@ export class BalancesPage {
     return this.page.getByText('Tipo incompatível', { exact: false })
   }
 
+  /**
+   * Submete o formulário (create/edit). Em `create`, a submissão navega direto pro detalhe da
+   * configuração recém-criada (`/balances/monitors/:id`, sem mensagem inline "cadastrado com
+   * sucesso" — E18 tirou a permanência na própria página de formulário).
+   */
   async submitMonitor() {
     await this.page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
-    await expect(this.page.getByText('Configuração cadastrada com sucesso.')).toBeVisible()
+    await expect(this.page.getByRole('heading', { name: 'Configuração de saldo', exact: true })).toBeVisible()
   }
 
   /**
-   * Cria uma config de monitoramento pela UI. `mode='guided'` (default) usa autocomplete/selects;
-   * `mode='manual'` reproduz o caminho histórico (texto livre + `<NetworkSelect>`).
+   * Cria uma config de monitoramento pela UI, a partir da listagem (`/balances`, chame `open()`
+   * antes). `mode='guided'` (default) usa autocomplete/selects; `mode='manual'` reproduz o caminho
+   * histórico (texto livre + `<NetworkSelect>`). Termina no detalhe da configuração recém-criada.
    */
   async createMonitor(opts: {
     contract: string
@@ -383,12 +429,14 @@ export class BalancesPage {
     mode?: FormMode
   }) {
     const p = this.page
+    await this.goToNewMonitor()
+
     const mode: FormMode = opts.mode ?? 'guided'
     await this.setMonitorFormMode(mode)
 
     if (mode === 'manual') {
-      await textboxInput(p, 'Contrato', 'last').fill(opts.contract)
-      await p.getByRole('combobox', { name: 'Rede' }).last().click()
+      await textboxInput(p, 'Contrato').fill(opts.contract)
+      await p.getByRole('combobox', { name: 'Rede' }).click()
       await p.getByRole('option', { name: 'TESTNET' }).click()
       await textboxInput(p, 'Nome do evento').fill(opts.eventName)
       await this.setBehavior(opts.behavior)
@@ -420,11 +468,54 @@ export class BalancesPage {
   }
 
   monitorRow(contract: string): Locator {
-    return this.page.getByRole('row').filter({ hasText: contract.slice(0, 10) })
+    return this.page.getByRole('row').filter({ hasText: addressCellPrefix(contract) })
   }
 
-  async triggerBackfill(contract: string) {
-    await this.monitorRow(contract).getByRole('button', { name: 'Reprocessar histórico' }).click()
+  /**
+   * `<StatusToggle>` da linha da listagem (Chip "Ativa"/"Pausada" + `Menu`, padrão E18) — escolhe
+   * `to`. Substitui os antigos botões "Pausar"/"Ativar" por linha.
+   */
+  async setMonitorStatus(contract: string, to: 'Ativa' | 'Pausada') {
+    await toggleStatus(this.page, this.monitorRow(contract), to)
+  }
+
+  /**
+   * Abre o detalhe de uma configuração pela linha (botão "Ver" do `<RowActions>`) e devolve o id
+   * extraído da URL.
+   */
+  async openMonitorFromRow(contract: string): Promise<string> {
+    await this.monitorRow(contract).getByRole('button', { name: 'ver' }).click()
+    await expect(this.page).toHaveURL(/\/balances\/monitors\/[0-9a-f-]{36}$/i)
+    return this.page.url().split('/balances/monitors/')[1]!.split(/[/?#]/)[0]!
+  }
+
+  /** Navega direto pro detalhe de uma configuração já existente, pelo id (`GET` precondition via API). */
+  async openMonitor(id: string) {
+    await this.page.goto(`/balances/monitors/${id}`)
+    await expect(this.page.getByRole('heading', { name: 'Configuração de saldo', exact: true })).toBeVisible()
+  }
+
+  /**
+   * `<StatusToggle>` do cabeçalho do detalhe (view/edit) — sem ambiguidade de linha (diferente de
+   * `setMonitorStatus`, que filtra a listagem por contrato e pode casar mais de uma config se o
+   * mesmo contrato já tiver outra config cadastrada numa rodada anterior).
+   */
+  async setDetailStatus(to: 'Ativa' | 'Pausada') {
+    await toggleStatus(this.page, this.page.locator('body'), to)
+  }
+
+  /**
+   * Dispara o backfill de saldo a partir do detalhe de uma configuração (card "Reprocessamento de
+   * histórico") — E18 tirou esse botão da listagem, agora só existe em `/balances/monitors/:id`
+   * (`view`/`edit`). Chame com a configuração já aberta (`createMonitor`/`openMonitor` deixam nela).
+   */
+  async triggerBackfill() {
+    await this.page.getByRole('button', { name: 'Reprocessar histórico' }).click()
+  }
+
+  /** Progresso inline do backfill no card de detalhe ("processados N" ou "Reprocessamento concluído."). */
+  get backfillProgressText(): Locator {
+    return this.page.getByText(/processados|Reprocessamento concluído/i)
   }
 }
 
@@ -436,6 +527,12 @@ export class WebhooksPage {
   async open() {
     await this.page.goto('/webhooks')
     await expect(this.page.getByRole('heading', { name: 'Webhooks' })).toBeVisible()
+  }
+
+  /** Clica em "Cadastrar" na listagem → navega pra `/webhooks/new` (página dedicada, padrão E18/DEC-079). */
+  async goToNew() {
+    await this.page.getByRole('button', { name: 'Cadastrar' }).click()
+    await expect(this.page.getByRole('heading', { name: 'Novo webhook' })).toBeVisible()
   }
 
   async setFormMode(mode: FormMode) {
@@ -488,6 +585,13 @@ export class WebhooksPage {
     await this.page.getByRole('button', { name: `Campo ${slotLabel}` }).click()
   }
 
+  /**
+   * Campo "valor" do filtro. Só funciona pra parâmetro **não**-`address` (`TextField` livre) — E22
+   * trocou o campo de valor de um parâmetro `address` por `<WalletAutocomplete>` (label "valor"
+   * também, mas `combobox`, não `textbox`), atrás de um toggle "digitar manualmente" próprio
+   * (`FilterAddressValueField`); nenhum spec atual filtra por parâmetro `address`, então não há
+   * helper dedicado ainda — adicionar se algum cenário precisar.
+   */
   async fillFilterValue(value: string) {
     await this.page.getByLabel('valor').fill(value)
   }
@@ -505,19 +609,31 @@ export class WebhooksPage {
     await this.page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
   }
 
-  async expectCreated() {
-    await expect(this.page.getByText('Webhook cadastrado com sucesso.')).toBeVisible()
+  /**
+   * Confere que a criação deu certo — E18 tirou a mensagem inline "cadastrado com sucesso" (o form
+   * navega direto pro detalhe do webhook recém-criado, `/webhooks/:id`) — e devolve o id extraído da
+   * URL, pra não precisar de um `openDetail` logo em seguida.
+   */
+  async expectCreated(): Promise<string> {
+    await expect(this.page).toHaveURL(/\/webhooks\/[0-9a-f-]{36}$/i)
+    await expect(this.page.getByRole('heading', { name: 'Webhook', exact: true })).toBeVisible()
+    return this.page.url().split('/webhooks/')[1]!.split(/[/?#]/)[0]!
   }
 
   row(address: string): Locator {
-    return this.page.getByRole('row').filter({ hasText: address.slice(0, 10) })
+    return this.page.getByRole('row').filter({ hasText: addressCellPrefix(address) })
   }
 
-  /** Abre o detalhe do webhook clicando na linha e devolve o id extraído da URL. */
+  /** Abre o detalhe do webhook pelo botão "Ver" do `<RowActions>` da linha e devolve o id da URL. */
   async openDetail(address: string): Promise<string> {
-    await this.row(address).first().click()
+    await this.row(address).first().getByRole('button', { name: 'ver' }).click()
     await expect(this.page).toHaveURL(/\/webhooks\/[0-9a-f-]{36}/i)
     return this.page.url().split('/webhooks/')[1]!.split(/[/?#]/)[0]!
+  }
+
+  /** `<StatusToggle>` da linha (Chip "Ativo"/"Pausado" + `Menu`, padrão E18). */
+  async setStatus(address: string, to: 'Ativo' | 'Pausado') {
+    await toggleStatus(this.page, this.row(address), to)
   }
 }
 

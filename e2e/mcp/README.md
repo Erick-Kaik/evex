@@ -52,7 +52,7 @@ Já configurado em [`../../.mcp.json`](../../.mcp.json) (escopo do projeto):
 | Executor | Playwright puro, determinístico | Claude Code dirigindo |
 | Repetível / CI | ✅ | ❌ (exploratório) |
 | Escrever/manter | código nos specs | linguagem natural na hora |
-| Bom pra | regressão, os 8 fluxos fixos, gate de etapa | investigar bug, fluxo novo ainda sem spec, demo ao vivo |
+| Bom pra | regressão, os 9 fluxos fixos, gate de etapa | investigar bug, fluxo novo ainda sem spec, demo ao vivo |
 | Ver na tela | `--headed` / `--ui` | sempre (headed) |
 
 Fluxo saudável: explora com o MCP → quando o fluxo estabiliza, vira um `.spec.ts` na suíte.

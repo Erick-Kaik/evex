@@ -19,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional
 
 /**
  * Ingestão transacional de uma janela de blocos já buscada com sucesso (`ingestion-pipeline-reference.md`
- * §2/§3). Bean **separado** de [BlockchainPoller] pela mesma razão do padrão de reindexação já
+ * §2/§3). Bean **separado** de [PollTickService] pela mesma razão do padrão de reindexação já
  * documentado — `@Transactional` não funciona via self-invocation em proxies Spring.
  */
 @Component

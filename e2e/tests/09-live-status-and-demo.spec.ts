@@ -3,10 +3,12 @@
  * (doc §4.3, E5/E14, DEC-074/DEC-075/DEC-078).
  *
  * Duas frentes da E17:
- *  1. **SSE de status** — a tela do contrato assina `GET /v1/redecode/status/stream` e a de saldos
- *     `GET /v1/balance-monitors/backfill/status/stream` (`text/event-stream`, `EventSource` nativo).
- *     O backend empurra cada transição; o indicador de redecode ("Decodificando o histórico…")
- *     aparece e some **sem reload**.
+ *  1. **SSE de status** — o detalhe do contrato assina `GET /v1/redecode/status/stream` e o detalhe de
+ *     uma config de saldo assina `GET /v1/balance-monitors/backfill/status/stream` (`text/event-stream`,
+ *     `EventSource` nativo). E18 (2026-09) moveu o card de backfill da listagem de Saldos pro detalhe
+ *     de cada configuração — a assinatura SSE foi junto, mesmo padrão já usado pelo redecode (assinado
+ *     no detalhe do contrato, nunca na listagem de Contratos). O backend empurra cada transição; o
+ *     indicador de redecode ("Decodificando o histórico…") aparece e some **sem reload**.
  *  2. **Aba "Demonstração"** — só existe quando `VITE_LOCALENV_CONTROL_URL` está setada **e** o
  *     `local-env/control-panel` responde ao health check. Dispara os scripts do `local-env` (deploy /
  *     emit-events / register-contracts) mostrando o comando exato antes de rodar (DEC-075).
@@ -46,12 +48,29 @@ test.describe('E17 — SSE de status ao vivo', () => {
     await expect(contractDetailPage.redecodeIndicator).toBeHidden()
   })
 
-  test('a tela de Saldos assina o status de backfill via EventSource (text/event-stream)', async ({
+  test('o detalhe de uma config de saldo assina o status de backfill via EventSource (text/event-stream)', async ({
     page,
     balancesPage,
+    evexApi,
   }) => {
+    // E18 tirou o card de backfill da listagem (`/balances`) e moveu pro detalhe de cada configuração
+    // (`/balances/monitors/:id`) — é lá que a assinatura SSE acontece agora, não mais na listagem
+    // (mesmo padrão já usado pelo redecode, assinado no detalhe do contrato, não na lista). Precondição
+    // via API (não é o alvo deste teste — só precisa de UMA config existindo).
+    const { TestERC20 } = await loadDeployedContracts()
+    const address = TestERC20.address
+    await evexApi.ensureContract(address, 'e2e SSE backfill')
+    const monitor = await evexApi.createBalanceMonitor({
+      contractAddress: address,
+      network: 'TESTNET',
+      eventName: 'Transfer',
+      behavior: 'CREDIT',
+      walletParam: 'to',
+      valueParam: 'value',
+    })
+
     const streamRequest = page.waitForRequest((r) => r.url().includes(BACKFILL_STREAM), { timeout: 30_000 })
-    await balancesPage.open()
+    await balancesPage.openMonitor(monitor.id)
 
     const response = await (await streamRequest).response()
     expect(response?.status(), 'o stream SSE de backfill deve responder 200').toBe(200)

@@ -10,8 +10,9 @@
  * sem ABI ainda" se sustenta aqui mesmo com a suíte rodando em série (DEC-070 §4).
  *
  * E16: o filtro da tela de Eventos passou a ter `<ContractAutocomplete>` (contrato monitorado) +
- * `<EventPicker>` (catálogo), coluna "Contrato" na tabela, e um fallback "digitar endereço
- * manualmente" pra filtrar contratos fora da lista de monitorados. Este spec exercita os dois.
+ * `<EventPicker>` (catálogo), coluna "Contrato" na tabela, e um fallback "digitar endereço do
+ * contrato manualmente" (E22) pra filtrar contratos fora da lista de monitorados. Este spec exercita
+ * os dois.
  */
 import { test, expect } from '../fixtures/test'
 import { loadDeployedContracts } from '../helpers/deployed'
@@ -97,7 +98,7 @@ test('filtros da tela de Eventos (contrato monitorado + nome do evento pelo cat�
   await expect(eventsPage.rowWith('BatchProcessed')).toHaveCount(0)
 })
 
-test('fallback: filtra eventos por endereço livre ("digitar endereço manualmente")', async ({
+test('fallback: filtra eventos por endereço livre ("digitar endereço do contrato manualmente")', async ({
   eventsPage,
   evexApi,
 }) => {

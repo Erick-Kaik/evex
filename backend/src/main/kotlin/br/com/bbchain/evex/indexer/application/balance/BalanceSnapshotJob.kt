@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component
  * E4): o snapshot só é "completo" até ali, não até "agora".
  *
  * Sem guarda de concorrência própria — mesma garantia natural do `@Scheduled` já estabelecida em
- * `BlockchainPoller` (E4): o Spring não roda 2 execuções do mesmo método `@Scheduled` em paralelo.
+ * `ScheduledPollTrigger` (E4/E26): o Spring não roda 2 execuções do mesmo método `@Scheduled` em paralelo.
  */
 @Component
 class BalanceSnapshotJob(

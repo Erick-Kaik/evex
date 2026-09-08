@@ -20,9 +20,9 @@ import org.springframework.transaction.annotation.Transactional
 /**
  * End-to-end test through the real API (generated controller -> [EventsApiServiceImpl] ->
  * `application` -> real Postgres via Testcontainers) — DEC-009, same pattern as [ContractAbiApiTest].
- * `indexer.blockchain.polling-enabled: false` (registrado via `@DynamicPropertySource` em
- * [AbstractIntegrationTest]) keeps `BlockchainPoller` off — dados são semeados direto via
- * [BlockchainEventPort], sem poller/RPC real.
+ * `indexer.blockchain.transport: NONE` (registrado via `@DynamicPropertySource` em
+ * [AbstractIntegrationTest]) keeps `ScheduledPollTrigger`/`WebSocketPollTrigger` off — dados são
+ * semeados direto via [BlockchainEventPort], sem poller/RPC real.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc

@@ -66,7 +66,7 @@ Diferente do código base (que tem separação por pacote técnico — `abi/`, `
 - **`AbiEventCatalog`**: virar tabela `contract_abis` (JSONB + `storage_path` + `valid_from_block`/`valid_to_block` por causa do proxy upgradável) atrás de uma porta `AbiStoragePort` (Database/LocalFile/[AzureBlob pós-aprovação]); cache em memória por `contract_address` (resolvendo qual ABI valia em cada bloco), populado no startup e invalidado on-change — não é mais um catálogo único global por `topic0`.
 - **`RedecodeService`/`RedecodeBatchProcessor`**: parametrizar por `contract_address`, `topic0` e janela de blocos (hoje é só `decoded=false` global).
 - **`BalanceProjectionService`**: hoje hard-coded para `Transfer`/`TransferSingle`/`TransferBatch` com campos fixos `from`/`to`/`value`/`id`. Reescrever para ler `behavior` (`CREDIT`/`DEBIT`/`TRANSFER`/`DELTA`) e `wallet_param`/`value_param` de uma configuração por usuário (doc §4.4) em vez de nomes fixos.
-- **`ContractRegistrationService`**: hoje só re-rotula (`contractType`/`businessRef`) eventos raw já gravados. Precisa acionar o redecode de fato (decodificar, não só rotular) ao cadastrar uma ABI para um contrato com histórico.
+- ~~`ContractRegistrationService`~~ — nome de planejamento, nunca implementado com esse nome. Já feito, sob outro nome: `AbiRegistrationService.register()` (`application/abi/`) aciona `redecodeOrchestrator.tryStart(...)` incondicionalmente ao final do cadastro de ABI — decodifica de fato o histórico já gravado do contrato, não só re-rotula (achado de revisão, 2026-09-07 — corrigido aqui pra não confundir mais ninguém).
 - **`WebSecurityConfig`**: remover (sem auth na PoC); manter só CORS para o front consumir.
 
 ## O que precisa ser escrito do zero

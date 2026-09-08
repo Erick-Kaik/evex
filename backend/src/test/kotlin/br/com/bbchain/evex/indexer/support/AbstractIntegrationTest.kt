@@ -51,16 +51,22 @@ abstract class AbstractIntegrationTest {
             // Flyway aponta pro mesmo datasource; sem migrations ainda (ver application.yml) — só o
             // schema history table é criado, o resto do schema vem de ddl-auto: update (DEC-006).
 
-            // E4: desliga o BlockchainPoller (@ConditionalOnProperty) em todo teste que estenda esta
-            // classe — @SpringBootTest não deve tentar falar com um RPC de verdade (E12/DEC-010 ainda
-            // bloqueado). Registrado aqui (não em src/test/resources/application.yml) de propósito: um
-            // `application.yml` em src/test/resources **substitui** (não mescla com) o de
-            // src/main/resources no classpath de teste — `build/resources/test` vem antes de
-            // `build/resources/main` na ordem de resolução do Gradle, então `ddl-auto: update` e todo
-            // o resto de `src/main/resources/application.yml` some silenciosamente pros testes. Só
-            // percebido porque `JpaIngestionCursorAdapterTest`/etc. começaram a falhar com "relation
-            // does not exist" sem nenhuma DDL sendo executada — ver docs/decisions.md.
-            registry.add("indexer.blockchain.polling-enabled") { "false" }
+            // E4: desliga todo gatilho de ingestão (ScheduledPollTrigger/WebSocketPollTrigger,
+            // @ConditionalOnProperty) em todo teste que estenda esta classe — @SpringBootTest não deve
+            // tentar falar com um RPC de verdade (E12/DEC-010 ainda bloqueado). Registrado aqui (não em
+            // src/test/resources/application.yml) de propósito: um `application.yml` em
+            // src/test/resources **substitui** (não mescla com) o de src/main/resources no classpath de
+            // teste — `build/resources/test` vem antes de `build/resources/main` na ordem de resolução
+            // do Gradle, então `ddl-auto: update` e todo o resto de `src/main/resources/application.yml`
+            // some silenciosamente pros testes. Só percebido porque `JpaIngestionCursorAdapterTest`/etc.
+            // começaram a falhar com "relation does not exist" sem nenhuma DDL sendo executada — ver
+            // docs/decisions.md.
+            //
+            // E26/DEC-091: `indexer.blockchain.transport=NONE` substitui a antiga
+            // `indexer.blockchain.polling-enabled=false` — `NONE` desliga os 2 gatilhos possíveis de
+            // uma vez (nenhum dos dois `@ConditionalOnProperty` bate `POLLING`/`WEBSOCKET`), sem precisar
+            // de 2 properties diferentes pra desligar 2 mecanismos diferentes.
+            registry.add("indexer.blockchain.transport") { "NONE" }
         }
     }
 }

@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component
  * uma transação aberta, regra não-negociável do doc: "não pode ser síncrona bloqueando a ingestão").
  *
  * Sem guarda de concorrência própria — mesma garantia natural do `@Scheduled` já estabelecida em
- * `BlockchainPoller`/`BalanceSnapshotJob`: o Spring não roda 2 execuções do mesmo método `@Scheduled`
+ * `ScheduledPollTrigger`/`BalanceSnapshotJob`: o Spring não roda 2 execuções do mesmo método `@Scheduled`
  * em paralelo.
  *
  * `try/catch` por entrega dentro do loop (E8.1) — mesma lição já aplicada em

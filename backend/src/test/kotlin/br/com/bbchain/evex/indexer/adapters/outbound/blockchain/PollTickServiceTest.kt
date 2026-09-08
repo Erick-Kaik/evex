@@ -13,12 +13,15 @@ import org.junit.jupiter.api.Test
 
 /**
  * Unit test — [BlockchainPort]/[IngestionCursorPort]/[IngestionBatchProcessor] mockados via MockK
- * (DEC-009). Cenários replicados de `ingestion-pipeline-reference.md` §2 (auto-shrink).
+ * (DEC-009). Cenários replicados de `ingestion-pipeline-reference.md` §2 (auto-shrink). Movido do
+ * antigo `BlockchainPollerTest` (E4) na E26/DEC-091, quando a lógica de `poll()`/`processRange()` foi
+ * extraída de `BlockchainPoller` (renomeado [ScheduledPollTrigger]) pra este serviço — mesma cobertura
+ * de antes, só reorganizada.
  * [IngestionBatchProcessor] pode ser mockado apesar de ser uma classe concreta porque `@Component` já
  * é tornado `open` pelo plugin `kotlin("plugin.spring")` (all-open) — mesmo mecanismo que já vale para
  * qualquer bean Spring do projeto.
  */
-class BlockchainPollerTest {
+class PollTickServiceTest {
 
     private val blockchain: BlockchainPort = mockk()
     private val cursor: IngestionCursorPort = mockk()
@@ -29,7 +32,7 @@ class BlockchainPollerTest {
         minBatchSize = 1
     }
 
-    private val poller = BlockchainPoller(blockchain, cursor, batchProcessor, properties)
+    private val pollTickService = PollTickService(blockchain, cursor, batchProcessor, properties)
 
     private fun sampleLog(blockNumber: Long, logIndex: Long = 0) = BlockchainLog(
         contractAddress = "0x111111111111111111111111111111111111111a",
@@ -48,7 +51,7 @@ class BlockchainPollerTest {
         val logs = listOf(sampleLog(150))
         every { blockchain.getLogs(101, 200) } returns logs
 
-        poller.poll()
+        pollTickService.tick()
 
         verify(exactly = 1) { batchProcessor.ingestRange(101, 200, logs) }
     }
@@ -58,7 +61,7 @@ class BlockchainPollerTest {
         every { cursor.current() } returns 100
         every { blockchain.currentBlockNumber() } returns 100
 
-        poller.poll()
+        pollTickService.tick()
 
         verify(exactly = 0) { blockchain.getLogs(any(), any()) }
         verify(exactly = 0) { batchProcessor.ingestRange(any(), any(), any()) }
@@ -72,7 +75,7 @@ class BlockchainPollerTest {
         every { blockchain.getLogs(101, 150) } returns listOf(sampleLog(120))
         every { blockchain.getLogs(151, 200) } returns listOf(sampleLog(180))
 
-        poller.poll()
+        pollTickService.tick()
 
         verify(exactly = 1) { batchProcessor.ingestRange(101, 150, listOf(sampleLog(120))) }
         verify(exactly = 1) { batchProcessor.ingestRange(151, 200, listOf(sampleLog(180))) }
@@ -88,7 +91,7 @@ class BlockchainPollerTest {
         every { blockchain.getLogs(2, 2) } returns listOf(sampleLog(2))
         every { blockchain.getLogs(3, 4) } returns listOf(sampleLog(3))
 
-        poller.poll()
+        pollTickService.tick()
 
         verify(exactly = 1) { batchProcessor.ingestRange(1, 1, listOf(sampleLog(1))) }
         verify(exactly = 1) { batchProcessor.ingestRange(2, 2, listOf(sampleLog(2))) }
@@ -96,12 +99,12 @@ class BlockchainPollerTest {
     }
 
     @Test
-    fun `a failing single-block window does not shrink below minBatchSize, does not ingest, and does not crash the scheduler`() {
+    fun `a failing single-block window does not shrink below minBatchSize, does not ingest, and does not crash the caller`() {
         every { cursor.current() } returns 0
         every { blockchain.currentBlockNumber() } returns 1 // window 1..1
         every { blockchain.getLogs(1, 1) } throws RpcRangeException("range too large")
 
-        poller.poll() // must not throw
+        pollTickService.tick() // must not throw
 
         verify(exactly = 1) { blockchain.getLogs(1, 1) }
         verify(exactly = 0) { batchProcessor.ingestRange(any(), any(), any()) }
@@ -113,7 +116,7 @@ class BlockchainPollerTest {
         every { blockchain.currentBlockNumber() } returns 300 // window 101..300
         every { blockchain.getLogs(101, 300) } throws IOException("connection refused")
 
-        poller.poll() // must not throw, must not retry/split
+        pollTickService.tick() // must not throw, must not retry/split
 
         verify(exactly = 1) { blockchain.getLogs(101, 300) }
         verify(exactly = 0) { batchProcessor.ingestRange(any(), any(), any()) }

@@ -167,8 +167,11 @@ Garanta estas env vars na run configuration (ou em `application-local.yml`):
 - `EVEX_BLOCKSCOUT_URL=http://localhost:4001` — só importa se você também subiu o Blockscout
   (`./scripts/blockscout-up.sh`, seção 3.3); sem ele, discovery/E6 simplesmente fica indisponível, o
   resto do pipeline funciona normal.
-- `EVEX_POLLING_ENABLED=true` (pipeline normal) — só use `false` pra isolar o teste do fallback de
-  discovery sem o poller "atropelar" com eventos já observados (ver seção 4).
+- `EVEX_BLOCKCHAIN_TRANSPORT=POLLING` (pipeline normal, `@Scheduled` — default se você nem setar essa
+  env var) — só use `NONE` pra isolar o teste do fallback de discovery sem o poller "atropelar" com
+  eventos já observados (ver seção 4). `WEBSOCKET` (E26/DEC-091, `eth_subscribe("newHeads")`) ainda não
+  foi validado ao vivo contra o Hardhat deste ambiente — se testar, também precisa de
+  `EVEX_BLOCKCHAIN_WS_URL` apontando pro WS do nó (Hardhat expõe WS na mesma porta HTTP, `ws://localhost:8545`).
 
 ### 3.6 Registrar contratos no Evex + disparar mais eventos
 

@@ -4,6 +4,8 @@ import br.com.bbchain.evex.indexer.config.BlockchainProperties
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainLog
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainPort
 import br.com.bbchain.evex.indexer.domain.blockchain.RpcRangeException
+import com.fasterxml.jackson.core.type.TypeReference as JacksonTypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.math.BigInteger
 import java.time.Instant
 import org.springframework.stereotype.Component
@@ -14,8 +16,10 @@ import org.web3j.abi.datatypes.Address
 import org.web3j.abi.datatypes.AbiTypes
 import org.web3j.abi.datatypes.Bool
 import org.web3j.abi.datatypes.BytesType
+import org.web3j.abi.datatypes.DynamicArray
 import org.web3j.abi.datatypes.Function
 import org.web3j.abi.datatypes.NumericType
+import org.web3j.abi.datatypes.StaticArray
 import org.web3j.abi.datatypes.Type
 import org.web3j.abi.datatypes.Utf8String
 import org.web3j.protocol.Web3j
@@ -46,6 +50,11 @@ class Web3jBlockchainClient(
     // permite ao [Web3jBlockchainClientTest] substituir por um `Web3j` mockado (MockK) sem HTTP real,
     // já que o `test` source set é associado ao `main` pelo plugin Kotlin e enxerga `internal`.
     internal var web3j: Web3j = Web3j.build(HttpService(properties.rpcUrl))
+
+    // Só pra decodificar a convenção de argumento de array (DEC-090) — mesmo padrão de
+    // `WebhookEnrichmentResolver.objectMapper` (instância própria, não injetada; não há necessidade de
+    // config customizada aqui, só `readValue` de um JSON array simples de strings).
+    private val objectMapper = ObjectMapper()
 
     override fun currentBlockNumber(): Long =
         web3j.ethBlockNumber().send().blockNumber.toLong()
@@ -121,14 +130,29 @@ class Web3jBlockchainClient(
      * Converte um argumento de entrada (string, na forma como chega de
      * [br.com.bbchain.evex.indexer.application.webhook.WebhookEnrichmentResolver]) pro [Type] Web3j
      * correspondente ao tipo Solidity declarado — contraparte de codificação do que
-     * [AbiDecodingAdapter] já faz pra decodificar parâmetros de evento. Cobre os tipos escalares
-     * usados pelos cenários da E19 (`address`/`bool`/`string`/`bytesN`/`bytes`/`uintN`/`intN`); arrays
-     * e tuplas **não são suportados aqui** — `AbiTypes.getType` não distingue a forma de codificar um
-     * argumento de array a partir de uma única string, e nenhuma decisão foi tomada em DEC-082 sobre
-     * qual convenção usar (ex.: CSV, JSON array) pra representar isso num único `String` de [args] —
-     * registrar como complemento da DEC-082 se/quando um cenário real precisar disso.
+     * [AbiDecodingAdapter] já faz pra decodificar parâmetros de evento. Cobre os tipos escalares usados
+     * pelos cenários da E19 (`address`/`bool`/`string`/`bytesN`/`bytes`/`uintN`/`intN`) e, desde
+     * DEC-090, **arrays desses mesmos tipos escalares** (`T[]`/`T[N]`, ex. `uint256[]`, `address[3]`) —
+     * detectados pelo sufixo `[...]` no fim do tipo Solidity e delegados a [toSolidityArrayValue].
+     * **Tuplas/structs continuam fora de escopo** (mesma limitação já existente na decodificação de
+     * evento, `AbiDecodingAdapter`) — `AbiTypes.getType` já lança `UnsupportedOperationException` pra
+     * qualquer tipo desconhecido (ex. `tuple`), sem cair em nenhum dos ramos abaixo; não há decisão de
+     * convenção pra representar `components`/campos aninhados num único `String` de [args], e nenhum
+     * cenário real pediu isso até aqui — se pedir, é mudança maior (envolve `CatalogedMethodInput`/
+     * `AbiParser`, fora do escopo desta correção pontual).
      */
     private fun toSolidityValue(solidityType: String, rawValue: String): Type<*> {
+        val arrayMatch = ARRAY_TYPE_SUFFIX.matchEntire(solidityType)
+        return if (arrayMatch != null) {
+            val (elementType, arraySizeText) = arrayMatch.destructured
+            toSolidityArrayValue(elementType, arraySizeText.ifBlank { null }, rawValue, solidityType)
+        } else {
+            toScalarSolidityValue(solidityType, rawValue)
+        }
+    }
+
+    /** Ramo escalar de [toSolidityValue] — extraído pra ser reaproveitado por elemento de array em [toSolidityArrayValue]. */
+    private fun toScalarSolidityValue(solidityType: String, rawValue: String): Type<*> {
         val typeClass = AbiTypes.getType(solidityType, false)
         return when {
             NumericType::class.java.isAssignableFrom(typeClass) ->
@@ -139,17 +163,75 @@ class Web3jBlockchainClient(
             BytesType::class.java.isAssignableFrom(typeClass) ->
                 typeClass.getConstructor(ByteArray::class.java).newInstance(Numeric.hexStringToByteArray(rawValue)) as Type<*>
             else -> throw IllegalArgumentException(
-                "Tipo Solidity '$solidityType' não suportado em eth_call (E19/DEC-082) — só tipos " +
-                    "escalares; arrays/tuplas ficam para uma decisão futura.",
+                "Tipo Solidity '$solidityType' não suportado em eth_call (E19/DEC-082/DEC-090) — só " +
+                    "tipos escalares e arrays de escalares; tuplas/structs ficam fora de escopo (mesma " +
+                    "limitação já existente na decodificação de evento).",
             )
         }
+    }
+
+    /**
+     * Constrói o argumento de array Web3j (dinâmico [DynamicArray] pro sufixo `[]`, estático
+     * `StaticArrayN` gerado pelo sufixo `[N]`) a partir da convenção fechada em DEC-090: [rawValue] é
+     * um JSON array de strings (ex. `["1","2","3"]` pra `uint256[]`, `["0xabc...","0xdef..."]` pra
+     * `address[]`) — 1 string por elemento, cada uma decodificada com o mesmo [toScalarSolidityValue]
+     * usado pro tipo base fora de array. Construção por reflexão (`getConstructor(Class, List)`), mesmo
+     * padrão já usado pelos ramos escalares de [toScalarSolidityValue] — evita depender de inferência de
+     * tipo genérico do Kotlin contra o bound `T extends Type` (raw) do Web3j.
+     */
+    private fun toSolidityArrayValue(
+        elementType: String,
+        arraySizeText: String?,
+        rawValue: String,
+        originalType: String,
+    ): Type<*> {
+        val elements: List<String> = try {
+            objectMapper.readValue(rawValue, object : JacksonTypeReference<List<String>>() {})
+        } catch (ex: Exception) {
+            throw IllegalArgumentException(
+                "Argumento de array '$originalType' não é um JSON array de strings válido (convenção " +
+                    "DEC-090) — valor recebido: '$rawValue' (${ex.message})",
+                ex,
+            )
+        }
+        val elementValues: List<Type<*>> = elements.map { toScalarSolidityValue(elementType, it) }
+        val elementTypeClass = AbiTypes.getType(elementType, false)
+
+        if (arraySizeText == null) {
+            return DynamicArray::class.java
+                .getConstructor(Class::class.java, List::class.java)
+                .newInstance(elementTypeClass, elementValues) as Type<*>
+        }
+
+        val expectedSize = arraySizeText.toInt()
+        if (elementValues.size != expectedSize) {
+            throw IllegalArgumentException(
+                "Argumento de array estático '$originalType' esperava $expectedSize elemento(s), " +
+                    "recebeu ${elementValues.size}: '$rawValue'",
+            )
+        }
+        if (expectedSize < 1 || expectedSize > StaticArray.MAX_SIZE_OF_STATIC_ARRAY) {
+            throw IllegalArgumentException(
+                "Array estático '$originalType' com tamanho $expectedSize fora do suportado pelo Web3j " +
+                    "(1..${StaticArray.MAX_SIZE_OF_STATIC_ARRAY}) — sem classe StaticArrayN gerada pra esse tamanho.",
+            )
+        }
+        val staticArrayClass = Class.forName("org.web3j.abi.datatypes.generated.StaticArray$expectedSize")
+        return staticArrayClass
+            .getConstructor(Class::class.java, List::class.java)
+            .newInstance(elementTypeClass, elementValues) as Type<*>
     }
 
     /**
      * Formata o valor decodificado de uma saída de `eth_call` como `String` — mesmo racional de
      * `AbiDecodingAdapter.formatValue` (`bytes`/`bytesN` viram hex string, arrays Solidity descem um
      * nível antes de formatar), só que devolvendo sempre `String` (não `Any?`), porque
-     * [BlockchainPort.call] devolve `List<String>` por contrato de porta (E19/DEC-082).
+     * [BlockchainPort.call] devolve `List<String>` por contrato de porta (E19/DEC-082). Já cobria saída
+     * de tipo array antes de [toSolidityValue] ganhar suporte a array como **entrada** (DEC-090) —
+     * `TypeReference.makeTypeReference` (usado em `outputParameters`) já sabia decodificar array, só
+     * faltava construir o argumento de entrada; formato de exibição `[a, b, c]` mantido de propósito,
+     * não vira JSON (não precisa ida-e-volta, é só formatação — a convenção JSON é exclusiva de
+     * argumento de entrada).
      */
     private fun Type<*>.toCallResultString(): String = when (val raw = value) {
         is ByteArray -> Numeric.toHexString(raw)
@@ -186,6 +268,12 @@ class Web3jBlockchainClient(
     )
 
     companion object {
+        // Detecta o sufixo de array Solidity no fim do tipo (`T[]`/`T[N]`) — grupo 1 é o tipo do
+        // elemento, grupo 2 é o tamanho (vazio pra dinâmico). Só o ÚLTIMO par de colchetes, de
+        // propósito: não cobre array de array (`uint256[][]`) nem array de tupla — fora de escopo
+        // desta correção (DEC-090), mesmo racional de "tupla continua não suportada".
+        private val ARRAY_TYPE_SUFFIX = Regex("""^(.+)\[(\d*)]$""")
+
         private const val RANGE_ERROR_CODE = -32005
         private val RANGE_ERROR_KEYWORDS = listOf(
             "query returned more than",

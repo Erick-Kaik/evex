@@ -10,6 +10,7 @@ import type {
 } from '../../api/api'
 import type { Network } from '../../api/api'
 import { apiConfiguration } from '../../api/config'
+import { redecodeStatusKey } from './useRedecodeStatus'
 
 const contractsApi = new ContractsApi(apiConfiguration)
 const discoveryApi = new DiscoveryApi(apiConfiguration)
@@ -78,7 +79,14 @@ export function useContractAbiVersions(address: string | undefined) {
   })
 }
 
-/** Cadastra uma nova versão de ABI (`POST /v1/contracts/{address}/abi`); invalida versões + detalhe. */
+/**
+ * Cadastra uma nova versão de ABI (`POST /v1/contracts/{address}/abi`); invalida versões + detalhe.
+ *
+ * Também invalida `redecodeStatusKey`: o backend pode disparar um redecode do histórico já indexado
+ * desse contrato como efeito colateral deste cadastro (`AbiRegistrationService.register()`) — se
+ * `useRedecodeStatus` estiver em polling degradado e ocioso (`stopPollingWhenIdle`, achado de
+ * 2026-09-07), essa invalidação acorda o polling na hora em vez de esperar o componente remontar.
+ */
 export function useRegisterAbi(address: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -87,6 +95,7 @@ export function useRegisterAbi(address: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['contract-abi-versions', address] })
       void queryClient.invalidateQueries({ queryKey: ['contract', address] })
+      void queryClient.invalidateQueries({ queryKey: redecodeStatusKey })
     },
   })
 }

@@ -60,10 +60,12 @@ test('config de saldo CREDIT (modo guiado) projeta os Transfer de mint na tela d
   await balancesPage.query({ wallet: RECIPIENT, contract: address })
   const row = balancesPage.balanceRow(RECIPIENT)
   await expect(row).toBeVisible()
-  await expect(row).toContainText(address.slice(0, 10))
+  // a coluna "Contrato" é `<AddressCell>` (E22) — trunca em 8 chars + "…" + 4, não 10 (essa é a
+  // convenção do `<CopyableHash>`, usado noutras colunas, ex. "Endereço" da listagem de Contratos).
+  await expect(row).toContainText(address.slice(0, 8))
 })
 
-test('consulta de saldo pelo fallback de endereço livre ("digitar endereço manualmente")', async ({
+test('consulta de saldo pelo fallback de endereço livre ("digitar endereço do contrato manualmente")', async ({
   balancesPage,
   evexApi,
 }) => {
@@ -78,7 +80,7 @@ test('consulta de saldo pelo fallback de endereço livre ("digitar endereço man
   await expect(balancesPage.balanceRow(RECIPIENT)).toBeVisible()
 })
 
-test('pausar e reativar uma config de monitoramento pela UI', async ({ balancesPage, evexApi }) => {
+test('pausar e reativar uma config de monitoramento pela UI', async ({ page, balancesPage, evexApi }) => {
   const { TestERC721 } = await loadDeployedContracts()
   const address = TestERC721.address
   await evexApi.ensureContract(address, 'e2e balance ERC721')
@@ -93,10 +95,14 @@ test('pausar e reativar uma config de monitoramento pela UI', async ({ balancesP
     valueParam: 'tokenId',
   })
 
-  const row = balancesPage.monitorRow(address)
-  await expect(row).toContainText('sim') // ativa
-  await row.getByRole('button', { name: 'Pausar' }).click()
-  await expect(row).toContainText('não')
-  await row.getByRole('button', { name: 'Ativar' }).click()
-  await expect(row).toContainText('sim')
+  // `createMonitor` termina no detalhe da config recém-criada (E18) — o `<StatusToggle>` do
+  // cabeçalho (Chip "Ativa"/"Pausada" + Menu, substitui os antigos botões "Pausar"/"Ativar" por
+  // linha) é usado direto aqui, sem voltar pra listagem: filtrar a listagem pelo endereço do
+  // contrato ficaria ambíguo se o mesmo contrato já tiver outra config de uma rodada anterior da
+  // suíte (`e2e/CLAUDE.md` tolera estado preexistente, não reseta banco por padrão).
+  await expect(page.getByRole('button', { name: 'Ativa', exact: true })).toBeVisible()
+  await balancesPage.setDetailStatus('Pausada')
+  await expect(page.getByRole('button', { name: 'Pausada', exact: true })).toBeVisible()
+  await balancesPage.setDetailStatus('Ativa')
+  await expect(page.getByRole('button', { name: 'Ativa', exact: true })).toBeVisible()
 })

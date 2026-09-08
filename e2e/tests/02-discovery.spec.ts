@@ -23,19 +23,19 @@ test.describe('discovery via Blockscout', () => {
   test('lista contratos verificados e importa um pro formulário de cadastro', async ({ page, contractsPage }) => {
     const erc20 = await testContractAddress('TestERC20')
     await contractsPage.open()
-    const dialog = await contractsPage.openNewContractDialog()
+    const form = await contractsPage.goToNewContract()
 
     // a coluna "Importar do Blockscout" lista os contratos verificados
-    await expect(dialog.discoveryUnavailable).toBeHidden()
-    const item = dialog.discoveryItem(erc20.slice(0, 10))
+    await expect(form.discoveryUnavailable).toBeHidden()
+    const item = form.discoveryItem(erc20.slice(0, 10))
     await expect(item).toBeVisible({ timeout: 20_000 })
 
     // clicar no item preenche endereço + nome no formulário
     await item.click()
     await expect(page.getByLabel('Endereço')).toHaveValue(new RegExp(erc20, 'i'))
 
-    await dialog.selectNetwork('TESTNET')
-    await dialog.submit()
+    await form.selectNetwork('TESTNET')
+    await form.submit()
     await expect(page).toHaveURL(new RegExp(`/contracts/${erc20}`, 'i'))
   })
 

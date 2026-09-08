@@ -102,10 +102,17 @@ export function useBalanceBackfill(id: string) {
  * polling. Se o stream cair (backend fora do ar, etc.), `useServerSentStatus` cai sozinho para o
  * polling de `GET /v1/balance-monitors/backfill/status` (comportamento pré-E17), sem regressão. O
  * `configId` do payload continua dizendo qual linha está rodando.
+ *
+ * `stopPollingWhenIdle` (achado da análise de 2026-09-07): em modo degradado (sem SSE), o polling REST
+ * parava sozinho só quando o componente desmontava — mesmo com `running: false`, continuava batendo
+ * indefinidamente. `useBalanceBackfill` já invalida `globalBackfillStatusKey` no `onSuccess` (linha
+ * acima), então parar o polling ocioso não perde nenhuma transição: disparar um backfill novo acorda
+ * o polling na hora, via invalidação, não precisa esperar o próximo tick.
  */
 export function useGlobalBalanceBackfillStatus(): ServerSentStatus<BalanceBackfillStatus> {
   return useServerSentStatus<BalanceBackfillStatus>('/v1/balance-monitors/backfill/status/stream', {
     pollQueryKey: globalBackfillStatusKey,
     pollQueryFn: async () => (await balanceMonitorsApi.getBalanceBackfillStatus()).data,
+    stopPollingWhenIdle: (status) => status?.running !== true,
   })
 }

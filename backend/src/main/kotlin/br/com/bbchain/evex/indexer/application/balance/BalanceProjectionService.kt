@@ -101,7 +101,7 @@ class BalanceProjectionService(
      * derrubava a transação inteira de ingestão/redecode (`@Transactional` de
      * `IngestionBatchProcessor`/`RedecodeBatchProcessor`) — pior ainda, como o cursor global (DEC-002)
      * só avança dentro da mesma transação, o poller ficaria preso pra sempre na mesma janela de blocos
-     * a cada novo ciclo (`BlockchainPoller.poll()` engole a exceção e loga, mas o cursor nunca avança),
+     * a cada novo ciclo (`PollTickService.tick()` engole a exceção e loga, mas o cursor nunca avança),
      * exatamente o cenário que DEC-034 queria evitar. Fix: qualquer exceção de uma `apply()` é
      * capturada aqui, logada em `WARN` (com o `id` da config e o evento, pra dar rastro — sem isso não
      * havia log nenhum de config mal configurada, mesmo no caminho silencioso de `null`), e tratada

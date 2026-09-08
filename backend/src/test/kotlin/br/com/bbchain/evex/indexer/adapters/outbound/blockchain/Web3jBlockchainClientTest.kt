@@ -6,9 +6,16 @@ import io.mockk.mockk
 import io.mockk.slot
 import java.math.BigInteger
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.web3j.abi.FunctionEncoder
+import org.web3j.abi.TypeReference
+import org.web3j.abi.datatypes.Address
+import org.web3j.abi.datatypes.Bool
+import org.web3j.abi.datatypes.DynamicArray
+import org.web3j.abi.datatypes.Function
 import org.web3j.abi.datatypes.Utf8String
+import org.web3j.abi.datatypes.generated.StaticArray2
 import org.web3j.abi.datatypes.generated.Uint256
 import org.web3j.protocol.Web3j
 import org.web3j.protocol.core.DefaultBlockParameter
@@ -189,5 +196,143 @@ class Web3jBlockchainClientTest {
 
         val capturedBlockNumber = (blockParameterSlot.captured as DefaultBlockParameterNumber).blockNumber
         assertThat(capturedBlockNumber).isEqualTo(BigInteger.valueOf(777_777L))
+    }
+
+    @Test
+    fun `call decodes an array output`() {
+        val contractAddress = "0x1010101010101010101010101010101010101a"
+        val encodedReturn = "0x" + FunctionEncoder.encodeConstructor(
+            listOf(DynamicArray(Uint256::class.java, listOf(Uint256(BigInteger.ONE), Uint256(BigInteger.TWO)))),
+        )
+        val request = mockk<Request<*, EthCall>>()
+        every { request.send() } returns EthCall().apply { setResult(encodedReturn) }
+        val web3j = mockk<Web3j>()
+        every { web3j.ethCall(any<Transaction>(), any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+
+        val result = client.call(
+            contractAddress = contractAddress,
+            methodName = "getIds",
+            inputTypes = emptyList(),
+            outputTypes = listOf("uint256[]"),
+            args = emptyList(),
+            blockNumber = 1L,
+        )
+
+        assertThat(result).containsExactly("[1, 2]")
+    }
+
+    // --- call, argumento de array (DEC-090) -------------------------------------------------------
+
+    @Test
+    fun `call encodes a dynamic uint256 array argument from the JSON-array-of-strings convention`() {
+        val contractAddress = "0x2020202020202020202020202020202020202b"
+        val encodedReturn = "0x" + FunctionEncoder.encodeConstructor(listOf(Bool(true)))
+        val request = mockk<Request<*, EthCall>>()
+        every { request.send() } returns EthCall().apply { setResult(encodedReturn) }
+        val transactionSlot = slot<Transaction>()
+        val web3j = mockk<Web3j>()
+        every { web3j.ethCall(capture(transactionSlot), any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+
+        client.call(
+            contractAddress = contractAddress,
+            methodName = "sumValues",
+            inputTypes = listOf("uint256[]"),
+            outputTypes = listOf("bool"),
+            args = listOf("""["1","2","3"]"""),
+            blockNumber = 100L,
+        )
+
+        val expectedFunction = Function(
+            "sumValues",
+            listOf(
+                DynamicArray(
+                    Uint256::class.java,
+                    listOf(Uint256(BigInteger.ONE), Uint256(BigInteger.TWO), Uint256(BigInteger.valueOf(3))),
+                ),
+            ),
+            listOf(TypeReference.makeTypeReference("bool")),
+        )
+        assertThat(transactionSlot.captured.data).isEqualTo(FunctionEncoder.encode(expectedFunction))
+    }
+
+    @Test
+    fun `call encodes a static address array argument with the correct fixed size`() {
+        val contractAddress = "0x3030303030303030303030303030303030303c"
+        val encodedReturn = "0x" + FunctionEncoder.encodeConstructor(listOf(Bool(true)))
+        val request = mockk<Request<*, EthCall>>()
+        every { request.send() } returns EthCall().apply { setResult(encodedReturn) }
+        val transactionSlot = slot<Transaction>()
+        val web3j = mockk<Web3j>()
+        every { web3j.ethCall(capture(transactionSlot), any<DefaultBlockParameter>()) } returns request
+        client.web3j = web3j
+        val address1 = "0x1111111111111111111111111111111111111a"
+        val address2 = "0x2222222222222222222222222222222222222b"
+
+        client.call(
+            contractAddress = contractAddress,
+            methodName = "areAdmins",
+            inputTypes = listOf("address[2]"),
+            outputTypes = listOf("bool"),
+            args = listOf("""["$address1","$address2"]"""),
+            blockNumber = 100L,
+        )
+
+        val expectedFunction = Function(
+            "areAdmins",
+            listOf(StaticArray2(Address::class.java, listOf(Address(address1), Address(address2)))),
+            listOf(TypeReference.makeTypeReference("bool")),
+        )
+        assertThat(transactionSlot.captured.data).isEqualTo(FunctionEncoder.encode(expectedFunction))
+    }
+
+    @Test
+    fun `call throws a clear error when a static array argument size does not match the declared size`() {
+        assertThatThrownBy {
+            client.call(
+                contractAddress = "0x4040404040404040404040404040404040404d",
+                methodName = "areAdmins",
+                inputTypes = listOf("address[2]"),
+                outputTypes = listOf("bool"),
+                args = listOf("""["0x1111111111111111111111111111111111111a"]"""),
+                blockNumber = 1L,
+            )
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("2")
+            .hasMessageContaining("1")
+    }
+
+    @Test
+    fun `call throws a clear error when an array argument value is not valid JSON`() {
+        assertThatThrownBy {
+            client.call(
+                contractAddress = "0x5050505050505050505050505050505050505e",
+                methodName = "sumValues",
+                inputTypes = listOf("uint256[]"),
+                outputTypes = listOf("bool"),
+                args = listOf("not-a-json-array"),
+                blockNumber = 1L,
+            )
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("JSON")
+    }
+
+    @Test
+    fun `call still rejects tuple argument types with a clear error (regression, not implemented by DEC-090)`() {
+        assertThatThrownBy {
+            client.call(
+                contractAddress = "0x6060606060606060606060606060606060606f",
+                methodName = "getStruct",
+                inputTypes = listOf("tuple"),
+                outputTypes = listOf("bool"),
+                args = listOf("{}"),
+                blockNumber = 1L,
+            )
+        }
+            .isInstanceOf(UnsupportedOperationException::class.java)
+            .hasMessageContaining("tuple")
     }
 }

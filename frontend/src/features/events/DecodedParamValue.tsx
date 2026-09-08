@@ -5,19 +5,6 @@ import { CopyableHash } from '../../components/CopyableHash'
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/
 const HEX_PATTERN = /^0x[a-fA-F0-9]+$/
-const DIGITS_PATTERN = /^-?\d+$/
-
-/**
- * Insere separador de milhar (`.`, padrão pt-BR) numa string só de dígitos, sem passar por
- * `Number`/`parseInt` — uint256/int256 decodificados podem exceder `Number.MAX_SAFE_INTEGER`
- * (mesmo cuidado já documentado em `BalanceQuerySection` pro campo `balance`).
- */
-function formatDigitGroups(digits: string): string {
-  const negative = digits.startsWith('-')
-  const unsigned = negative ? digits.slice(1) : digits
-  const grouped = unsigned.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-  return negative ? `-${grouped}` : grouped
-}
 
 /**
  * Formata um parâmetro decodificado (`Event.decodedParameters`, `{ [key: string]: any }` no
@@ -53,13 +40,12 @@ export function DecodedParamValue({ value }: { value: unknown }) {
     if (ADDRESS_PATTERN.test(value) || (HEX_PATTERN.test(value) && value.length > 20)) {
       return <CopyableHash value={value} />
     }
-    if (DIGITS_PATTERN.test(value)) {
-      return (
-        <Typography component="span" variant="body2" sx={{ fontFamily: 'monospace' }}>
-          {formatDigitGroups(value)}
-        </Typography>
-      )
-    }
+    // DEC-063: nenhum ramo especial pra string só-de-dígitos aqui — um `uint256`/`int256` decodificado
+    // nunca chega como `string` (o backend serializa BigInteger como literal JSON numérico, o axios já
+    // converte pra `number` do JS antes deste componente rodar, caindo no ramo `number` acima; a perda
+    // de precisão de um uint256 grande, se houver, já aconteceu antes daqui). Uma `string` que chega
+    // até este ponto é sempre um parâmetro Solidity `string`/`bytes` de verdade — aplicar separador de
+    // milhar formataria como quantidade algo que pode ser um ID/código, semanticamente não-numérico.
     return <Typography component="span" variant="body2">{value}</Typography>
   }
 

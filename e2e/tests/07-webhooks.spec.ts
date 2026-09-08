@@ -40,17 +40,17 @@ test.describe('webhooks via webhook.site', () => {
 
       // --- cadastra o webhook PELA UI (modo guiado) ---
       await webhooksPage.open()
+      await webhooksPage.goToNew()
       await webhooksPage.selectContract(address) // <ContractAutocomplete> — sem <NetworkSelect>
       await webhooksPage.pickEvent('Transfer') // <EventPicker> — catálogo do contrato
       await webhooksPage.fillUrl(url)
       await webhooksPage.submit()
-      await webhooksPage.expectCreated()
+      // E18: a submissão navega direto pro detalhe do webhook recém-criado — já devolve o id
+      const webhookId = await webhooksPage.expectCreated()
 
       // o modo guiado herdou a rede do contrato
       const webhook = await evexApi.waitForWebhook(address, 'Transfer', url)
       expect(webhook.network).toBe('TESTNET')
-
-      const webhookId = await webhooksPage.openDetail(address)
 
       // --- emite um Transfer e espera decodificar ---
       await evexApi.emitEvents(1)
@@ -100,15 +100,14 @@ test.describe('webhooks via webhook.site', () => {
 
       // modo manual: "EventoQueNaoExiste" não está no catálogo — só o texto livre aceita
       await webhooksPage.open()
+      await webhooksPage.goToNew()
       await webhooksPage.setFormMode('manual')
       await webhooksPage.fillContractManual(address)
       await webhooksPage.selectNetworkManual('TESTNET')
       await webhooksPage.fillEventManual('EventoQueNaoExiste')
       await webhooksPage.fillUrl(webhookSite.endpointUrl(uuid))
       await webhooksPage.submit()
-      await webhooksPage.expectCreated()
-
-      const webhookId = await webhooksPage.openDetail(address)
+      const webhookId = await webhooksPage.expectCreated()
 
       await evexApi.emitEvents(1)
       await evexApi.waitForRedecodeIdle()

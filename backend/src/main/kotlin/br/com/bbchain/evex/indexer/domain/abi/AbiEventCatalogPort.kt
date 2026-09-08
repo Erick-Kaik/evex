@@ -21,8 +21,17 @@ interface AbiEventCatalogPort {
     /**
      * Parseia [abiJson] e devolve seus eventos. Não conhece faixa de blocos — isso é metadado de
      * [ContractAbi], combinado pelo use case ([br.com.bbchain.evex.indexer.application.abi.ContractEventCatalogService]).
-     * Lança [InvalidAbiContentException] se [abiJson] não for um ABI JSON válido (na prática não
-     * ocorre pra conteúdo vindo do storage — já foi validado no cadastro).
+     * Lança [InvalidAbiContentException] em 2 casos, ambos na prática inalcançáveis pra conteúdo vindo
+     * do storage (já validado no cadastro): (1) [abiJson] não é um ABI JSON válido; (2) algum item
+     * `"type": "event"` não tem `name` (ou `name` em branco) — a implementação (`AbiParser.readEvent`)
+     * exige `name` pra todo evento, evento é o único tipo de item que sempre declara um.
+     *
+     * **Não rejeita tipo Solidity não suportado** (ex. `tuple`/`struct` num input) — ao contrário de
+     * [br.com.bbchain.evex.indexer.adapters.outbound.abi.AbiParser.parse] (usado pela decodificação de
+     * verdade, que precisa resolver o tipo pro Web3j via `TypeReference.makeTypeReference` e falha
+     * cedo), este catálogo só lê `name`/`type` como texto cru pra exibição — um `tuple` aparece na
+     * lista com `type = "tuple"`, sem erro. Consistente com o catálogo ser "espelho pra UI", não
+     * caminho de decodificação.
      */
     fun eventsOf(abiJson: String): List<ParsedAbiEvent>
 }

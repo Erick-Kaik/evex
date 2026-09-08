@@ -6,7 +6,7 @@ import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoCon
 import org.springframework.scheduling.annotation.EnableAsync
 import org.springframework.scheduling.annotation.EnableScheduling
 
-// @EnableScheduling adicionado na E4 — BlockchainPoller.poll() usa @Scheduled(fixedDelayString = ...).
+// @EnableScheduling adicionado na E4 — ScheduledPollTrigger.poll() usa @Scheduled(fixedDelayString = ...).
 // @EnableAsync adicionado na E5 — RedecodeRunner.run() usa @Async (primeira etapa a usar; convive com
 // @EnableScheduling sem conflito).
 //

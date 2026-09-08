@@ -6,38 +6,29 @@ import br.com.bbchain.evex.indexer.domain.blockchain.IngestionCursorPort
 import br.com.bbchain.evex.indexer.domain.blockchain.PollWindow
 import br.com.bbchain.evex.indexer.domain.blockchain.RpcRangeException
 import org.slf4j.LoggerFactory
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
-import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
 /**
- * Poller agendado contra a rede — `eth_getLogs` sem filtro de endereço (DEC-001), cursor global
- * (DEC-002), auto-shrink em erro de range (`ingestion-pipeline-reference.md` §2).
- *
- * `@ConditionalOnProperty` na **classe** (não dá pra condicionar um método individual do jeito que o
- * plano descrevia — condicionais do Spring Boot só se aplicam a definições de bean inteiras) — o bean
- * inteiro só é criado se `indexer.blockchain.polling-enabled` for `true` (default), evitando o
- * `@Scheduled` bater em RPC inexistente durante `@SpringBootTest` (setado via
- * `@DynamicPropertySource` em `AbstractIntegrationTest`, nunca em `src/test/resources/application.yml`
- * — ver DEC-024, esse arquivo shadowa `src/main/resources/application.yml` no classpath de teste).
+ * O "tick" de ingestão em si — `currentBlockNumber()`/`cursor.current()`/[PollWindow.next]/`getLogs`
+ * com auto-shrink recursivo/[IngestionBatchProcessor.ingestRange] — extraído do antigo
+ * `BlockchainPoller` (E4) na E26/DEC-091, quando o Evex ganhou um 2º jeito de disparar a mesma lógica
+ * (`eth_subscribe("newHeads")`, [WebSocketPollTrigger]). Este serviço **não sabe quem chama** — nem
+ * `@Scheduled`, nem `@ConditionalOnProperty` aqui; isso é responsabilidade exclusiva dos gatilhos
+ * ([ScheduledPollTrigger]/[WebSocketPollTrigger]), que decidem *quando* chamar [tick]. Mesmo
+ * try/catch amplo de antes: uma falha de RPC/transporte nunca sobe pra quem chamou [tick] — cada
+ * gatilho continua funcionando (o próximo tick do `@Scheduled`, a próxima notificação do WebSocket)
+ * mesmo depois de um erro.
  */
 @Component
-@ConditionalOnProperty(
-    prefix = "indexer.blockchain",
-    name = ["polling-enabled"],
-    havingValue = "true",
-    matchIfMissing = true,
-)
-class BlockchainPoller(
+class PollTickService(
     private val blockchain: BlockchainPort,
     private val cursor: IngestionCursorPort,
     private val batchProcessor: IngestionBatchProcessor,
     private val properties: BlockchainProperties,
 ) {
-    private val logger = LoggerFactory.getLogger(BlockchainPoller::class.java)
+    private val logger = LoggerFactory.getLogger(PollTickService::class.java)
 
-    @Scheduled(fixedDelayString = "\${indexer.blockchain.poll-interval-ms}")
-    fun poll() {
+    fun tick() {
         try {
             val latest = blockchain.currentBlockNumber()
             val lastProcessed = cursor.current()
@@ -46,8 +37,9 @@ class BlockchainPoller(
             processRange(window.first, window.last)
         } catch (ex: Exception) {
             // Qualquer exceção (inclusive RpcRangeException que não coube encolher mais, ou erro de
-            // transporte) é capturada e logada aqui — nunca derruba o @Scheduled.
-            logger.error("Falha no poll do indexador: {}", ex.message, ex)
+            // transporte) é capturada e logada aqui — nunca derruba quem chamou tick() (nem o
+            // @Scheduled do ScheduledPollTrigger, nem a assinatura RxJava do WebSocketPollTrigger).
+            logger.error("Falha no tick de ingestão: {}", ex.message, ex)
         }
     }
 

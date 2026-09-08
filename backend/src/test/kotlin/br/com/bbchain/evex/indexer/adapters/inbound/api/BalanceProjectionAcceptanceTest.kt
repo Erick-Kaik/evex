@@ -199,7 +199,7 @@ class BalanceProjectionAcceptanceTest(
                 .andExpect(jsonPath("$.content[0].balance").value("1000"))
         }
 
-        // Poller desligado nos testes (indexer.blockchain.polling-enabled=false, AbstractIntegrationTest)
+        // Poller desligado nos testes (indexer.blockchain.transport=NONE, AbstractIntegrationTest)
         // — cursor nunca avança sozinho. Simula "poller já processou até o bloco 1" pra BalanceSnapshotJob
         // não pular o snapshot (guarda de "nenhum bloco ingerido ainda", cursor.current() < 0).
         cursor.advance(1)
