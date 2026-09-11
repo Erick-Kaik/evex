@@ -36,6 +36,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E24 | Explorador de ABI — tela nova, somente leitura, listando **todos** os itens do ABI cadastrado de um contrato (funções de qualquer `stateMutability`, eventos, erros customizados/`"type": "error"`, constructor/fallback/receive) numa tabela só, com coluna de tipo e faixa de blocos por versão. Botão de acesso na linha de cada versão de ABI (`AbiSection`). A pedido do usuário, olhando a tela de Contratos | backend+frontend | `blockchain-integration` + `kotlin-backend-dev` + `frontend-dev` + `reviewer` | ✅ Concluído — **revisão FINAL combinada `reviewer` 2026-09-07 ✅ APROVADA, sem achado bloqueante** (backend 525/525, frontend 93/93, `tsc -b`/lint/build limpos, todos reconfirmados do zero pela revisão). Ver "Revisão" na seção E24 (DEC-089) |
 | E25 | Validação do cenário de Modelo de Entidade (E19, 3ª peça — nunca validada ao vivo até aqui) — contrato novo `TestGameLibrary` (jogos que só rodam se o `TestComputer` tiver poder suficiente, chamada cross-contract real + erro customizado `InsufficientPower`) prova a acumulação de campos de eventos diferentes (`ComputerCreated`/`PartsChanged`/`GameRunSucceeded`, todos correlacionados por `computerId`) num Modelo de Entidade, exposto via `{{model.*}}` num webhook. Sinergia com a E24: o `InsufficientPower` também vira dado real pro Explorador de ABI | local-env | sessão principal (sem agente dedicado — `local-env` é ad-hoc) | ✅ Concluído — **revisão FINAL combinada `reviewer` 2026-09-07 ✅ APROVADA, sem achado bloqueante** (fix da DEC-088 confirmado correto e isolado; 1 achado não-bloqueante registrado, DEC-089 — ordem `projectBatch`/`matchAndEnqueue` sem teste de regressão). Ver "Revisão" na seção E25 (DEC-089) |
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
+| E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia | infra (`deploy/`) | sessão principal (ad-hoc, mesma classe de E20/E23/E25) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina |
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
 
@@ -2391,3 +2392,58 @@ Nenhum achado exige DEC nova (nenhuma contradição de decisão registrada) nem 
 **Achado médio corrigido (2026-09-08, sessão principal)**: `AbiEventCatalogPort.eventsOf` (item 2) citava `AbiParser.readEntry` como o método que valida `name` obrigatório em evento — método errado (`readEntry` é o mirror da E24 usado por `entriesOf`, devolve `null` pra item sem `name`, não lança). O método certo é `AbiParser.readEvent` (chamado por `readAbiEvents`, usado por `eventsOf`). KDoc corrigido, `./gradlew compileKotlin` limpo. Os outros 2 achados (baixos, observação/reforço) não exigem código — ficam registrados como estão.
 
 **Checklist de refinamento pré-apresentação: fechado.**
+
+---
+
+## E27 — Infra de deploy no Cloud Run (backend + frontend)
+
+**Depende de**: E0-E26 (produto completo — esta etapa não muda nenhum comportamento, só empacota
+pra rodar fora do ambiente local).
+
+**Objetivo**: colocar uma instância real do Evex de pé no Cloud Run, conectada a uma rede Besu
+privada de verdade (não mais Hardhat local) — a pedido do gestor do usuário, depois de ver a PoC.
+Contexto: a rede Besu vem da plataforma EBS (endereço RPC público, sem allowlist de IP, de um
+projeto já existente da EBS — não é uma rede nova só pro Evex), Blockscout idem (já existe na EBS,
+não sobe nada dele aqui), e o banco (Postgres) já está provisionado em algum lugar da mesma org,
+alcançável por um VPC Connector já existente. Só o Evex (front+back) é infra nova.
+
+**Escopo**:
+- `backend/Dockerfile` (+ `.dockerignore`) — build multi-estágio, runtime só com o `.jar`.
+- `frontend/Dockerfile` (+ `frontend/deploy/nginx.conf.template`, `frontend/deploy/cloudbuild.yaml`)
+  — build multi-estágio, runtime nginx.
+- `deploy/` — scripts quebrados em micro-funcionalidades (`lib.sh` compartilhado +
+  `scripts/01` a `06`, `deploy-all.sh` como atalho), `.env.example`, `README.md` (guia completo:
+  pré-requisitos, comando `gcloud` pra descobrir cada variável, ordem de execução e por quê,
+  troubleshooting, pontos em aberto).
+- `.dockerignore`/`.gcloudignore` na raiz (o build do frontend precisa de contexto = raiz do repo,
+  por causa do `redocly bundle ../backend/...` no `prebuild` — sem isso o Cloud Build subiria
+  `local-env/` inteiro, 4.6GB).
+- **Sem código de produto tocado** — decisão explícita do usuário nesta etapa (ver DEC-093).
+
+**Docs de referência**: [`../deploy/README.md`](../deploy/README.md) (guia operacional completo —
+não duplicado aqui de propósito), `docs/decisions.md` DEC-093.
+
+**Critério de aceite**: `deploy/deploy-all.sh` sobe backend e frontend no Cloud Run, cada um com seu
+próprio repositório no Artifact Registry e seu próprio serviço, backend conectando na rede Besu da
+EBS e no banco via VPC Connector, front consumindo o backend real.
+
+**Notas de execução** (2026-09-10):
+- 1ª versão continha 2 escolhas que o usuário pediu pra reverter/simplificar antes de fechar: (i)
+  uma dependência nova (`com.google.cloud.sql:postgres-socket-factory`) + `server.port` em
+  `application.yml`, pra conectar no Cloud SQL via sidecar Cloud SQL Auth Proxy — revertido, código
+  do backend voltou ao estado original (confirmado via `git diff` vazio); (ii) um único
+  `deploy.sh` monolítico que também criava a instância Cloud SQL e habilitava APIs — quebrado nos 6
+  scripts atuais, sem criação de Cloud SQL nem `gcloud services enable` (banco e APIs já existem na
+  org, fora do escopo deste deploy).
+- Decisão final de conectividade com o banco: `SPRING_DATASOURCE_URL`/`_USERNAME`/`_PASSWORD` como
+  env vars comuns (as mesmas que o backend já lê local) + `--vpc-connector` de um conector já
+  existente na org — zero mudança de código, zero recurso GCP novo além dos repositórios e serviços
+  do próprio Evex.
+- **Não executado nem validado ao vivo** — o usuário vai rodar em outra máquina (`gcloud auth login`
+  próprio). Testado nesta sessão apenas: sintaxe bash de todos os scripts (`bash -n`), render do
+  antigo template YAML (removido depois) com `envsubst` + validação de YAML resultante, e
+  comportamento do `envsubst` com lista explícita de variáveis (confirma que só substitui o que está
+  na lista, não mexe em outros `$algo` do arquivo).
+- Nenhum agente especializado usado — infra/deploy não é escopo de nenhum dos 5 agentes do projeto
+  (mesma classe de decisão já registrada pra E20/E23/E25/E26, itens ad-hoc feitos pela sessão
+  principal).

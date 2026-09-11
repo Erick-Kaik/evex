@@ -1,0 +1,22 @@
+# Template do vhost servido pelo frontend no Cloud Run — a imagem oficial do nginx substitui
+# `${PORT}` por env var em runtime (ver frontend/Dockerfile), então o mesmo template funciona local
+# (`docker run -e PORT=8080 ...`) e no Cloud Run (porta injetada, não necessariamente 8080).
+server {
+    listen ${PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA (React Router v7, client-side routing) — qualquer rota sem arquivo correspondente cai no
+    # index.html, o router assume a partir daí.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Assets com hash no nome (Vite) podem ser cacheados agressivamente.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}

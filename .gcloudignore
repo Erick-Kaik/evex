@@ -1,0 +1,24 @@
+# Usado só pelo `gcloud builds submit` do FRONTEND (contexto = raiz do repo, ver
+# frontend/deploy/cloudbuild.yaml) — o backend builda com contexto próprio (`backend/`, pequeno,
+# usa o backend/.gitignore como base). Sem isso o gcloud empacota e envia local-env/ inteiro
+# (Blockscout + scaffold-eth-2 vendorizados, ~4.6GB) pra cada build do front — lento e caro à toa,
+# o front não usa nada de lá.
+.git/
+.gcloudignore
+.claude/
+local-env/
+e2e/
+base/
+docs/
+node_modules/
+**/node_modules/
+
+backend/build/
+backend/.gradle/
+backend/out/
+backend/data/
+
+frontend/dist/
+frontend/openapi/
+frontend/src/api/*
+!frontend/src/api/config.ts
