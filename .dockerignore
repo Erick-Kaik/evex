@@ -1,0 +1,25 @@
+# Usado só pelo build do frontend (contexto = raiz do repo, ver frontend/Dockerfile) — o backend
+# builda com contexto próprio (backend/.dockerignore). Sem isso o `docker build`/`gcloud builds
+# submit` empacota e envia local-env/ inteiro (Blockscout + scaffold-eth-2 vendorizados, gigabytes),
+# o que deixa o build lento e caro sem nenhum benefício — o front não usa nada de lá.
+.git/
+.claude/
+local-env/
+e2e/
+base/
+docs/
+node_modules/
+**/node_modules/
+
+backend/build/
+backend/.gradle/
+backend/out/
+backend/data/
+backend/*.log
+
+frontend/dist/
+frontend/openapi/
+frontend/src/api/*
+!frontend/src/api/config.ts
+frontend/.env.local
+frontend/.env.mock

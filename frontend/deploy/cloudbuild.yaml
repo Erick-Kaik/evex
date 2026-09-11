@@ -1,0 +1,23 @@
+# Build do frontend via Cloud Build (`gcloud builds submit`, disparado por `deploy/deploy.sh`).
+# Existe como arquivo próprio (em vez do atalho `gcloud builds submit --tag=...`) só porque o
+# frontend precisa de um `--build-arg` (VITE_API_BASE_URL é assado no bundle JS em build-time, ver
+# frontend/Dockerfile) — o atalho `--tag` não aceita build-arg.
+#
+# Contexto do build = raiz do repo (`gcloud builds submit .` a partir da raiz, ver deploy/deploy.sh)
+# — o Dockerfile faz `redocly bundle ../backend/...` durante o build, então precisa enxergar
+# `backend/` também.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - frontend/Dockerfile
+      - --build-arg
+      - VITE_API_BASE_URL=${_VITE_API_BASE_URL}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+options:
+  logging: CLOUD_LOGGING_ONLY

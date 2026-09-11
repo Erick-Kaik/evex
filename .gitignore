@@ -9,3 +9,9 @@ Thumbs.db
 
 # Saída do Playwright MCP (browser dirigido pelo Claude Code — ver e2e/mcp/README.md)
 e2e/.mcp-output/
+
+# Variáveis de deploy (Cloud Run) — tem senha de banco, nunca commitar. Ver deploy/README.md.
+deploy/.env
+# Cache local entre etapas de deploy/scripts/*.sh (URLs descobertas por um script, lidas por outro)
+# — não é segredo, só não faz sentido versionar (muda a cada rodada).
+deploy/.state/
