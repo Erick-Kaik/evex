@@ -2447,3 +2447,27 @@ EBS e no banco via VPC Connector, front consumindo o backend real.
 - Nenhum agente especializado usado — infra/deploy não é escopo de nenhum dos 5 agentes do projeto
   (mesma classe de decisão já registrada pra E20/E23/E25/E26, itens ad-hoc feitos pela sessão
   principal).
+
+**Complemento (`blockchain-integration`, 2026-09-11)** — auth opcional (Bearer/PAT) na conexão RPC:
+- A rede Besu de teste da EBS pode exigir auth no RPC — token configurável por variável de ambiente,
+  enviado como `Authorization: Bearer <token>` quando presente; sem token, comportamento idêntico ao de
+  antes (nenhuma rede sem auth — Hardhat local, `local-env`, testes — é afetada). Ver DEC-094.
+- 2 properties novas em `BlockchainProperties` (`authToken: String = ""`, `authEnabled: Boolean = true`),
+  mapeadas em `application.yml` (`EVEX_BLOCKCHAIN_AUTH_TOKEN`/`EVEX_BLOCKCHAIN_AUTH_ENABLED`).
+- Função pura compartilhada `BlockchainAuth.kt::authHeaders()` — usada tanto por
+  `Web3jBlockchainClient` (`HttpService.addHeaders`) quanto por `WebSocketPollTrigger`
+  (`WebSocketClient(URI, Map)` explícito, pro handshake aceitar headers — o construtor
+  `WebSocketService(String, boolean)` usado até aqui não aceita).
+- Assinaturas dos 2 construtores Web3j confirmadas via `javap` contra o jar real (`core-6.0.0.jar`) antes
+  de codar, igual ao plano: `HttpService.addHeaders(Map<String,String>)`,
+  `WebSocketService(WebSocketClient, boolean)`, `WebSocketClient(URI, Map<String,String>)`.
+- Teste novo `BlockchainAuthTest` (4 combinações de token/flag). `Web3jBlockchainClientTest`/
+  `WebSocketPollTriggerTest` não precisaram de nenhuma mudança (já substituem `web3j`/`webSocketService`
+  por mocks depois da construção) — confirmado rodando os 2 sem alteração.
+- `deploy/.env.example`, `deploy/scripts/03-deploy-backend.sh` (`--set-env-vars`) e `deploy/README.md`
+  (tabela de variáveis) preparados com `EVEX_BLOCKCHAIN_AUTH_TOKEN` opcional — mesmo padrão já usado pra
+  `EVEX_BLOCKSCOUT_URL` nesse mesmo script (`${EVEX_BLOCKCHAIN_AUTH_TOKEN:-}`, fora de `require_vars`).
+  README não fazia parte do plano original mas foi atualizado por consistência com a tabela existente.
+- `./gradlew build` limpo (compilação + suíte inteira) confirmado ao final.
+- **Não validado ao vivo contra a rede real da EBS** (ainda não provisionada/testada nesta sessão) — só
+  a lógica de decisão do header, testada isoladamente.

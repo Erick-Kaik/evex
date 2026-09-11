@@ -4,10 +4,12 @@ import br.com.bbchain.evex.indexer.config.BlockchainProperties
 import io.reactivex.disposables.Disposable
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
+import java.net.URI
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
 import org.web3j.protocol.Web3j
+import org.web3j.protocol.websocket.WebSocketClient
 import org.web3j.protocol.websocket.WebSocketService
 
 /**
@@ -42,7 +44,11 @@ class WebSocketPollTrigger(
 
     // `internal var` (não `private val`), mesmo motivo de `Web3jBlockchainClient.web3j`: permite ao
     // teste substituir por mocks (MockK) sem WebSocket real — o `test` source set enxerga `internal`.
-    internal var webSocketService: WebSocketService = WebSocketService(properties.wsUrl, false)
+    // `WebSocketClient(URI, Map)` explícito (em vez do construtor `WebSocketService(String, boolean)`)
+    // porque só essa forma aceita os headers de auth (E27/DEC-094), usados na negociação do handshake —
+    // sem token configurado, `authHeaders()` devolve mapa vazio e o comportamento é idêntico ao de antes.
+    internal var webSocketService: WebSocketService =
+        WebSocketService(WebSocketClient(URI(properties.wsUrl), properties.authHeaders()), false)
     internal var web3j: Web3j = Web3j.build(webSocketService)
 
     // Seam de teste pro backoff de reconexão — por padrão dorme numa thread daemon separada (não

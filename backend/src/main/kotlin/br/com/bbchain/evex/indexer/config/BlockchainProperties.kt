@@ -41,4 +41,21 @@ class BlockchainProperties {
      * `newHeadsNotifications()` e disparar o mesmo `PollTickService.tick()` do polling.
      */
     var wsUrl: String = "ws://localhost:8546"
+
+    /**
+     * PAT/Bearer opcional pra autenticar no RPC (ex.: rede Besu de teste da EBS, E27) — enviado como
+     * header `Authorization: Bearer <token>` tanto na conexão HTTP ([Web3jBlockchainClient]) quanto na
+     * WebSocket ([WebSocketPollTrigger], via handshake). Vazio (default) preserva 100% o comportamento
+     * sem auth de hoje — nenhuma rede que já funciona sem auth (Hardhat local, `local-env`, testes) é
+     * afetada. Ver [BlockchainAuth]/DEC-094.
+     */
+    var authToken: String = ""
+
+    /**
+     * Liga/desliga o envio do header sem precisar remover [authToken] do ambiente — útil quando o
+     * secret já está setado numa plataforma de deploy e só se quer testar sem auth por um momento.
+     * Default `true` de propósito: o caso comum é só setar `authToken` já bastar pra ativar o auth, sem
+     * precisar mexer nesta flag também (DEC-094).
+     */
+    var authEnabled: Boolean = true
 }

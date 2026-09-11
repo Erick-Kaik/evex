@@ -66,6 +66,7 @@ cp deploy/.env.example deploy/.env
 | `EVEX_RPC_URL` | Vem da EBS — teste antes de colar: `curl -s -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' <URL>` precisa devolver um bloco. |
 | `EVEX_NETWORK` | `TESTNET` ou `MAINNET`, conforme a rede real. |
 | `EVEX_BLOCKSCOUT_URL` | Vem da EBS também, se existir. |
+| `EVEX_BLOCKCHAIN_AUTH_TOKEN` | Opcional — só preencher se a rede Besu de teste exigir auth no RPC (PAT/Bearer). Vazio desliga o header, igual hoje. |
 | `SPRING_DATASOURCE_URL` | Formato `jdbc:postgresql://HOST:5432/DBNAME` — `HOST` é o endereço do banco que você já tem (privado, alcançável pelo VPC Connector). |
 | `SPRING_DATASOURCE_USERNAME` / `_PASSWORD` | Credenciais do banco que você já tem. |
 | `VPC_CONNECTOR` | `gcloud compute networks vpc-access connectors list --region=$GCP_REGION --format="table(name,network,state)"` — use o `name` de um com `state=READY` que alcance a rede do banco. |
