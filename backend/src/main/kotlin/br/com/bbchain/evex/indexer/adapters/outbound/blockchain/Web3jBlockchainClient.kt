@@ -49,7 +49,9 @@ class Web3jBlockchainClient(
     // `internal var` (não `private val`) pelo mesmo motivo de `isRangeError`/`toBlockchainLog` abaixo:
     // permite ao [Web3jBlockchainClientTest] substituir por um `Web3j` mockado (MockK) sem HTTP real,
     // já que o `test` source set é associado ao `main` pelo plugin Kotlin e enxerga `internal`.
-    internal var web3j: Web3j = Web3j.build(HttpService(properties.rpcUrl))
+    // `addHeaders` (E27/DEC-094): sem token configurado, `authHeaders()` devolve mapa vazio e o
+    // comportamento é idêntico ao de antes desta property existir.
+    internal var web3j: Web3j = Web3j.build(HttpService(properties.rpcUrl).apply { addHeaders(properties.authHeaders()) })
 
     // Só pra decodificar a convenção de argumento de array (DEC-090) — mesmo padrão de
     // `WebhookEnrichmentResolver.objectMapper` (instância própria, não injetada; não há necessidade de

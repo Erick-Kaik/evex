@@ -88,6 +88,12 @@ indexer:
     # Só usado quando transport=WEBSOCKET — URL do WebSocketService do Web3j (instância separada da
     # usada por Web3jBlockchainClient, que continua 100% HTTP via rpc-url acima).
     ws-url: ${EVEX_BLOCKCHAIN_WS_URL:ws://localhost:8546}
+    # PAT/Bearer opcional (Authorization: Bearer <token>) — pra redes que exigem auth no RPC (ex.: rede
+    # Besu de teste da EBS, E27). Vazio (default) preserva 100% o comportamento sem auth de hoje.
+    auth-token: ${EVEX_BLOCKCHAIN_AUTH_TOKEN:}
+    # Desliga o envio do header sem remover o token do ambiente. Default true: só setar auth-token já
+    # basta pra ativar o auth (DEC-094).
+    auth-enabled: ${EVEX_BLOCKCHAIN_AUTH_ENABLED:true}
   redecode:
     # Tamanho do lote da reindexação assíncrona (ingestion-pipeline-reference.md §4) — orquestrador
     # RedecodeOrchestrator/RedecodeRunner/RedecodeBatchProcessor (E5).
