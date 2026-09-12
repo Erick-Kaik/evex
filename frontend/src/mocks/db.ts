@@ -194,7 +194,7 @@ function seed(): void {
   ]
 
   db.webhooks = [
-    { id: uid(), contractAddress: ADDR.erc20, network: 'TESTNET', eventName: 'Transfer', url: 'https://example-webhook.site/brlx-transfers', filters: [{ paramName: 'value', operator: 'GT', value: '100000' }], payloadTemplate: '{"evento":"{{eventName}}","de":"{{decodedParameters.from}}","para":"{{decodedParameters.to}}","valor":"{{decodedParameters.value}}"}', active: true, createdAt: NOW },
+    { id: uid(), contractAddress: ADDR.erc20, network: 'TESTNET', eventName: 'Transfer', url: 'https://example-webhook.site/brlx-transfers', filters: [{ paramName: 'value', operator: 'GT', value: '100000' }], payloadTemplate: '{"evento":{{eventName}},"de":{{decodedParameters.from}},"para":{{decodedParameters.to}},"valor":{{decodedParameters.value}}}', active: true, createdAt: NOW },
     { id: uid(), contractAddress: ADDR.widgets, network: 'TESTNET', eventName: 'WidgetStatusChanged', url: 'https://example-webhook.site/widget-status', filters: [], active: false, createdAt: NOW },
   ]
 

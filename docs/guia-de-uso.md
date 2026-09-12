@@ -386,9 +386,10 @@ log de tentativas.
 **Template customizado** — interpolação simples de `{{campo}}` e `{{decodedParameters.<nome>}}`.
 Campos fixos: `{{eventName}}`, `{{contractAddress}}`, `{{network}}`, `{{blockNumber}}`, `{{txHash}}`,
 `{{blockHash}}`, `{{logIndex}}`, `{{blockTimestamp}}`. No modo **visual** há um construtor com botões
-que inserem os tokens. Exemplo:
+que inserem os tokens. Cada placeholder já resolve pro literal JSON completo (string vem com aspas
+embutidas) — **não** colocar aspas manuais ao redor dele. Exemplo:
 ```json
-{"evento": "{{eventName}}", "de": "{{decodedParameters.from}}", "valor": "{{decodedParameters.value}}"}
+{"evento": {{eventName}}, "de": {{decodedParameters.from}}, "valor": {{decodedParameters.value}}}
 ```
 Template malformado é rejeitado **no cadastro** (não silenciosamente no primeiro disparo).
 

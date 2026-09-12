@@ -19,20 +19,21 @@ import {
   useControlPanelActions,
   useControlPanelHealth,
 } from './useControlPanel'
-import { controlPanelUrl } from './controlPanel'
+import { controlPanelUrl, isDemoTabEnabled } from './controlPanel'
 import type { ControlPanelAction } from './controlPanel'
 
 /**
  * Aba "Demonstração" (E17/DEC-075) — dispara os scripts do `local-env/` via `local-env/control-panel`.
- * **Não faz parte do produto:** só é montada quando `VITE_LOCALENV_CONTROL_URL` está setada e o
- * serviço respondeu ao health check (ver `router.tsx` / `RootLayout.tsx`). Este componente ainda
- * revalida a disponibilidade e redireciona se o serviço tiver caído no meio do caminho.
+ * **Não faz parte do produto:** só é montada quando `VITE_ENABLE_DEMO_TAB='1'` (opt-in explícito —
+ * só faz sentido contra um RPC local, DEC-101), `VITE_LOCALENV_CONTROL_URL` está setada e o serviço
+ * respondeu ao health check (ver `router.tsx` / `RootLayout.tsx`). Este componente ainda revalida a
+ * disponibilidade e redireciona se o serviço tiver caído no meio do caminho.
  */
 export function DemoPage() {
   const health = useControlPanelHealth()
   const actions = useControlPanelActions()
 
-  if (!controlPanelUrl()) {
+  if (!isDemoTabEnabled() || !controlPanelUrl()) {
     return <Navigate to="/contracts" replace />
   }
   if (health.isPending) {

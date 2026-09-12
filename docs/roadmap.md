@@ -2798,3 +2798,38 @@ de 1 coluna, zero impacto nos outros módulos — uma consulta de linhagem resol
 endereços e usa `WHERE contract_address IN (...)` nos módulos existentes, exatamente como hoje). Ver
 DEC-096 para o racional completo. Próximo passo, se confirmado: nova etapa de implementação
 (`kotlin-backend-dev` + `frontend-dev` + `reviewer`), fora do escopo desta análise.
+
+---
+
+## E30 — Sessão de validação live (Playwright MCP, todos os módulos) — ✅ Concluída (DEC-101)
+
+**Status**: ✅ Concluída em 2026-09-12 (sessão principal).
+
+**Objetivo**: reinicializar o sistema completo do zero (Hardhat + Postgres + backend + control-panel
++ frontend + Blockscout) e rodar uma sessão exploratória com Playwright MCP por todos os módulos, sem
+mudança de escopo/feature — só validação e achados.
+
+**Resultado**: todos os módulos validados ponta a ponta sem regressão — Contratos, Carteiras, Eventos,
+Saldos + Backfill, Webhooks (com entrega real via webhook.site), Enriquecimentos (E19,
+`{{enriched.*}}` resolvido no bloco histórico do evento), Modelos de Entidade (E19,
+`{{model.*}}` acumulando campos de `ComputerCreated`+`PartsChanged` do `TestComputer` correlacionados
+por `id`), Demonstração/control-panel, Discovery/Blockscout, e os cenários live de E28 (detecção UUPS)
+e E29 (linhagem de contratos). De brinde, o cenário `game-library-scenario` (E25) também rodou de novo
+nesta stack fresca, incluindo o revert `InsufficientPower` decodificado corretamente.
+
+**Achado real, corrigido na hora (DEC-101)**: o exemplo/placeholder de template de payload em
+`WebhookForm.tsx`, `PayloadTemplateBuilder.tsx` e `docs/guia-de-uso.md` ensinava a sintaxe errada —
+aspas manuais ao redor de um placeholder (`"valor": "{{decodedParameters.value}}"`), quando o
+resolver já emite o literal JSON completo por conta própria. Corrigido nos 3 lugares (mais o seed do
+modo mock, por consistência). Ver DEC-101 para o racional completo e a reprodução.
+
+**Pedido complementar do usuário, atendido na mesma sessão (DEC-101)**: flag explícita
+`VITE_ENABLE_DEMO_TAB` pra ligar/desligar a aba "Demonstração" — opt-in deliberado, somado (não
+substituto) à checagem existente de `VITE_LOCALENV_CONTROL_URL` + health check, porque essa aba só
+faz sentido contra um RPC local.
+
+**Verificação**: `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes no frontend
+(28 arquivos de teste, 118 testes, 0 falha — 2 novos em `DemoPage.test.tsx` pra cobrir a flag nova).
+Nenhuma mudança de backend/contrato de API nesta etapa.
+
+**Encerramento**: ambiente local derrubado (`down.sh`) ao final da sessão, como de costume.

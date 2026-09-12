@@ -432,7 +432,7 @@ export function WebhookForm({
           fullWidth
           value={payloadTemplate}
           onChange={(event) => setPayloadTemplate(event.target.value)}
-          placeholder='{"evento": "{{eventName}}", "valor": "{{decodedParameters.value}}"}'
+          placeholder='{"evento": {{eventName}}, "valor": {{decodedParameters.value}}}'
           helperText={
             enrichmentTemplateTokens.length > 0
               ? `Vazio = usa o envelope JSON padrão (evento completo). Também disponíveis: ${enrichmentTemplateTokens.join(', ')}.`

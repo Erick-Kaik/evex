@@ -65,5 +65,6 @@ componentes e o cliente gerado rodam sem mudança. Guia de uso com prints: [`../
 | Var | Default | Papel |
 |---|---|---|
 | `VITE_API_BASE_URL` | `http://localhost:8080` | URL base do backend Evex (cliente gerado, `src/api/config.ts`). |
-| `VITE_LOCALENV_CONTROL_URL` | — (não setada) | URL do `local-env/control-panel` (E17/DEC-075). Quando setada **e** o serviço responde ao health check, a aba **"Demonstração"** aparece na navegação e a rota `/demo` funciona. Sem isso, a aba não existe (nem no `RootLayout`, nem efetivamente no router — o `<DemoPage>` redireciona). Só faz sentido em ambiente local. |
+| `VITE_ENABLE_DEMO_TAB` | — (não setada) | `'1'` liga a aba **"Demonstração"** (DEC-101) — opt-in explícito, separado da URL abaixo, porque a aba só faz sentido contra um RPC local (dispara scripts de deploy/mint do `local-env/`). Nunca ligar contra uma rede real. |
+| `VITE_LOCALENV_CONTROL_URL` | — (não setada) | URL do `local-env/control-panel` (E17/DEC-075). Quando `VITE_ENABLE_DEMO_TAB='1'` **e** o serviço responde ao health check, a aba **"Demonstração"** aparece na navegação e a rota `/demo` funciona. Faltando qualquer uma das duas condições, a aba não existe (nem no `RootLayout`, nem efetivamente no router — o `<DemoPage>` redireciona). Só faz sentido em ambiente local. |
 | `VITE_MOCK` | — (não setada) | `'1'` liga o modo mock (`.env.mock`, usado por `npm run dev:mock`). Nunca em produção. |

@@ -1689,3 +1689,35 @@ DEC-099 deixou pendente só a exibição no Explorador de ABI (E24, `AbiEntriesP
 ### Consequências
 
 `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes — 28 arquivos de teste, 116 testes, 0 falha (5 novos testes desta etapa, em `UpgradeabilityBanner.test.tsx`). `npm run generate:api` rodado nesta sessão trouxe o schema `Upgradeability`/operação `getContractUpgradeability` pro cliente gerado sem diff em nenhum outro arquivo (`git status` limpo em `src/api/` fora da adição esperada). E28 segue **não fechada** — falta a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.
+
+---
+
+## DEC-101 — Sessão de testes Playwright MCP (todos os módulos): achado de template de webhook corrigido + flag explícita `VITE_ENABLE_DEMO_TAB`
+
+Data: 2026-09-12
+
+Módulo: frontend + docs (`docs/guia-de-uso.md`)
+
+Autor: sessão principal
+
+### Contexto
+
+Sessão pedida pelo usuário: inicializar o sistema completo (Hardhat + Postgres + backend + control-panel + frontend + Blockscout) do zero e rodar uma sessão de testes exploratórios com Playwright MCP por todos os módulos (Contratos, Carteiras, Eventos, Saldos+Backfill, Webhooks, Enriquecimentos, Modelos de Entidade, Demonstração, Discovery/Blockscout, mais os cenários live de E28/E29). Todos os módulos foram validados ponta a ponta sem regressão. Dois pontos surgiram e foram resolvidos nesta mesma sessão:
+
+### 1. Achado: exemplo de template de payload do webhook ensinava a sintaxe errada
+
+`WebhookForm.tsx`, `PayloadTemplateBuilder.tsx` (placeholder do campo) e `docs/guia-de-uso.md` (exemplo do guia) mostravam `{"evento": "{{eventName}}", "valor": "{{decodedParameters.value}}"}` — aspas manuais ao redor do placeholder. Isso é sintaticamente inválido: `WebhookPayloadRenderer`/`WebhookEnrichmentResolver` (backend) já emitem o **literal JSON completo** pra cada placeholder (uma string vem com as aspas embutidas, `"MB-Basic"`, não `MB-Basic`) — colocar aspas manuais ao redor produz JSON duplamente citado (`""MB-Basic""`), inválido. Reproduzido ao vivo nesta sessão: montei um webhook de teste pro Modelo de Entidade "Estado do Computador" e só percebi o padrão certo (`"campo": {{...}}`, sem aspas) ao ler o código-fonte do resolver — o mesmo exemplo da UI/doc, se copiado literalmente, cairia no mesmo erro (barrado só na hora de salvar, por `validateTemplate()` → 400, nunca em produção — mas ensina errado).
+
+**Corrigido**: os 3 lugares (`WebhookForm.tsx:435`, `PayloadTemplateBuilder.tsx:107`, `docs/guia-de-uso.md`) mudaram pra `{"evento": {{eventName}}, "valor": {{decodedParameters.value}}}` (sem aspas ao redor do placeholder) — mais um `payloadTemplate` de exemplo em `frontend/src/mocks/db.ts` (dado de seed do modo mock) com o mesmo padrão, corrigido por consistência ainda que nunca passe pelo resolver real. `docs/guia-de-uso.md` ganhou uma frase explícita sobre a regra ("cada placeholder já resolve pro literal JSON completo — não colocar aspas manuais ao redor dele").
+
+### 2. Pedido do usuário: flag explícita pra ligar/desligar a aba "Demonstração"
+
+A aba já era condicional a `VITE_LOCALENV_CONTROL_URL` setada + health check do `control-panel` — nos scripts de deploy (`deploy/`) essa var nunca é setada, então a aba já não apareceria em Cloud Run. Mesmo assim, o usuário pediu uma flag dedicada: "ativar ou desativar a aba de comandos pq só será usada se for um RPC local". Adicionado `VITE_ENABLE_DEMO_TAB` (`'1'` liga) como **opt-in explícito, checado em conjunto com a URL** (`isDemoTabEnabled() && Boolean(controlPanelUrl())`) em `useControlPanelHealth`/`useControlPanelActions`/`useControlPanelAvailable`/`DemoPage` — não substitui a checagem de URL/health check, soma-se a ela. Racional: tornar inequívoco (e resistente a erro de configuração futuro) que esta aba só faz sentido contra um RPC local de fato — que alguém configure `VITE_LOCALENV_CONTROL_URL` por engano num ambiente com um RPC real não é suficiente pra expor a aba; precisa do segundo interruptor deliberado. `.env.local` (não versionado) ganhou a flag pra manter a aba funcionando neste ambiente de desenvolvimento; `.env.example`/`vite-env.d.ts`/`frontend/CLAUDE.md` documentam a nova var.
+
+### Testes
+
+`DemoPage.test.tsx`: 2 casos novos — `RootLayout` com flag desligada mesmo com URL setada e health check OK → aba ausente; `DemoPage` com flag desligada → redireciona pra `/contracts` mesmo com control-panel saudável. `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes (28 arquivos de teste, 118 testes, 0 falha).
+
+### Consequências
+
+Nenhuma migração de dado ou mudança de contrato de API — mudança só de frontend + doc. Ambiente local derrubado (`down.sh`) ao final da sessão, como de costume em sessões de validação live.

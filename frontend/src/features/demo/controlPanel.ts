@@ -5,9 +5,19 @@
  * **Outra origem, `fetch` direto (não o cliente gerado):** o control-panel roda em `:8899`, é
  * ferramenta de ambiente local e **não tem spec OpenAPI**. A regra "sempre o cliente gerado" do
  * `frontend/CLAUDE.md` vale para o backend do Evex (que tem `.yaml`); aqui não há o que gerar.
- * Também não faz parte do produto — a aba "Demonstração" só existe quando `VITE_LOCALENV_CONTROL_URL`
- * está setado E o serviço responde ao health check.
+ * Também não faz parte do produto — a aba "Demonstração" só existe quando `VITE_ENABLE_DEMO_TAB='1'`
+ * **E** `VITE_LOCALENV_CONTROL_URL` está setada **E** o serviço responde ao health check.
+ *
+ * O flag `VITE_ENABLE_DEMO_TAB` é deliberadamente separado da URL (em vez de só checar a URL): a
+ * aba só faz sentido contra um RPC local (dispara scripts que fazem deploy/mint/etc. no `local-env/`,
+ * não em uma rede real) — um opt-in explícito evita expor a aba por engano caso alguém configure a
+ * URL do control-panel num ambiente que não seja este `local-env` (ex.: um deploy usando um RPC real).
  */
+
+/** `'1'` liga a aba "Demonstração" — precisa estar ligado além da URL estar setada e saudável. */
+export function isDemoTabEnabled(): boolean {
+  return import.meta.env.VITE_ENABLE_DEMO_TAB === '1'
+}
 
 /** URL base do control-panel, lida em runtime (permite `vi.stubEnv` nos testes). */
 export function controlPanelUrl(): string | undefined {

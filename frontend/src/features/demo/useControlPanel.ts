@@ -4,6 +4,7 @@ import {
   controlPanelUrl,
   fetchControlPanelActions,
   fetchControlPanelHealth,
+  isDemoTabEnabled,
   runControlPanelAction,
 } from './controlPanel'
 import type { ControlPanelAction } from './controlPanel'
@@ -11,13 +12,14 @@ import type { ControlPanelAction } from './controlPanel'
 /**
  * Health check do `local-env/control-panel` (E17/DEC-075). React Query, `retry: false`,
  * `staleTime` alto: é infraestrutura local que não muda de disponibilidade a todo momento.
- * `enabled` só quando `VITE_LOCALENV_CONTROL_URL` está setada.
+ * `enabled` só quando `VITE_ENABLE_DEMO_TAB='1'` **e** `VITE_LOCALENV_CONTROL_URL` está setada —
+ * o flag evita até a tentativa de rede quando a aba está desligada de propósito.
  */
 export function useControlPanelHealth() {
   return useQuery({
     queryKey: ['control-panel-health'],
     queryFn: fetchControlPanelHealth,
-    enabled: Boolean(controlPanelUrl()),
+    enabled: isDemoTabEnabled() && Boolean(controlPanelUrl()),
     retry: false,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -25,13 +27,13 @@ export function useControlPanelHealth() {
 }
 
 /**
- * `true` quando a aba "Demonstração" deve aparecer: env var setada **e** o serviço respondeu
- * `{ ok: true }` ao health check. Consumido pelo `RootLayout` (mostra a aba) e pelo guard da rota
- * `/demo` (revela a tela) — o React Query deduplica a chamada entre os dois.
+ * `true` quando a aba "Demonstração" deve aparecer: flag ligado, env var da URL setada **e** o
+ * serviço respondeu `{ ok: true }` ao health check. Consumido pelo `RootLayout` (mostra a aba) e
+ * pelo guard da rota `/demo` (revela a tela) — o React Query deduplica a chamada entre os dois.
  */
 export function useControlPanelAvailable(): boolean {
   const health = useControlPanelHealth()
-  return Boolean(controlPanelUrl()) && health.data?.ok === true
+  return isDemoTabEnabled() && Boolean(controlPanelUrl()) && health.data?.ok === true
 }
 
 /** Lista as ações disponíveis (`GET {url}/actions`). */
@@ -39,7 +41,7 @@ export function useControlPanelActions() {
   return useQuery({
     queryKey: ['control-panel-actions'],
     queryFn: fetchControlPanelActions,
-    enabled: Boolean(controlPanelUrl()),
+    enabled: isDemoTabEnabled() && Boolean(controlPanelUrl()),
     retry: false,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

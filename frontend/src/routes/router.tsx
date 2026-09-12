@@ -36,10 +36,11 @@ import { DemoPage } from '../features/demo/DemoPage'
  * um botão em cada linha da tabela de versões (`AbiSection`), não por navegação direta na sidebar.
  *
  * A rota `/demo` (aba "Demonstração", E17/DEC-075) fica sempre registrada, mas o `<DemoPage>`
- * redireciona para `/contracts` quando `VITE_LOCALENV_CONTROL_URL` não está setada ou o
- * `local-env/control-panel` não responde ao health check — na prática a tela só existe em ambiente
- * local. A aba correspondente no `RootLayout` é revelada pelo mesmo health check (React Query
- * deduplica a chamada).
+ * redireciona para `/contracts` quando `VITE_ENABLE_DEMO_TAB` não está `'1'` (DEC-101 — opt-in
+ * explícito, a aba só faz sentido contra um RPC local), `VITE_LOCALENV_CONTROL_URL` não está setada,
+ * ou o `local-env/control-panel` não responde ao health check — na prática a tela só existe em
+ * ambiente local. A aba correspondente no `RootLayout` é revelada pelas mesmas condições (React
+ * Query deduplica a chamada de health check).
  */
 export const router = createBrowserRouter([
   {

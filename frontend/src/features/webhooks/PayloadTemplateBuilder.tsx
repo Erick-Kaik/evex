@@ -104,7 +104,7 @@ function TemplateDropField({ value, onChange }: { value: string; onChange: (next
         fullWidth
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder='{"evento": "{{eventName}}", "valor": "{{decodedParameters.value}}"}'
+        placeholder='{"evento": {{eventName}}, "valor": {{decodedParameters.value}}}'
         helperText={
           isOver
             ? 'Solte para inserir o token'

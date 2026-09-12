@@ -47,6 +47,7 @@ function sseResponse(frames: string[]): Response {
 
 describe('Aba Demonstração (control-panel)', () => {
   beforeEach(() => {
+    vi.stubEnv('VITE_ENABLE_DEMO_TAB', '1')
     vi.stubEnv('VITE_LOCALENV_CONTROL_URL', CONTROL_URL)
   })
 
@@ -60,6 +61,27 @@ describe('Aba Demonstração (control-panel)', () => {
     vi.stubGlobal('fetch', vi.fn())
     renderWithProviders(<RootLayout />)
     expect(screen.queryByRole('tab', { name: 'Demonstração' })).not.toBeInTheDocument()
+  })
+
+  it('RootLayout: flag VITE_ENABLE_DEMO_TAB desligado, mesmo com URL setada → aba ausente (DEC-101)', () => {
+    vi.stubEnv('VITE_ENABLE_DEMO_TAB', '')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ ok: true, running: null })))
+    renderWithProviders(<RootLayout />)
+    expect(screen.queryByRole('tab', { name: 'Demonstração' })).not.toBeInTheDocument()
+  })
+
+  it('DemoPage: flag VITE_ENABLE_DEMO_TAB desligado → redireciona pra /contracts mesmo com control-panel saudável (DEC-101)', async () => {
+    vi.stubEnv('VITE_ENABLE_DEMO_TAB', '')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        if (input.endsWith('/health')) return Promise.resolve(jsonResponse({ ok: true, running: null }))
+        if (input.endsWith('/actions')) return Promise.resolve(jsonResponse(ACTIONS))
+        return Promise.reject(new Error(`unexpected ${input}`))
+      }),
+    )
+    renderWithProviders(<DemoPage />)
+    await waitFor(() => expect(screen.queryByText('Demonstração')).not.toBeInTheDocument())
   })
 
   it('RootLayout: health check falha → aba ausente', async () => {

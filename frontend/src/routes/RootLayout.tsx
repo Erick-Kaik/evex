@@ -15,8 +15,9 @@ const NAV_LINKS = [
 /** Layout raiz — barra de navegação com as 4 telas da UI mínima da PoC (doc §6). */
 export function RootLayout() {
   const location = useLocation()
-  // Aba "Demonstração" (E17/DEC-075): só aparece quando `VITE_LOCALENV_CONTROL_URL` está setada e o
-  // `local-env/control-panel` responde ao health check. Fora do ambiente local, a aba não existe.
+  // Aba "Demonstração" (E17/DEC-075): só aparece quando `VITE_ENABLE_DEMO_TAB='1'` (DEC-101),
+  // `VITE_LOCALENV_CONTROL_URL` está setada e o `local-env/control-panel` responde ao health check.
+  // Fora do ambiente local, a aba não existe.
   const demoAvailable = useControlPanelAvailable()
   const navLinks = demoAvailable ? [...NAV_LINKS, { to: '/demo', label: 'Demonstração' }] : NAV_LINKS
 
