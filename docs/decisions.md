@@ -1623,6 +1623,25 @@ A pergunta que a feature responde é "este contrato **é** upgradeable **hoje**"
 
 `./gradlew build` verde — compilação completa + suíte inteira, 16 testes novos (6+4+6), 0 falha. E28 segue **não fechada**: falta o badge no Explorador de ABI (frontend) e a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.
 
+### Nota de revisão (`reviewer`, 2026-09-12)
+
+A frase acima e o comentário de `ContractUpgradeabilityApiTest` descrevem o fixture `uupsAbi` como "o
+ABI real do `TestUpgradeableVaultV1`/`V2`" — impreciso. Conferido contra o artifact compilado real
+(`local-env/local-env-scaffold-eth-2/packages/hardhat/artifacts/contracts/TestUpgradeableVaultV1.sol/
+TestUpgradeableVaultV1.json`, idem V2) e o comentário do próprio `local-env/contracts/
+TestUpgradeableVaultV1.sol`: o ABI real desses contratos declara `proxiableUUID()` e
+`upgradeToAndCall(address,bytes)`, mas **não** `upgradeTo(address)` como função standalone — a
+`UUPSUpgradeable` da OpenZeppelin v5 (usada aqui) removeu o `upgradeTo(address)` autônomo, mantendo só
+`upgradeToAndCall`. O fixture do teste incluiu `upgradeTo(address)` mesmo assim, sinteticamente, pra
+também exercitar esse branch da regra OR de `isUpgradeable`. A lógica de detecção em si continua
+correta e bem coberta (o `UupsDetector` foi desenhado pra reconhecer os 2 métodos de upgrade
+independentemente, e há testes unitários cobrindo cada um isoladamente) — o achado é só sobre a
+precisão da alegação "ABI real" no comentário/nesta decisão, não um defeito funcional. Não bloqueou o
+fechamento da E28 (ver revisão completa na seção E28 de `docs/roadmap.md`). Recomendação para quando
+este teste for tocado de novo: ajustar o comentário pra não afirmar "ABI real" sobre o `upgradeTo`
+sintético, ou trocar por um fixture carregado de fato do artifact do `local-env` (só
+`proxiableUUID()` + `upgradeToAndCall(address,bytes)`, sem `upgradeTo(address)`).
+
 ---
 
 ## DEC-100 — E28 (frontend): `UpgradeabilityBanner` no Explorador de ABI, componente dedicado sem estado de erro/vazio visível

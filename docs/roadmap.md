@@ -37,7 +37,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E25 | Validação do cenário de Modelo de Entidade (E19, 3ª peça — nunca validada ao vivo até aqui) — contrato novo `TestGameLibrary` (jogos que só rodam se o `TestComputer` tiver poder suficiente, chamada cross-contract real + erro customizado `InsufficientPower`) prova a acumulação de campos de eventos diferentes (`ComputerCreated`/`PartsChanged`/`GameRunSucceeded`, todos correlacionados por `computerId`) num Modelo de Entidade, exposto via `{{model.*}}` num webhook. Sinergia com a E24: o `InsufficientPower` também vira dado real pro Explorador de ABI | local-env | sessão principal (sem agente dedicado — `local-env` é ad-hoc) | ✅ Concluído — **revisão FINAL combinada `reviewer` 2026-09-07 ✅ APROVADA, sem achado bloqueante** (fix da DEC-088 confirmado correto e isolado; 1 achado não-bloqueante registrado, DEC-089 — ordem `projectBatch`/`matchAndEnqueue` sem teste de regressão). Ver "Revisão" na seção E25 (DEC-089) |
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
-| E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — mesmo padrão de `InterfaceDetector`/`BuiltinInterfaceTemplates` (E6) já usado pra ERC20/721/1155, comparando seletores de função conhecidos (`upgradeTo(address)`, `upgradeToAndCall(address,bytes)`, `proxiableUUID()`) contra o ABI cadastrado. Só **detecção/exibição** (badge no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` | 🔲 A fazer — surgiu de uma conversa sobre um projeto futuro relacionado (API "casca" de chamada dinâmica de método de contrato), registrada aqui porque a parte de detecção faz sentido ficar no Evex mesmo (é só leitura). Escopo pequeno, ainda não iniciado |
+| E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — detector dedicado (`UupsDetector`, desviado de `InterfaceDetector`/E6 por casar seletor de função, não `topic0` de evento, DEC-099) contra o ABI vigente do contrato. Só **detecção/exibição** (`UpgradeabilityBanner` no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` + `reviewer` | ✅ Concluído — backend (DEC-099) + frontend (DEC-100) + **revisão `reviewer` 2026-09-12 ✅ aprovada, sem achado bloqueante** (1 achado não-bloqueante: fixture de teste do backend rotulada como "ABI real" do `TestUpgradeableVaultV1`/`V2` inclui `upgradeTo(address)`, que não existe no ABI compilado real desses contratos — só `proxiableUUID()`/`upgradeToAndCall(address,bytes)` são reais). Ver "Revisão" na seção E28 |
 | E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend + frontend | `hexagonal-architect` (análise) + `kotlin-backend-dev` (backend) + `frontend-dev` (frontend) + `reviewer` (revisão) | ✅ Concluída — `lineageId` aditivo (DEC-096/DEC-097/DEC-098), revisada pelo `reviewer` em 2026-09-12 sem achado bloqueante |
 
 
@@ -2544,7 +2544,7 @@ alternativa dinâmica ao PAT estático:
 
 **Depende de**: E6 (`InterfaceDetector`/`BuiltinInterfaceTemplates`, mesmo mecanismo de detecção), E24 (Explorador de ABI, onde o badge apareceria).
 
-**Status**: 🟡 Backend concluído (DEC-099, `blockchain-integration`, 2026-09-12); **frontend concluído** (DEC-100, `frontend-dev`, 2026-09-12) — falta só a revisão de ponta a ponta do `reviewer` antes de marcar ✅.
+**Status**: ✅ Concluída — backend (DEC-099, `blockchain-integration`, 2026-09-12), frontend (DEC-100, `frontend-dev`, 2026-09-12), revisão de ponta a ponta pelo `reviewer` em 2026-09-12 (sem achado bloqueante, 1 achado não-bloqueante — ver "Revisão" abaixo).
 
 **Objetivo**: identificar, a partir do ABI cadastrado, se um contrato implementa o padrão UUPS/ERC-1822 (proxy upgradável) — e exibir isso de forma útil no Explorador de ABI (E24), sem executar nenhuma ação sobre a rede.
 
@@ -2557,7 +2557,74 @@ alternativa dinâmica ao PAT estático:
 
 **Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` DEC-099 (decisão de detecção do backend) e DEC-100 (decisão do frontend).
 
-**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada. **Backend**: `GET /v1/contracts/{address}/upgradeability` validado ponta a ponta com o ABI real do `TestUpgradeableVaultV1`/`V2` como fixture de teste (`ContractUpgradeabilityApiTest`) — ✅. **Frontend/badge**: ✅ `UpgradeabilityBanner` + `UpgradeabilityBanner.test.tsx` (5 casos: pendente, erro, `isUpgradeable=false`, `true` sem métodos, `true` com métodos) — `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes (28 arquivos de teste, 116 testes, 0 falha).
+**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada. **Backend**: `GET /v1/contracts/{address}/upgradeability` validado ponta a ponta com fixture de teste (`ContractUpgradeabilityApiTest`) — ✅, com a ressalva do achado 4 da revisão abaixo (o fixture não é 100% fiel ao ABI real compilado). **Frontend/badge**: ✅ `UpgradeabilityBanner` + `UpgradeabilityBanner.test.tsx` (5 casos: pendente, erro, `isUpgradeable=false`, `true` sem métodos, `true` com métodos) — `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes (28 arquivos de teste, 116 testes, 0 falha).
+
+### Revisão (`reviewer`, 2026-09-12)
+
+✅ **Aprovada, sem achado bloqueante.** Backend e frontend revisados de ponta a ponta contra CLAUDE.md
+(raiz + módulo), `backend/docs/`, DEC-099/DEC-100 e o próprio código (não só o relato dos agentes
+anteriores). Build/teste de ambos os módulos rodados do zero, de forma independente:
+
+- **Backend**: `./gradlew clean build` verde — **584/584 testes, 0 falha** (contagem somada dos XMLs de
+  `build/test-results/test`, não só o texto do relato; inclui os 16 testes novos da E28: 6 em
+  `UupsDetectorTest`, 4 em `UupsDetectionServiceTest`, 6 em `ContractUpgradeabilityApiTest`).
+- **Frontend**: `npx tsc -b` limpo, `npm run lint` limpo, `npx vitest run` **116/116** (28 arquivos),
+  `npm run build` limpo — `npm run generate:api` rodado dentro do build não produziu diff em
+  `src/api/` (`git status` limpo antes/depois).
+
+Pontos específicos pedidos, conferidos por leitura direta do código:
+
+1. **Regra de detecção por nome + tipos de parâmetro, não só nome**: confirmada em
+   `UupsDetector.matches()` (`name == signature.name && inputs.map { it.type } == signature.paramTypes`).
+   O teste `a same-named function with a different parameter signature does not count as a match`
+   (`UupsDetectorTest`) realmente prova isso — usa `upgradeTo(uint256)` e `proxiableUUID(bytes32)`
+   (assinaturas falsas, mesmo nome) e assevera `isUpgradeable = false`; repetido ponta a ponta em
+   `ContractUpgradeabilityApiTest > a same-named function with a different signature does not count as
+   a match`, contra a stack HTTP real.
+2. **Só a versão vigente (`validToBlock == null`)**: `UupsDetectionService.detect()` filtra
+   `contractAbiEntryCatalogService.catalogFor(address)` por `validToBlock == null` antes de chamar o
+   detector puro — confirmado por leitura direta. Os dois sentidos estão cobertos, não só um: teste
+   `only the current version (validToBlock null) is considered - an old upgradeable version does not
+   leak in` (versão antiga upgradeable, vigente não → `false`) e `the current version being upgradeable
+   is reported even with a non-upgradeable old version` (inverso: vigente upgradeable, antiga não →
+   `true`) em `UupsDetectionServiceTest`, com o mesmo par de cenários replicado ponta a ponta em
+   `ContractUpgradeabilityApiTest > only the current ABI version is considered`.
+3. **Desvio da DEC-099 (não reaproveitar `InterfaceTemplate`/`BuiltinInterfaceTemplates`)**: bem
+   fundamentado e confirmado por leitura direta de `InterfaceDetector.kt` — ele compara `Set<topic0>`
+   de **eventos observados** contra `template.eventTopic0s` (interseção de conjuntos, sem noção de
+   assinatura de função); `UupsDetector` compara `CatalogedAbiEntry.name`/`inputs.map { it.type }`
+   contra assinaturas de **função** conhecidas — mecanismo de comparação genuinamente diferente (não dá
+   pra expressar "casar por seletor de função com tipos" dentro de uma estrutura pensada pra
+   "interseção de `topic0`s de evento" sem reescrever `InterfaceTemplate` por completo). `UupsDetector`
+   não duplica `InterfaceDetector` — é um detector novo, pequeno (25 linhas de lógica), sem overlap de
+   código real com o existente.
+4. **Fixture UUPS "real" (`ContractUpgradeabilityApiTest`) — achado não-bloqueante**: o ABI hardcoded
+   no teste (`uupsAbi`) inclui `proxiableUUID()`, `upgradeTo(address)` **e** `upgradeToAndCall(address,bytes)`,
+   com o comentário afirmando ser "o subconjunto real do `UUPSUpgradeable` da OpenZeppelin usado pelo
+   `TestUpgradeableVaultV1`/`V2` de `local-env/`". Conferido contra o artifact compilado real
+   (`local-env/local-env-scaffold-eth-2/packages/hardhat/artifacts/contracts/TestUpgradeableVaultV1.sol/
+   TestUpgradeableVaultV1.json` e a versão V2) e contra o comentário do próprio
+   `local-env/contracts/TestUpgradeableVaultV1.sol` ("qualquer conta pode chamar `upgradeToAndCall`
+   (herdado de UUPSUpgradeable)"): o ABI real desses contratos **não tem** `upgradeTo(address)` como
+   função standalone — só `proxiableUUID()` e `upgradeToAndCall(address,bytes)` (a OpenZeppelin v5,
+   usada aqui, removeu o `upgradeTo(address)` autônomo do `UUPSUpgradeable`, mantendo só
+   `upgradeToAndCall`). O teste passa e a lógica de detecção continua correta (validada de forma
+   genuína pelos outros casos, unitários e ponta a ponta, com assinaturas fabricadas deliberadamente
+   pra esse fim) — mas a alegação específica "ABI real do `TestUpgradeableVaultV1`/`V2`" no comentário
+   do teste, na DEC-099 e no critério de aceite deste roadmap é imprecisa: o `upgradeTo(address)`
+   incluído no fixture não existe nesse ABI real, foi adicionado sinteticamente pra também exercitar
+   esse branch do OR. Não bloqueia o fechamento da etapa (nenhuma regra do projeto violada, detecção
+   correta e bem testada por outros meios) — recomendação: na próxima sessão que tocar neste teste,
+   ajustar o comentário/DEC-099 pra não afirmar literalmente "ABI real" (ex.: "ABI real de
+   `proxiableUUID()`/`upgradeToAndCall`, mais um `upgradeTo(address)` sintético pra cobrir o outro
+   branch do OR") ou trocar o fixture por um carregado de fato do artifact do `local-env` — o que
+   exigiria só `proxiableUUID()` + `upgradeToAndCall(address,bytes)`, sem `upgradeTo(address)`.
+5. **Frontend — nenhum elemento de ação**: confirmado por leitura direta de
+   `UpgradeabilityBanner.tsx` — `Alert`/`AlertTitle`/`Typography`/`Chip`s, nenhum `onClick`/`Button`/
+   `Link`. Os `Chip`s dos métodos de upgrade (`data.availableUpgradeMethods.map(...)`) não recebem
+   `onClick`, são só rótulo (`label={method}`). Texto de disclaimer literal presente e coberto por
+   teste (`UpgradeabilityBanner.test.tsx`).
+6. **Suítes rodadas de forma independente**: ver resumo de build/teste no topo desta seção.
 
 ---
 
