@@ -1,0 +1,5 @@
+description: Resultado da detecção de proxy upgradável (UUPS/ERC-1822) a partir do ABI vigente do contrato.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/upgradeability.yaml"

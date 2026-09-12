@@ -1575,3 +1575,50 @@ DEC-097 implementou o backend completo da E29 (`lineageId` aditivo, `predecessor
 ### Consequências
 
 `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes — 27 arquivos de teste, 109 testes, 0 falha (10 novos testes desta etapa: 6 em `ContractFormPage.test.tsx`, 4 em `ContractLineageSection.test.tsx`). `npm run generate:api` rodado nesta sessão não gerou diff — o cliente já vinha com os campos da E29 desde a DEC-097 (`git status` limpo em `src/api/` antes e depois). Etapa E29 segue **não fechada** — falta a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.
+
+---
+
+## DEC-099 — E28 (backend): detecção de proxy upgradável UUPS/ERC-1822 por ABI (`UupsDetector`/`UupsDetectionService`, `GET /v1/contracts/{address}/upgradeability`)
+
+Data: 2026-09-12
+
+Módulo: backend (`blockchain-integration`, execução da E28 — só backend, frontend/badge no Explorador de ABI e revisão do `reviewer` ficam pendentes)
+
+Autor: `blockchain-integration`
+
+### Contexto
+
+E28 pede detecção — só leitura — de proxy upgradável UUPS/ERC-1822 a partir do ABI cadastrado de um contrato monitorado, mesmo espírito do `InterfaceDetector` (E6/detecção de ERC20/721/1155): comparar contra o ABI cadastrado, não contra bytecode on-chain, e nenhuma ação de escrita entra no Evex.
+
+### Regra de detecção escolhida
+
+- `proxiableUUID()` (sem argumentos) é o marcador **autoritativo** do ERC-1822 em si — presença já basta pra `isUpgradeable = true`, independente de os métodos de upgrade estarem no ABI cadastrado ou não.
+- `upgradeTo(address)` e `upgradeToAndCall(address,bytes)` são os métodos de upgrade do `UUPSUpgradeable` da OpenZeppelin (implementação de referência mais comum, mas não exigidos pelo ERC-1822 em si) — reportados separadamente em `availableUpgradeMethods` porque são "o caminho que o usuário chamaria" (motivação original da feature, mencionada na conversa que originou a E28).
+- Regra final: **`isUpgradeable = tem proxiableUUID() OU tem pelo menos um dos 2 métodos de upgrade`** — não exigir os 3 ao mesmo tempo, nem exigir só `proxiableUUID()`. Motivo: o fluxo de cadastro de ABI do Evex aceita ABI colada manualmente/parcial (doc §4.1, upload de texto) — um usuário pode colar só os métodos de upgrade sem `proxiableUUID()` (ou vice-versa), e o produto não teria como saber se o ABI "de verdade" do contrato tem os 3 sem consultar a rede (fora de escopo, é só leitura sobre o ABI cadastrado). Exigir os 3 junto geraria falso-negativo em ABI parcial legítima; a regra OR é estritamente mais permissiva sem abrir mão de precisão, porque cada marcador continua casado por assinatura exata.
+- Casamento por **nome + tipos dos parâmetros na ordem certa** (não só nome) — implementado em `UupsDetector.matches()` comparando `CatalogedAbiEntry.name` e `inputs.map { it.type }` contra a assinatura esperada. Evita falso positivo de uma função homônima com assinatura diferente (ex.: `upgradeTo(uint256)` de um contrato não relacionado não conta como o `upgradeTo(address)` do UUPS) — coberto por teste dedicado tanto no unit test puro (`UupsDetectorTest`) quanto no teste HTTP ponta a ponta (`ContractUpgradeabilityApiTest`).
+
+### Por que só a versão vigente (`validToBlock == null`)
+
+A pergunta que a feature responde é "este contrato **é** upgradeable **hoje**" — não seu histórico. Um contrato proxy upgradável (DEC-007) pode ter tido uma versão de ABI antiga que declarava `proxiableUUID()`/métodos de upgrade e a vigente não (ou o inverso, ex.: um upgrade que trocou de UUPS pra Transparent Proxy, hipotético). `UupsDetectionService.detect()` reaproveita `ContractAbiEntryCatalogService.catalogFor(address)` (E24, já filtra por contrato e já lança `ContractNotFoundException` pra endereço não cadastrado) e filtra localmente por `validToBlock == null` antes de rodar o `UupsDetector` — mesma composição de portas que os outros catálogos derivados de ABI, sem query nova no banco.
+
+### Onde a lógica mora
+
+- `domain/abi/UupsDetector.kt` — função pura (`object`, sem I/O), recebe `List<CatalogedAbiEntry>` já filtrada e devolve `UupsDetectionResult(isUpgradeable, availableUpgradeMethods)`. Mirror de estilo/KDoc de `InterfaceDetector`.
+- `application/abi/UupsDetectionService.kt` — orquestra catálogo + filtro de vigência + detector puro; nenhuma regra de detecção mora aqui.
+- `adapters/inbound/api/ContractsApiServiceImpl.kt` — `getContractUpgradeability` fino, só mapeia DTO.
+- Spec nova: `paths/contract-upgradeability.yaml` (`GET /v1/contracts/{address}/upgradeability`, tag `Contracts`), `base/components/schemas/upgradeability.yaml` (`isUpgradeable: boolean`, `availableUpgradeMethods: string[]`), `base/components/responses/upgradeability-response.yaml` — mesmo padrão exato de `contract-abi-entries.yaml`/`abi-entry-list-response.yaml` (E24) e do objeto simples `redecode-status.yaml`. Registrada em `base/base.yaml`.
+
+### Alternativas consideradas
+
+- Exigir os 3 marcadores presentes ao mesmo tempo pra `isUpgradeable = true` — descartado, gera falso-negativo em ABI parcial/curada (cenário real do cadastro por texto).
+- Exigir só `proxiableUUID()` (ignorar os métodos de upgrade na regra de `isUpgradeable`, só reportá-los à parte) — descartado porque o ABI colado manualmente às vezes vem sem `proxiableUUID()` explícito mesmo sendo um contrato UUPS de verdade (a função existe no contrato mas o usuário não incluiu no JSON colado) — os métodos de upgrade sozinhos já são sinal suficiente.
+- Considerar todas as versões de ABI (histórico completo, não só a vigente) pra decidir `isUpgradeable` — descartado, responderia a pergunta errada ("já foi upgradeable alguma vez" em vez de "é upgradeable agora").
+- Comparar por bytecode on-chain (`eth_getCode` + assinatura de função conhecida) em vez de só ABI cadastrado — fora de escopo da E28 de propósito (mesma limitação que `InterfaceDetector`/E6 já tem: compara contra ABI, não bytecode; manter o mesmo mecanismo evita 2 fontes de verdade divergentes pra "o contrato implementa X").
+
+### Testes
+
+`UupsDetectorTest` (6 casos: 3 marcadores presentes, só `proxiableUUID`, só `upgradeTo`, nenhum marcador, assinatura homônima divergente, entrada não-`FUNCTION` com o nome certo ignorada). `UupsDetectionServiceTest` (4 casos: propaga `ContractNotFoundException`, sem ABI → `false` sem erro, só a versão vigente conta — nos dois sentidos). `ContractUpgradeabilityApiTest` (6 casos HTTP ponta a ponta, incluindo o ABI real do `TestUpgradeableVaultV1`/`V2` de `local-env/` — E20 — reaproveitado como fixture, já que não existe fixture de ABI UUPS pronta em teste de backend anterior a esta etapa).
+
+### Consequências
+
+`./gradlew build` verde — compilação completa + suíte inteira, 16 testes novos (6+4+6), 0 falha. E28 segue **não fechada**: falta o badge no Explorador de ABI (frontend) e a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.

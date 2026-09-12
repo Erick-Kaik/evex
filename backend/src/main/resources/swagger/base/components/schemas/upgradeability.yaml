@@ -1,0 +1,27 @@
+type: object
+description: >-
+  Resultado da detecção de proxy upgradável (UUPS/ERC-1822, E28) — só leitura, derivada do ABI
+  atualmente vigente (`validToBlock == null`) do contrato monitorado. Nenhuma ação de escrita é
+  disparada a partir daqui: o Evex não assina nem envia transação de upgrade.
+required:
+  - isUpgradeable
+  - availableUpgradeMethods
+properties:
+  isUpgradeable:
+    type: boolean
+    description: >-
+      `true` quando o ABI vigente declara `proxiableUUID()` (marcador autoritativo do ERC-1822) OU
+      pelo menos um dos 2 métodos de upgrade do `UUPSUpgradeable` da OpenZeppelin (`upgradeTo(address)`/
+      `upgradeToAndCall(address,bytes)`). Contrato sem nenhuma ABI cadastrada devolve `false` (não é
+      erro — mesma regra dos demais catálogos derivados de ABI, E24).
+  availableUpgradeMethods:
+    type: array
+    description: >-
+      Quais dos 2 métodos de upgrade do `UUPSUpgradeable` (`upgradeTo(address)`,
+      `upgradeToAndCall(address,bytes)`) estão declarados no ABI vigente, casados por nome **e** tipos
+      dos parâmetros na ordem certa (evita falso positivo de uma função homônima com assinatura
+      diferente). Pode vir vazio mesmo com `isUpgradeable = true` (ABI só com `proxiableUUID()`,
+      sem nenhum dos 2 métodos de upgrade cadastrados).
+    items:
+      type: string
+      example: "upgradeTo(address)"

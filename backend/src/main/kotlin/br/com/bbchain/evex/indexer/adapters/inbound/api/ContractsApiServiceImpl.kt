@@ -22,11 +22,13 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Network 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.RegisterAbiPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractStatusPayload
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Upgradeability as UpgradeabilityDto
 import br.com.bbchain.evex.indexer.application.abi.AbiRegistrationService
 import br.com.bbchain.evex.indexer.application.abi.ContractAbiEntryCatalogService
 import br.com.bbchain.evex.indexer.application.abi.ContractEventCatalogService
 import br.com.bbchain.evex.indexer.application.abi.ContractMethodCatalogService
 import br.com.bbchain.evex.indexer.application.abi.InterfaceDetectionService
+import br.com.bbchain.evex.indexer.application.abi.UupsDetectionService
 import br.com.bbchain.evex.indexer.application.contract.MonitoredContractService
 import br.com.bbchain.evex.indexer.domain.abi.AbiEntryKind
 import br.com.bbchain.evex.indexer.domain.abi.AbiSource
@@ -38,6 +40,7 @@ import br.com.bbchain.evex.indexer.domain.abi.AbiStorageType
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbi
 import br.com.bbchain.evex.indexer.domain.abi.DetectionLevel
 import br.com.bbchain.evex.indexer.domain.abi.InterfaceMatch
+import br.com.bbchain.evex.indexer.domain.abi.UupsDetectionResult
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.contract.ContractStatus
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContract
@@ -56,6 +59,7 @@ class ContractsApiServiceImpl(
     private val contractEventCatalogService: ContractEventCatalogService,
     private val contractMethodCatalogService: ContractMethodCatalogService,
     private val contractAbiEntryCatalogService: ContractAbiEntryCatalogService,
+    private val uupsDetectionService: UupsDetectionService,
 ) : ContractsApiService {
 
     override fun createMonitoredContract(createContractPayload: CreateContractPayload): ContractDto {
@@ -127,6 +131,9 @@ class ContractsApiServiceImpl(
 
     override fun listContractLineage(address: kotlin.String): MutableList<ContractDto> =
         monitoredContractService.getLineage(address).map { it.toDto() }.toMutableList()
+
+    override fun getContractUpgradeability(address: kotlin.String): UpgradeabilityDto =
+        uupsDetectionService.detect(address).toDto()
 
     /**
      * 404 se o contrato não estiver cadastrado — `getByAddress` (não usado no resto deste método)
@@ -207,6 +214,11 @@ class ContractsApiServiceImpl(
         anonymous = anonymous,
         validFromBlock = validFromBlock,
         validToBlock = validToBlock,
+    )
+
+    private fun UupsDetectionResult.toDto(): UpgradeabilityDto = UpgradeabilityDto(
+        isUpgradeable = isUpgradeable,
+        availableUpgradeMethods = availableUpgradeMethods.toMutableList(),
     )
 
     private fun ContractAbi.toDto(): ContractAbiDto = ContractAbiDto(

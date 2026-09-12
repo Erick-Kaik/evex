@@ -2544,20 +2544,20 @@ alternativa dinâmica ao PAT estático:
 
 **Depende de**: E6 (`InterfaceDetector`/`BuiltinInterfaceTemplates`, mesmo mecanismo de detecção), E24 (Explorador de ABI, onde o badge apareceria).
 
-**Status**: 🔲 A fazer — não iniciado. Escopo pequeno, registrado aqui pra não perder a ideia; entra quando alguém pegar.
+**Status**: 🟡 Backend concluído (DEC-099, `blockchain-integration`, 2026-09-12) — falta o badge no Explorador de ABI (frontend) e a revisão de ponta a ponta do `reviewer` antes de marcar ✅.
 
 **Objetivo**: identificar, a partir do ABI cadastrado, se um contrato implementa o padrão UUPS/ERC-1822 (proxy upgradável) — e exibir isso de forma útil no Explorador de ABI (E24), sem executar nenhuma ação sobre a rede.
 
 **Contexto de origem**: surgiu numa conversa com o usuário sobre um projeto futuro separado — uma API "casca" de chamada dinâmica de método de contrato (leitura e escrita, incluindo transações assinadas). A ideia de detectar upgradabilidade nasceu ali, mas a parte de **detecção** foi identificada como fazendo mais sentido morar no Evex (é leitura pura, mesmo espírito do resto do produto) — a parte de **executar** o upgrade (chamar `upgradeTo`) fica de fora do Evex de propósito, é ação de escrita e cabe ao outro projeto (que ainda não tem repositório/nome definido).
 
 **Escopo**:
-- Novo `InterfaceTemplate` (`BuiltinInterfaceTemplates`) comparando os seletores de função conhecidos do UUPS/ERC-1822: `upgradeTo(address)` (`0x3659cfe6`), `upgradeToAndCall(address,bytes)` (`0x4f1ef286`), `proxiableUUID()` (`0x52d1902d`) — mesmo algoritmo já usado pra ERC20/721/1155 (comparar contra o ABI cadastrado, não contra o bytecode on-chain).
-- Exibição no Explorador de ABI (E24, frontend) — um badge/indicador simples ("Este contrato é upgradeável (UUPS)"), sem nenhum botão de ação.
+- ~~Novo `InterfaceTemplate` (`BuiltinInterfaceTemplates`)~~ — desviado na execução (DEC-099): `InterfaceTemplate`/`InterfaceDetector` casam por `topic0` de **evento**, e UUPS/ERC-1822 se define por **seletor de função** (`proxiableUUID()`/`upgradeTo(address)`/`upgradeToAndCall(address,bytes)`), sem evento nenhum envolvido — forçar no mesmo mecanismo exigiria desvirtuar `InterfaceTemplate` pra outro tipo de comparação. Implementado em vez disso como um detector dedicado, mesmo espírito/estilo de KDoc: `domain/abi/UupsDetector.kt` (função pura) + `application/abi/UupsDetectionService.kt` (orquestra catálogo de ABI vigente + detector) + `GET /v1/contracts/{address}/upgradeability` (`ContractsApiServiceImpl.getContractUpgradeability`). Regra: `isUpgradeable` = tem `proxiableUUID()` OU tem pelo menos um dos 2 métodos de upgrade (casamento por nome + tipos de parâmetro, não só nome) — ver DEC-099 para o racional completo e as alternativas descartadas.
+- Exibição no Explorador de ABI (E24, frontend) — um badge/indicador simples ("Este contrato é upgradeável (UUPS)"), sem nenhum botão de ação. **Pendente** (frontend não implementado nesta sessão).
 - **Fora de escopo, de propósito**: qualquer chamada de `upgradeTo`/`upgradeToAndCall` de verdade — o Evex não assina nem envia transação, isso não muda aqui.
 
-**Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` (registrar DEC quando implementado — inclusive se a decisão de onde a "detecção" vs. "execução" mora mudar).
+**Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` DEC-099 (decisão de detecção do backend).
 
-**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada.
+**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada. **Backend**: `GET /v1/contracts/{address}/upgradeability` validado ponta a ponta com o ABI real do `TestUpgradeableVaultV1`/`V2` como fixture de teste (`ContractUpgradeabilityApiTest`) — ✅. **Frontend/badge**: pendente.
 
 ---
 

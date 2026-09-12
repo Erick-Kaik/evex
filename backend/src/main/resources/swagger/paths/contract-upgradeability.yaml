@@ -1,0 +1,20 @@
+get:
+  tags:
+    - Contracts
+  operationId: getContractUpgradeability
+  summary: Detecta se o contrato implementa o padrão de proxy upgradável UUPS/ERC-1822
+  description: >-
+    Analisa o ABI **atualmente vigente** (`validToBlock == null`) deste contrato monitorado (E24, E28)
+    em busca dos marcadores do padrão UUPS/ERC-1822: `proxiableUUID()` (marcador autoritativo do
+    ERC-1822, presença já basta) e os 2 métodos de upgrade do `UUPSUpgradeable` da OpenZeppelin
+    (`upgradeTo(address)`/`upgradeToAndCall(address,bytes)`, casados por nome e tipos de parâmetro,
+    não só por nome). Só **detecção/leitura** — nenhuma ação de escrita entra no Evex, não assina nem
+    envia transação de upgrade. Contrato sem nenhuma ABI cadastrada devolve `200` com
+    `isUpgradeable: false` (não é erro).
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/upgradeability-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

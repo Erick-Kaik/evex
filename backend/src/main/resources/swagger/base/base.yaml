@@ -50,6 +50,8 @@ paths:
     $ref: "../paths/contract-abi-entries.yaml"
   /v1/contracts/{address}/lineage:
     $ref: "../paths/contract-lineage.yaml"
+  /v1/contracts/{address}/upgradeability:
+    $ref: "../paths/contract-upgradeability.yaml"
   /v1/events:
     $ref: "../paths/events.yaml"
   /v1/redecode:
