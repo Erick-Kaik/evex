@@ -2669,21 +2669,17 @@ Pontos específicos pedidos, conferidos por leitura direta do código (não só 
    → 567/567; `npx tsc -b && npm run lint && npx vitest run && npm run build` → 109/109 testes, tudo
    verde, cliente gerado sem diff.
 
-**Achados não-bloqueantes** (não impedem o fechamento da etapa):
+**Achados não-bloqueantes da revisão — ambos corrigidos em seguida (2026-09-12, sessão principal)**:
 
-- `ContractsApiTest` cobre `predecessorAddress` inexistente só a nível de unit test
-  (`MonitoredContractServiceTest > register throws ContractNotFoundException when the
-  predecessorAddress is not registered`), sem um teste HTTP (`MockMvc`) equivalente para
-  `POST /v1/contracts` especificamente com esse cenário — o mapeamento `ContractNotFoundException` →
-  404 já é validado ponta a ponta em outros endpoints (`GET /v1/contracts/{address}`,
-  `GET /v1/contracts/{address}/lineage`), então o risco real é baixo, mas um teste HTTP dedicado
-  fecharia esse último canto.
-- `<ContractAutocomplete>` usado para escolher o predecessor não filtra pela `network` já selecionada
-  no formulário — o usuário pode escolher um predecessor de rede diferente e só descobrir o erro depois
-  de submeter (400 `LINEAGE_NETWORK_MISMATCH`, tratado com clareza pelo `ApiErrorAlert`). Já registrado
-  como decisão consciente em DEC-098 ("Alternativas consideradas" — descartado por não ter sido pedido);
-  mantido aqui só como lembrete de UX pra uma iteração futura, não é uma lacuna nova encontrada nesta
-  revisão.
+- ~~`ContractsApiTest` cobre `predecessorAddress` inexistente só a nível de unit test~~ — **corrigido**:
+  novo teste `create with a predecessorAddress that does not exist returns 404` em `ContractsApiTest.kt`,
+  MockMvc ponta a ponta (não só a exceção em isolamento). `./gradlew build` reconfirmado verde.
+- ~~`<ContractAutocomplete>` não filtra pela `network` já selecionada~~ — **corrigido**: `ContractFormPage.tsx`
+  agora passa `network={network || undefined}` pro autocomplete de predecessor (só lista contratos da
+  mesma rede) e limpa a seleção se a rede for trocada depois de já ter escolhido um predecessor (evita
+  ficar com uma seleção que o submit só rejeitaria depois). 2 testes novos em `ContractFormPage.test.tsx`
+  (filtro aplicado; seleção limpa na troca de rede) — suíte completa (111/111), `tsc -b`/lint/build
+  reconfirmados limpos.
 
 **Contexto/problema**: um proxy upgradável (UUPS/ERC-1967) mantém o **mesmo endereço pra sempre** — é
 esse o caso que `ContractAbi` já resolve (várias versões de ABI, mesmo endereço, faixas de bloco

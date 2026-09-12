@@ -154,6 +154,40 @@ describe('ContractFormPage', () => {
       )
     })
 
+    it('filtra o autocomplete de predecessor pela rede já selecionada', async () => {
+      useCreateContract.mockReturnValue({ isPending: false, isError: false, mutate: vi.fn() })
+
+      const user = userEvent.setup()
+      renderWithProviders(<ContractFormPage mode="create" />)
+
+      await user.click(screen.getByRole('combobox', { name: 'Rede' }))
+      await user.click(await screen.findByRole('option', { name: 'TESTNET' }))
+      await user.click(screen.getByRole('checkbox', { name: /Isto é um redeploy/i }))
+      await screen.findByRole('combobox', { name: 'Contrato predecessor' })
+
+      expect(listMonitoredContracts).toHaveBeenCalledWith('TESTNET', 0, 200)
+    })
+
+    it('limpa o predecessor já escolhido se a rede for trocada depois', async () => {
+      useCreateContract.mockReturnValue({ isPending: false, isError: false, mutate: vi.fn() })
+
+      const user = userEvent.setup()
+      renderWithProviders(<ContractFormPage mode="create" />)
+
+      await user.click(screen.getByRole('combobox', { name: 'Rede' }))
+      await user.click(await screen.findByRole('option', { name: 'TESTNET' }))
+      await user.click(screen.getByRole('checkbox', { name: /Isto é um redeploy/i }))
+      const predecessorField = await screen.findByRole('combobox', { name: 'Contrato predecessor' })
+      await user.click(predecessorField)
+      await user.click(await screen.findByRole('option', { name: /Token A v1/ }))
+      expect(screen.getByRole('combobox', { name: 'Contrato predecessor' })).toHaveValue('Token A v1')
+
+      await user.click(screen.getByRole('combobox', { name: 'Rede' }))
+      await user.click(await screen.findByRole('option', { name: 'MAINNET' }))
+
+      expect(screen.getByRole('combobox', { name: 'Contrato predecessor' })).toHaveValue('')
+    })
+
     it('mostra mensagem clara quando o backend recusa por incompatibilidade de rede (400 LINEAGE_NETWORK_MISMATCH)', () => {
       useCreateContract.mockReturnValue({
         isPending: false,

@@ -152,7 +152,16 @@ function ContractCreateForm() {
               onChange={setVersion}
               placeholder="ex.: 1.0.0"
             />
-            <NetworkSelect required value={network} onChange={setNetwork} />
+            <NetworkSelect
+              required
+              value={network}
+              onChange={(value) => {
+                setNetwork(value)
+                // Troca de rede invalidaria o predecessor já escolhido (regra do backend: mesma
+                // network) — limpa em vez de deixar uma seleção que o submit só rejeitaria depois.
+                setPredecessor(null)
+              }}
+            />
 
             <FormControlLabel
               control={
@@ -174,6 +183,7 @@ function ContractCreateForm() {
                 required
                 value={predecessor}
                 onChange={setPredecessor}
+                network={network || undefined}
               />
             )}
 

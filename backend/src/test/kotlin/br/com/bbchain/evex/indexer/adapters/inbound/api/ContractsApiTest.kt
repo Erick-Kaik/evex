@@ -189,6 +189,23 @@ class ContractsApiTest(
     }
 
     @Test
+    fun `create with a predecessorAddress that does not exist returns 404`() {
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    createPayload(
+                        "0x151515151515151515151515151515151515156c",
+                        name = "Token K v2",
+                        predecessorAddress = "0x161616161616161616161616161616161616167d",
+                    ),
+                ),
+        )
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("CONTRACT_NOT_FOUND"))
+    }
+
+    @Test
     fun `lineage returns only the contract itself when it has no lineageId`() {
         val address = "0x111111111111111111111111111111111111112e"
         mockMvc.perform(
