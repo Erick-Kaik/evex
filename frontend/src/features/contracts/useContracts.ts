@@ -130,6 +130,20 @@ export function useContractLineage(address: string | undefined) {
 }
 
 /**
+ * Detecção de proxy upgradável UUPS/ERC-1822 (E28/DEC-099) a partir do ABI vigente do contrato
+ * (`GET /v1/contracts/{address}/upgradeability`) — só leitura, o Evex não executa upgrade nenhum.
+ * `availableUpgradeMethods` pode vir vazio mesmo com `isUpgradeable = true` (ABI só com
+ * `proxiableUUID()`, sem os métodos de upgrade em si) — a tela decide como exibir.
+ */
+export function useContractUpgradeability(address: string | undefined) {
+  return useQuery({
+    queryKey: ['contract-upgradeability', address],
+    queryFn: async () => (await contractsApi.getContractUpgradeability(address as string)).data,
+    enabled: Boolean(address),
+  })
+}
+
+/**
  * Sugere interfaces padrão (ERC20/ERC721/ERC1155) pra um contrato — sob demanda (botão), não
  * automático no carregamento da tela (`GET /v1/contracts/{address}/abi/suggestions`, via `mutate()`
  * sem parâmetros).

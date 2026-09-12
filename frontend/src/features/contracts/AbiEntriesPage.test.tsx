@@ -5,13 +5,14 @@ import { renderWithProviders } from '../../test/renderWithProviders'
 import { AbiEntriesPage } from './AbiEntriesPage'
 import { formatAbiEntryParams } from './abiEntryFormat'
 
-const { useContractAbiEntries, navigateMock, useParamsMock } = vi.hoisted(() => ({
+const { useContractAbiEntries, useContractUpgradeability, navigateMock, useParamsMock } = vi.hoisted(() => ({
   useContractAbiEntries: vi.fn(),
+  useContractUpgradeability: vi.fn(),
   navigateMock: vi.fn(),
   useParamsMock: vi.fn(),
 }))
 
-vi.mock('./useContracts', () => ({ useContractAbiEntries }))
+vi.mock('./useContracts', () => ({ useContractAbiEntries, useContractUpgradeability }))
 
 vi.mock('react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router')>()
@@ -89,6 +90,7 @@ describe('AbiEntriesPage', () => {
   beforeEach(() => {
     navigateMock.mockReset()
     useParamsMock.mockReturnValue({ address: ADDRESS })
+    useContractUpgradeability.mockReturnValue({ data: undefined, isPending: true, isError: false })
   })
 
   it('renderiza a tabela com pelo menos um item de cada tipo', () => {

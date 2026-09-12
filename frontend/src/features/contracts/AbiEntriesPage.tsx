@@ -23,6 +23,7 @@ import { CopyableHash } from '../../components/CopyableHash'
 import { AbiEntryKindSelect } from './AbiEntryKindSelect'
 import { formatAbiEntryParams } from './abiEntryFormat'
 import { useContractAbiEntries } from './useContracts'
+import { UpgradeabilityBanner } from './UpgradeabilityBanner'
 
 const KIND_COLORS: Record<AbiEntryKind, ChipProps['color']> = {
   [AbiEntryKind.Function]: 'primary',
@@ -72,6 +73,8 @@ export function AbiEntriesPage() {
       <Box sx={{ mt: 0.5 }}>
         <CopyableHash value={address} headLength={42} tailLength={0} />
       </Box>
+
+      <UpgradeabilityBanner address={address} />
 
       <Box sx={{ mt: 3 }}>
         <AbiEntryKindSelect value={kind} onChange={setKind} />

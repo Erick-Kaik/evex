@@ -1622,3 +1622,42 @@ A pergunta que a feature responde é "este contrato **é** upgradeable **hoje**"
 ### Consequências
 
 `./gradlew build` verde — compilação completa + suíte inteira, 16 testes novos (6+4+6), 0 falha. E28 segue **não fechada**: falta o badge no Explorador de ABI (frontend) e a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.
+
+---
+
+## DEC-100 — E28 (frontend): `UpgradeabilityBanner` no Explorador de ABI, componente dedicado sem estado de erro/vazio visível
+
+Data: 2026-09-12
+
+Módulo: frontend (`frontend-dev`, execução da E28 — parte final da DEC-099)
+
+Autor: `frontend-dev`
+
+### Contexto
+
+DEC-099 deixou pendente só a exibição no Explorador de ABI (E24, `AbiEntriesPage.tsx`) do resultado de `GET /v1/contracts/{address}/upgradeability`. Esta etapa implementa isso.
+
+### Decisões operacionais tomadas na implementação
+
+**1. Componente dedicado (`UpgradeabilityBanner.tsx`), não JSX inline em `AbiEntriesPage`** — mesma escolha estrutural de `ContractLineageSection` (DEC-098/E29): mantém `AbiEntriesPage` focada na tabela de ABI (seu conteúdo principal) e permite testar a lógica condicional de exibição isoladamente, com mocks simples de `useContractUpgradeability` em vez de precisar montar toda a página pra cada combinação de estado.
+
+**2. `useContractUpgradeability` só busca quando pendente/erro/`isUpgradeable=false` — todos renderizam `null`, sem exceção** — diferente de `ContractLineageSection`, que mostra o erro de rede explicitamente (decisão 4 da DEC-098). Aqui, o banner é um complemento informativo de uma tela cujo conteúdo principal é a tabela de ABI; um erro nessa consulta específica não deveria competir por atenção visual com a tabela, que é o motivo da tela existir. Se a consulta falhar, o usuário simplesmente não vê o banner — não é informação crítica o suficiente pra justificar um estado de erro dedicado numa segunda consulta acessória.
+
+**3. Nenhum estado de "carregando"** (`isPending` também renderiza `null`, não um texto "Carregando...") — mesmo racional do item 3 da DEC-098 aplicado aqui: como a maioria dos contratos não é upgradeável, mostrar um placeholder de carregamento que quase sempre desaparece um instante depois seria mais ruído do que sinal.
+
+**4. `Alert severity="info"` com `AlertTitle` + `Chip`s pra cada método, dentro do mesmo `Alert`** — não um `Card` separado como `ContractLineageSection`, porque a informação aqui é mais compacta (2 frases + no máximo 2 chips) e o padrão `Alert severity="info"` já é o vocabulário visual usado no resto do projeto pra avisos contextuais de tela (`AbiSection`, `ContractBalancesSection`, `WalletBalancesSection`, a própria `AbiEntriesPage` no estado "sem ABI cadastrada").
+
+**5. Texto do disclaimer é literal e explícito** ("Isto é só informativo — o Evex não executa nem oferece um jeito de chamar o upgrade"), em vez de um texto mais sutil/implícito — pedido explícito da etapa: não deveria "parecer um botão de ação nem convidar o usuário a clicar aqui pra atualizar". Reforçado por não haver nenhum elemento clicável (botão, link) dentro do banner — os métodos de upgrade são `Chip`s sem `onClick`, só rótulo.
+
+### Alternativas consideradas
+
+- Reaproveitar `ContractLineageSection` como modelo 1:1, incluindo mostrar erro de rede — descartado pelo racional do item 2 acima: são consultas com pesos de importância diferentes pra a tela em que aparecem (linhagem é conteúdo primário de `ContractFormPage`; upgradeability é acessório em `AbiEntriesPage`, cuja tabela é o conteúdo primário).
+- `severity="warning"` em vez de `"info"` — descartado; upgradabilidade não é um problema/risco a ser corrigido pelo usuário (o Evex não julga isso), é uma característica do contrato — `"info"` é mais fiel ao tom neutro que o resto do produto usa pra informação contextual.
+
+### Testes
+
+`UpgradeabilityBanner.test.tsx` (5 casos: pendente → nada, erro → nada, `isUpgradeable=false` → nada, `true` sem métodos → banner sem lista de métodos, `true` com métodos → banner com `Chip`s). `AbiEntriesPage.test.tsx` ajustado pra mockar `useContractUpgradeability` (retorna `isPending: true` no `beforeEach`, já que a página agora importa `UpgradeabilityBanner`, que usa o hook) — sem teste de integração novo ali, a cobertura do banner em si já está no arquivo dedicado.
+
+### Consequências
+
+`npx tsc -b && npm run lint && npx vitest run && npm run build` verdes — 28 arquivos de teste, 116 testes, 0 falha (5 novos testes desta etapa, em `UpgradeabilityBanner.test.tsx`). `npm run generate:api` rodado nesta sessão trouxe o schema `Upgradeability`/operação `getContractUpgradeability` pro cliente gerado sem diff em nenhum outro arquivo (`git status` limpo em `src/api/` fora da adição esperada). E28 segue **não fechada** — falta a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.

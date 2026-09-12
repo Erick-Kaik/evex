@@ -2544,7 +2544,7 @@ alternativa dinâmica ao PAT estático:
 
 **Depende de**: E6 (`InterfaceDetector`/`BuiltinInterfaceTemplates`, mesmo mecanismo de detecção), E24 (Explorador de ABI, onde o badge apareceria).
 
-**Status**: 🟡 Backend concluído (DEC-099, `blockchain-integration`, 2026-09-12) — falta o badge no Explorador de ABI (frontend) e a revisão de ponta a ponta do `reviewer` antes de marcar ✅.
+**Status**: 🟡 Backend concluído (DEC-099, `blockchain-integration`, 2026-09-12); **frontend concluído** (DEC-100, `frontend-dev`, 2026-09-12) — falta só a revisão de ponta a ponta do `reviewer` antes de marcar ✅.
 
 **Objetivo**: identificar, a partir do ABI cadastrado, se um contrato implementa o padrão UUPS/ERC-1822 (proxy upgradável) — e exibir isso de forma útil no Explorador de ABI (E24), sem executar nenhuma ação sobre a rede.
 
@@ -2552,12 +2552,12 @@ alternativa dinâmica ao PAT estático:
 
 **Escopo**:
 - ~~Novo `InterfaceTemplate` (`BuiltinInterfaceTemplates`)~~ — desviado na execução (DEC-099): `InterfaceTemplate`/`InterfaceDetector` casam por `topic0` de **evento**, e UUPS/ERC-1822 se define por **seletor de função** (`proxiableUUID()`/`upgradeTo(address)`/`upgradeToAndCall(address,bytes)`), sem evento nenhum envolvido — forçar no mesmo mecanismo exigiria desvirtuar `InterfaceTemplate` pra outro tipo de comparação. Implementado em vez disso como um detector dedicado, mesmo espírito/estilo de KDoc: `domain/abi/UupsDetector.kt` (função pura) + `application/abi/UupsDetectionService.kt` (orquestra catálogo de ABI vigente + detector) + `GET /v1/contracts/{address}/upgradeability` (`ContractsApiServiceImpl.getContractUpgradeability`). Regra: `isUpgradeable` = tem `proxiableUUID()` OU tem pelo menos um dos 2 métodos de upgrade (casamento por nome + tipos de parâmetro, não só nome) — ver DEC-099 para o racional completo e as alternativas descartadas.
-- Exibição no Explorador de ABI (E24, frontend) — um badge/indicador simples ("Este contrato é upgradeável (UUPS)"), sem nenhum botão de ação. **Pendente** (frontend não implementado nesta sessão).
+- Exibição no Explorador de ABI (E24, frontend) — implementado como `UpgradeabilityBanner` (novo componente, `frontend/src/features/contracts/UpgradeabilityBanner.tsx`), consumindo `GET /v1/contracts/{address}/upgradeability` via `useContractUpgradeability` (React Query) em `AbiEntriesPage`. Só aparece quando `isUpgradeable === true`; lista `availableUpgradeMethods` como `Chip`s quando não vazio; texto explícito de que é só informativo, sem nenhum botão/link de ação. Ver DEC-100 para o racional das escolhas de UI.
 - **Fora de escopo, de propósito**: qualquer chamada de `upgradeTo`/`upgradeToAndCall` de verdade — o Evex não assina nem envia transação, isso não muda aqui.
 
-**Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` DEC-099 (decisão de detecção do backend).
+**Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` DEC-099 (decisão de detecção do backend) e DEC-100 (decisão do frontend).
 
-**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada. **Backend**: `GET /v1/contracts/{address}/upgradeability` validado ponta a ponta com o ABI real do `TestUpgradeableVaultV1`/`V2` como fixture de teste (`ContractUpgradeabilityApiTest`) — ✅. **Frontend/badge**: pendente.
+**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada. **Backend**: `GET /v1/contracts/{address}/upgradeability` validado ponta a ponta com o ABI real do `TestUpgradeableVaultV1`/`V2` como fixture de teste (`ContractUpgradeabilityApiTest`) — ✅. **Frontend/badge**: ✅ `UpgradeabilityBanner` + `UpgradeabilityBanner.test.tsx` (5 casos: pendente, erro, `isUpgradeable=false`, `true` sem métodos, `true` com métodos) — `npx tsc -b && npm run lint && npx vitest run && npm run build` verdes (28 arquivos de teste, 116 testes, 0 falha).
 
 ---
 
