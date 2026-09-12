@@ -37,6 +37,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E25 | Validação do cenário de Modelo de Entidade (E19, 3ª peça — nunca validada ao vivo até aqui) — contrato novo `TestGameLibrary` (jogos que só rodam se o `TestComputer` tiver poder suficiente, chamada cross-contract real + erro customizado `InsufficientPower`) prova a acumulação de campos de eventos diferentes (`ComputerCreated`/`PartsChanged`/`GameRunSucceeded`, todos correlacionados por `computerId`) num Modelo de Entidade, exposto via `{{model.*}}` num webhook. Sinergia com a E24: o `InsufficientPower` também vira dado real pro Explorador de ABI | local-env | sessão principal (sem agente dedicado — `local-env` é ad-hoc) | ✅ Concluído — **revisão FINAL combinada `reviewer` 2026-09-07 ✅ APROVADA, sem achado bloqueante** (fix da DEC-088 confirmado correto e isolado; 1 achado não-bloqueante registrado, DEC-089 — ordem `projectBatch`/`matchAndEnqueue` sem teste de regressão). Ver "Revisão" na seção E25 (DEC-089) |
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
+| E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — mesmo padrão de `InterfaceDetector`/`BuiltinInterfaceTemplates` (E6) já usado pra ERC20/721/1155, comparando seletores de função conhecidos (`upgradeTo(address)`, `upgradeToAndCall(address,bytes)`, `proxiableUUID()`) contra o ABI cadastrado. Só **detecção/exibição** (badge no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` | 🔲 A fazer — surgiu de uma conversa sobre um projeto futuro relacionado (API "casca" de chamada dinâmica de método de contrato), registrada aqui porque a parte de detecção faz sentido ficar no Evex mesmo (é só leitura). Escopo pequeno, ainda não iniciado |
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
 
@@ -2534,3 +2535,24 @@ alternativa dinâmica ao PAT estático:
   **555 testes, 0 falhas, 0 erros**, JAR gerado — confirma de forma independente o número citado na
   DEC-095.
 - Nenhum achado — nenhuma entrada nova em `docs/decisions.md` necessária.
+
+---
+
+## E28 — Detecção de proxy upgradável (UUPS/ERC-1822) por ABI
+
+**Depende de**: E6 (`InterfaceDetector`/`BuiltinInterfaceTemplates`, mesmo mecanismo de detecção), E24 (Explorador de ABI, onde o badge apareceria).
+
+**Status**: 🔲 A fazer — não iniciado. Escopo pequeno, registrado aqui pra não perder a ideia; entra quando alguém pegar.
+
+**Objetivo**: identificar, a partir do ABI cadastrado, se um contrato implementa o padrão UUPS/ERC-1822 (proxy upgradável) — e exibir isso de forma útil no Explorador de ABI (E24), sem executar nenhuma ação sobre a rede.
+
+**Contexto de origem**: surgiu numa conversa com o usuário sobre um projeto futuro separado — uma API "casca" de chamada dinâmica de método de contrato (leitura e escrita, incluindo transações assinadas). A ideia de detectar upgradabilidade nasceu ali, mas a parte de **detecção** foi identificada como fazendo mais sentido morar no Evex (é leitura pura, mesmo espírito do resto do produto) — a parte de **executar** o upgrade (chamar `upgradeTo`) fica de fora do Evex de propósito, é ação de escrita e cabe ao outro projeto (que ainda não tem repositório/nome definido).
+
+**Escopo**:
+- Novo `InterfaceTemplate` (`BuiltinInterfaceTemplates`) comparando os seletores de função conhecidos do UUPS/ERC-1822: `upgradeTo(address)` (`0x3659cfe6`), `upgradeToAndCall(address,bytes)` (`0x4f1ef286`), `proxiableUUID()` (`0x52d1902d`) — mesmo algoritmo já usado pra ERC20/721/1155 (comparar contra o ABI cadastrado, não contra o bytecode on-chain).
+- Exibição no Explorador de ABI (E24, frontend) — um badge/indicador simples ("Este contrato é upgradeável (UUPS)"), sem nenhum botão de ação.
+- **Fora de escopo, de propósito**: qualquer chamada de `upgradeTo`/`upgradeToAndCall` de verdade — o Evex não assina nem envia transação, isso não muda aqui.
+
+**Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` (registrar DEC quando implementado — inclusive se a decisão de onde a "detecção" vs. "execução" mora mudar).
+
+**Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada.
