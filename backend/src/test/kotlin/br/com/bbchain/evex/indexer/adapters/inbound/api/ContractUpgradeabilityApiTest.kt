@@ -17,10 +17,14 @@ import org.springframework.transaction.annotation.Transactional
 /**
  * End-to-end test through the real API (generated controller -> [ContractsApiServiceImpl] ->
  * [br.com.bbchain.evex.indexer.application.abi.UupsDetectionService] -> real Postgres via
- * Testcontainers) — DEC-009, mirror of `ContractAbiEntriesApiTest` (E24). O ABI UUPS abaixo é o
- * subconjunto real do `UUPSUpgradeable` da OpenZeppelin usado pelo `TestUpgradeableVaultV1`/`V2` de
- * `local-env/` (E20) — `proxiableUUID()`/`upgradeTo(address)`/`upgradeToAndCall(address,bytes)`, além
- * de uma função de negócio comum (`deposit`) só pra provar que ela não interfere na detecção (E28).
+ * Testcontainers) — DEC-009, mirror of `ContractAbiEntriesApiTest` (E24). O ABI UUPS abaixo é o ABI
+ * real do `UUPSUpgradeable` da OpenZeppelin **v5** usado pelo `TestUpgradeableVaultV1`/`V2` de
+ * `local-env/` (E20) — só `proxiableUUID()`/`upgradeToAndCall(address,bytes)` (a v5 removeu o
+ * `upgradeTo(address)` autônomo do `UUPSUpgradeable`, mantendo só `upgradeToAndCall` — conferido contra
+ * o comentário do próprio `local-env/contracts/TestUpgradeableVaultV1.sol` e o artifact compilado;
+ * achado não-bloqueante da revisão da E28, corrigido aqui). `upgradeTo(address)` sozinho já tem
+ * cobertura genuína — sem depender de "isto é o ABI real" — em `UupsDetectorTest` (unit, puro). Além
+ * do que, uma função de negócio comum (`deposit`) só pra provar que ela não interfere na detecção (E28).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
@@ -46,13 +50,6 @@ class ContractUpgradeabilityApiTest(
             "stateMutability": "view",
             "inputs": [],
             "outputs": [{"name": "", "type": "bytes32"}]
-          },
-          {
-            "type": "function",
-            "name": "upgradeTo",
-            "stateMutability": "nonpayable",
-            "inputs": [{"name": "newImplementation", "type": "address"}],
-            "outputs": []
           },
           {
             "type": "function",
@@ -112,7 +109,7 @@ class ContractUpgradeabilityApiTest(
     }
 
     @Test
-    fun `a real UUPS ABI (TestUpgradeableVault) is reported upgradeable with both upgrade methods`() {
+    fun `a real UUPS ABI (TestUpgradeableVault) is reported upgradeable with upgradeToAndCall`() {
         val address = "0x111111111111111111111111111111111111111a"
         registerContract(address)
         registerAbi(address, uupsAbi)
@@ -120,9 +117,8 @@ class ContractUpgradeabilityApiTest(
         mockMvc.perform(get("/v1/contracts/$address/upgradeability"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.isUpgradeable").value(true))
-            .andExpect(jsonPath("$.availableUpgradeMethods.length()").value(2))
-            .andExpect(jsonPath("$.availableUpgradeMethods[0]").value("upgradeTo(address)"))
-            .andExpect(jsonPath("$.availableUpgradeMethods[1]").value("upgradeToAndCall(address,bytes)"))
+            .andExpect(jsonPath("$.availableUpgradeMethods.length()").value(1))
+            .andExpect(jsonPath("$.availableUpgradeMethods[0]").value("upgradeToAndCall(address,bytes)"))
     }
 
     @Test

@@ -1642,6 +1642,15 @@ este teste for tocado de novo: ajustar o comentário pra não afirmar "ABI real"
 sintético, ou trocar por um fixture carregado de fato do artifact do `local-env` (só
 `proxiableUUID()` + `upgradeToAndCall(address,bytes)`, sem `upgradeTo(address)`).
 
+**Achado corrigido (2026-09-12, sessão principal)**: `uupsAbi` em `ContractUpgradeabilityApiTest`
+ajustado pra conter só `proxiableUUID()` + `upgradeToAndCall(address,bytes)` (removido o
+`upgradeTo(address)` sintético) — comentário da classe atualizado pra descrever o ABI corretamente
+como real, sem ressalva. Nenhuma cobertura perdida: `upgradeTo(address)` sozinho já era testado de
+forma genuína (sem depender da alegação "ABI real") em `UupsDetectorTest` (unit, puro) — o teste HTTP
+`a real UUPS ABI (TestUpgradeableVault) is reported upgradeable with upgradeToAndCall` (renomeado)
+agora afirma `availableUpgradeMethods = ["upgradeToAndCall(address,bytes)"]`. `./gradlew build`
+reconfirmado verde.
+
 ---
 
 ## DEC-100 — E28 (frontend): `UpgradeabilityBanner` no Explorador de ABI, componente dedicado sem estado de erro/vazio visível
