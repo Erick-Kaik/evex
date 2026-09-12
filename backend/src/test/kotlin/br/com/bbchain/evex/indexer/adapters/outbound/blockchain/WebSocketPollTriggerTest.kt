@@ -9,17 +9,20 @@ import java.net.ConnectException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.web.client.RestClient
 import org.web3j.protocol.Web3j
 import org.web3j.protocol.websocket.WebSocketService
 import org.web3j.protocol.websocket.events.NewHeadsNotification
 
 /**
  * Unit test — sem WebSocket real, sem nó Besu/Hardhat (mesma limitação de [Web3jBlockchainClientTest],
- * DEC-091). [Web3j]/[WebSocketService] mockados via MockK (mesmo padrão `internal var` de
- * [Web3jBlockchainClient.web3j]); notificações simuladas via `PublishProcessor` (RxJava2) no lugar do
+ * DEC-091). [Web3j]/[WebSocketService] mockados via MockK (devolvidos por [connectionFactory], seam de
+ * teste que substitui a criação real — ver KDoc de `WebSocketPollTrigger.connectionFactory`, E27
+ * complemento Keycloak/DEC-095); notificações simuladas via `PublishProcessor` (RxJava2) no lugar do
  * `Flowable` real de `web3j.newHeadsNotifications()`. `reconnectExecutor` sobrescrito pra executar a
  * ação de reconexão **síncrona** (sem `Thread.sleep` de verdade) — mantém os testes determinísticos e
- * rápidos.
+ * rápidos. `keycloakTokenProvider` real, mas com `keycloak.token-url` vazio (default) — nunca é
+ * efetivamente chamado nestes testes, já que `resolveAuthHeaders` cai no PAT estático (também vazio).
  */
 class WebSocketPollTriggerTest {
 
@@ -27,10 +30,10 @@ class WebSocketPollTriggerTest {
     private val pollTickService: PollTickService = mockk(relaxed = true)
     private val webSocketServiceMock: WebSocketService = mockk(relaxed = true)
     private val web3jMock: Web3j = mockk(relaxed = true)
+    private val keycloakTokenProvider = KeycloakTokenProvider(properties, RestClient.builder())
 
-    private val trigger = WebSocketPollTrigger(properties, pollTickService).apply {
-        webSocketService = webSocketServiceMock
-        web3j = web3jMock
+    private val trigger = WebSocketPollTrigger(properties, pollTickService, keycloakTokenProvider).apply {
+        connectionFactory = { webSocketServiceMock to web3jMock }
         reconnectExecutor = { _, action -> action() } // síncrono, sem esperar backoff de verdade
     }
 
@@ -74,6 +77,33 @@ class WebSocketPollTriggerTest {
         // e a nova assinatura (2ª instância de Flowable) volta a reagir a notificações normalmente.
         secondNotifications.onNext(mockk(relaxed = true))
         verify(exactly = 2) { pollTickService.tick() }
+    }
+
+    @Test
+    fun `each reconnect attempt recreates the connection via connectionFactory (fresh auth header)`() {
+        // E27 complemento Keycloak/DEC-095: um token renovado só "pega" numa conexão nova — este teste
+        // garante que connectionFactory é chamado de novo a cada reconexão, não só na conexão inicial
+        // (webSocketService/web3j sempre trocam de referência, mesmo que os mocks devolvidos sejam os
+        // mesmos aqui).
+        var factoryCalls = 0
+        val trigger = WebSocketPollTrigger(properties, pollTickService, keycloakTokenProvider).apply {
+            connectionFactory = { factoryCalls++; webSocketServiceMock to web3jMock }
+            reconnectExecutor = { _, action -> action() }
+        }
+        val firstNotifications = PublishProcessor.create<NewHeadsNotification>()
+        val secondNotifications = PublishProcessor.create<NewHeadsNotification>()
+        // 2 processors distintos (não 1 reusado) — resubscrever num `PublishProcessor` já terminado por
+        // `onError` dispara `onError` de novo, sincronamente, na hora do `subscribe()` (Reactive Streams:
+        // Publisher terminado replay o término pra qualquer novo Subscriber) — causaria reconexão
+        // recursiva infinita neste teste (mesmo padrão de duplo processor já usado no teste de reconexão
+        // acima, "subscription error triggers a reconnect...").
+        every { web3jMock.newHeadsNotifications() } returnsMany listOf(firstNotifications, secondNotifications)
+        trigger.start()
+        assertThat(factoryCalls).isEqualTo(1)
+
+        firstNotifications.onError(RuntimeException("connection dropped"))
+
+        assertThat(factoryCalls).isEqualTo(2)
     }
 
     @Test

@@ -37,31 +37,54 @@ import org.web3j.utils.Numeric
  * Implementação de [BlockchainPort] via Web3j `HttpService` direto — **sem BBChain Keeper** (regra
  * não-negociável do projeto). Só polling (DEC-003), `eth_getLogs` sem filtro de endereço (DEC-001).
  *
+ * Autenticação opcional (E27/DEC-094 PAT estático; E27 complemento/DEC-095 token Keycloak dinâmico) —
+ * ver [refreshAuthHeader]/[resolveAuthHeaders].
+ *
  * **Não validado contra nó Besu/Hardhat real** (E12 bloqueado, DEC-010) — a heurística de detecção de
  * erro de range em [isRangeError] é uma escolha de implementação de melhor esforço (ver
  * docs/decisions.md para o detalhamento), a revisar assim que houver um nó real para testar contra.
  */
 @Component
 class Web3jBlockchainClient(
-    properties: BlockchainProperties,
+    private val properties: BlockchainProperties,
+    private val keycloakTokenProvider: KeycloakTokenProvider,
 ) : BlockchainPort {
+
+    // Referência à própria `HttpService` (não só ao `Web3j` derivado dela) — necessária pro complemento
+    // Keycloak (E27/DEC-095): `HttpService.headers` é um `HashMap` mutável, lido de novo por
+    // `buildHeaders()` a cada `performIO` (1 request), confirmado no source real do jar
+    // (`core-6.0.0-sources.jar`, `org.web3j.protocol.http.HttpService`) — dá pra sobrescrever a entrada
+    // `Authorization` nela (via `addHeaders`) antes de cada request, sem recriar `HttpService`/`Web3j`.
+    // Isso é o que permite um token Keycloak (expira em minutos) continuar válido ao longo da vida do
+    // processo sem recriar a conexão.
+    internal var httpService: HttpService = HttpService(properties.rpcUrl)
 
     // `internal var` (não `private val`) pelo mesmo motivo de `isRangeError`/`toBlockchainLog` abaixo:
     // permite ao [Web3jBlockchainClientTest] substituir por um `Web3j` mockado (MockK) sem HTTP real,
     // já que o `test` source set é associado ao `main` pelo plugin Kotlin e enxerga `internal`.
-    // `addHeaders` (E27/DEC-094): sem token configurado, `authHeaders()` devolve mapa vazio e o
-    // comportamento é idêntico ao de antes desta property existir.
-    internal var web3j: Web3j = Web3j.build(HttpService(properties.rpcUrl).apply { addHeaders(properties.authHeaders()) })
+    internal var web3j: Web3j = Web3j.build(httpService)
+
+    // Recalcula o header de auth (PAT estático ou token Keycloak, ver `resolveAuthHeaders`) e o
+    // sobrescreve na `HttpService` viva antes de qualquer request de verdade — chamado no início de
+    // cada método público que efetivamente fala com o nó. Sem Keycloak/PAT configurado,
+    // `resolveAuthHeaders` devolve mapa vazio e este `addHeaders` é um no-op (comportamento idêntico ao
+    // de antes desta property existir).
+    private fun refreshAuthHeader() {
+        httpService.addHeaders(resolveAuthHeaders(properties, keycloakTokenProvider))
+    }
 
     // Só pra decodificar a convenção de argumento de array (DEC-090) — mesmo padrão de
     // `WebhookEnrichmentResolver.objectMapper` (instância própria, não injetada; não há necessidade de
     // config customizada aqui, só `readValue` de um JSON array simples de strings).
     private val objectMapper = ObjectMapper()
 
-    override fun currentBlockNumber(): Long =
-        web3j.ethBlockNumber().send().blockNumber.toLong()
+    override fun currentBlockNumber(): Long {
+        refreshAuthHeader()
+        return web3j.ethBlockNumber().send().blockNumber.toLong()
+    }
 
     override fun getLogs(fromBlock: Long, toBlock: Long): List<BlockchainLog> {
+        refreshAuthHeader()
         // `address = null`: EthFilter/Filter é `@JsonInclude(NON_NULL)`, então o campo é omitido do
         // corpo JSON-RPC — o nó interpreta ausência de `address` como "qualquer endereço", diferente
         // de uma lista vazia (que alguns clientes podem tratar como "nenhum endereço"). DEC-001/DEC-002:
@@ -85,6 +108,7 @@ class Web3jBlockchainClient(
     }
 
     override fun getBlockTimestamp(blockNumber: Long): Instant {
+        refreshAuthHeader()
         val block = web3j.ethGetBlockByNumber(DefaultBlockParameterNumber(blockNumber), false).send().block
             ?: throw IllegalStateException("Bloco $blockNumber não encontrado (eth_getBlockByNumber retornou nulo)")
         return Instant.ofEpochSecond(block.timestamp.toLong())
@@ -96,6 +120,7 @@ class Web3jBlockchainClient(
     // (essa é exclusiva de `eth_getLogs`, que pode ser recusado por range grande demais; `eth_getCode`
     // é uma consulta pontual de 1 endereço em 1 bloco, sem noção de "range").
     override fun hasCode(address: String): Boolean {
+        refreshAuthHeader()
         val code = web3j.ethGetCode(address, DefaultBlockParameter.valueOf("latest")).send().code
         return code != "0x"
     }
@@ -114,6 +139,7 @@ class Web3jBlockchainClient(
         args: List<String>,
         blockNumber: Long,
     ): List<String> {
+        refreshAuthHeader()
         val inputParameters: List<Type<*>> = inputTypes.zip(args).map { (type, value) -> toSolidityValue(type, value) }
         val outputParameters: List<TypeReference<*>> = outputTypes.map { TypeReference.makeTypeReference(it) }
         val function = Function(methodName, inputParameters, outputParameters)

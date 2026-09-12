@@ -17,6 +17,7 @@ import org.web3j.abi.datatypes.Function
 import org.web3j.abi.datatypes.Utf8String
 import org.web3j.abi.datatypes.generated.StaticArray2
 import org.web3j.abi.datatypes.generated.Uint256
+import org.springframework.web.client.RestClient
 import org.web3j.protocol.Web3j
 import org.web3j.protocol.core.DefaultBlockParameter
 import org.web3j.protocol.core.DefaultBlockParameterNumber
@@ -32,11 +33,15 @@ import org.web3j.protocol.core.methods.response.Log
  * respostas Web3j fabricadas em memória (`Log`, `Response.Error`) pra exercitar só o mapeamento
  * `Log -> BlockchainLog` e a heurística de detecção de erro de range (`isRangeError`) — nunca chama
  * `getLogs`/`currentBlockNumber`/`getBlockTimestamp` de verdade (isso exigiria um nó real ou fabricar
- * um `Web3jService` inteiro, fora do escopo desta etapa).
+ * um `Web3jService` inteiro, fora do escopo desta etapa). `keycloakTokenProvider` real, mas com
+ * `keycloak.token-url` vazio (default) — nunca efetivamente chamado (`refreshAuthHeader` cai no PAT
+ * estático, também vazio por default, e só mexe na `HttpService` real não usada nestes testes).
  */
 class Web3jBlockchainClientTest {
 
-    private val client = Web3jBlockchainClient(BlockchainProperties())
+    private val properties = BlockchainProperties()
+    private val keycloakTokenProvider = KeycloakTokenProvider(properties, RestClient.builder())
+    private val client = Web3jBlockchainClient(properties, keycloakTokenProvider)
 
     @Test
     fun `maps a Web3j Log to the domain BlockchainLog`() {

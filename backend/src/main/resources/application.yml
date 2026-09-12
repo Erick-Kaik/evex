@@ -94,6 +94,22 @@ indexer:
     # Desliga o envio do header sem remover o token do ambiente. Default true: só setar auth-token já
     # basta pra ativar o auth (DEC-094).
     auth-enabled: ${EVEX_BLOCKCHAIN_AUTH_ENABLED:true}
+    keycloak:
+      # Obtenção DINÂMICA de token via Keycloak (grant_type=password), alternativa ao PAT estático
+      # acima — pra redes que exigem login de verdade (ex.: rede Besu real da EBS, E27 complemento).
+      # Vazio (default) desliga o modo Keycloak inteiro; nesse caso cai no PAT estático (auth-token/
+      # auth-enabled acima). Se preenchido, tem PRECEDÊNCIA sobre o PAT estático (DEC-095).
+      token-url: ${EVEX_BLOCKCHAIN_KEYCLOAK_TOKEN_URL:}
+      # Sem default fixo de propósito — cada rede real tem o seu client. O Anbima usava um client
+      # público ("login-app", sem client-secret) como referência.
+      client-id: ${EVEX_BLOCKCHAIN_KEYCLOAK_CLIENT_ID:}
+      # Opcional — só entra no form de login/refresh se não-branco (cobre client confidencial).
+      client-secret: ${EVEX_BLOCKCHAIN_KEYCLOAK_CLIENT_SECRET:}
+      username: ${EVEX_BLOCKCHAIN_KEYCLOAK_USERNAME:}
+      password: ${EVEX_BLOCKCHAIN_KEYCLOAK_PASSWORD:}
+      scope: ${EVEX_BLOCKCHAIN_KEYCLOAK_SCOPE:openid profile email}
+      # Margem de segurança antes do access token expirar de verdade (renova um pouco antes).
+      refresh-skew: ${EVEX_BLOCKCHAIN_KEYCLOAK_REFRESH_SKEW:30s}
   redecode:
     # Tamanho do lote da reindexação assíncrona (ingestion-pipeline-reference.md §4) — orquestrador
     # RedecodeOrchestrator/RedecodeRunner/RedecodeBatchProcessor (E5).

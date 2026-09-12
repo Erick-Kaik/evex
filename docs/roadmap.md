@@ -2471,3 +2471,33 @@ EBS e no banco via VPC Connector, front consumindo o backend real.
 - `./gradlew build` limpo (compilação + suíte inteira) confirmado ao final.
 - **Não validado ao vivo contra a rede real da EBS** (ainda não provisionada/testada nesta sessão) — só
   a lógica de decisão do header, testada isoladamente.
+
+**Complemento 2 (`blockchain-integration`, 2026-09-11)** — login via Keycloak (`grant_type=password`),
+alternativa dinâmica ao PAT estático:
+- A rede Besu de teste da EBS pode exigir login de verdade (usuário/senha → access/refresh token que
+  expiram) em vez de um PAT fixo — reaproveitado o padrão `ServiceTokenProvider`/`TokenResponse` do
+  código base Anbima (login/refresh/skew/lock), com Spring `RestClient` no lugar de `WebClient`/WebFlux
+  (fora do classpath do Evex). Ver DEC-095 — **não reabre o BBChain Keeper**, só a peça de obtenção de
+  token, usada pra autenticar a conexão RPC direta que já existia.
+- Precedência **Keycloak > PAT estático (DEC-094) > sem auth**, decidida pela presença de
+  `indexer.blockchain.keycloak.token-url` (`EVEX_BLOCKCHAIN_KEYCLOAK_TOKEN_URL`) — vazio (default)
+  preserva 100% o comportamento anterior. Novo componente `KeycloakTokenProvider` (+
+  `KeycloakTokenResponse`) em `adapters/outbound/blockchain/`; nova `KeycloakAuthProperties` aninhada em
+  `BlockchainProperties.keycloak`.
+- Problema do header dinâmico resolvido de 2 formas diferentes por transporte: HTTP mantém a mesma
+  `HttpService` e sobrescreve o header antes de cada request (`HttpService.headers` é um `HashMap`
+  mutável, lido a cada `performIO`, confirmado via source real do jar); WebSocket recria a conexão
+  inteira (`WebSocketClient`/`WebSocketService`/`Web3j`) a cada tentativa — inicial e toda reconexão —
+  via um novo seam `connectionFactory`, já que os headers do WS só valem no handshake inicial.
+- Teste novo `KeycloakTokenProviderTest` (`MockRestServiceServer`, sem chamada real a Keycloak): login
+  inicial, reuso de token válido, refresh perto de expirar, fallback pra login completo quando o refresh
+  falha, `client_secret` opcional. `Web3jBlockchainClientTest`/`WebSocketPollTriggerTest` ajustados (novo
+  parâmetro de construtor `KeycloakTokenProvider`; `WebSocketPollTriggerTest` também trocou a seam de
+  mock de atribuição direta de campo para `connectionFactory`).
+- `application.yml`, `backend/README.md`, `backend/.env.example`/`.env.local` ganharam a família
+  `EVEX_BLOCKCHAIN_KEYCLOAK_*` (`TOKEN_URL`/`CLIENT_ID`/`CLIENT_SECRET`/`USERNAME`/`PASSWORD`/`SCOPE`/
+  `REFRESH_SKEW`).
+- `./gradlew clean build` limpo (compilação + suíte inteira) confirmado ao final. Achado incidental (não
+  relacionado): `BlockscoutClient.kt` tinha uma corrupção de sintaxe já presente no working tree ao
+  iniciar esta sessão (`root.pa/th("items")`) — corrigida pra desbloquear a compilação.
+- **Não validado ao vivo contra o Keycloak real da EBS** (ainda não provisionado/testado nesta sessão).

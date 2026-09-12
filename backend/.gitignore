@@ -6,3 +6,7 @@ out/
 .idea/
 *.iml
 HELP.md
+
+# Variáveis de ambiente locais (RPC/token/etc.) — nunca commitadas (contêm segredo de rede real).
+.env
+.env.local

@@ -1,5 +1,6 @@
 package br.com.bbchain.evex.indexer.config
 
+import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 
@@ -58,4 +59,60 @@ class BlockchainProperties {
      * precisar mexer nesta flag também (DEC-094).
      */
     var authEnabled: Boolean = true
+
+    /**
+     * `indexer.blockchain.keycloak.*` — obtenção **dinâmica** de token via Keycloak
+     * (`grant_type=password`), pra redes que exigem login de verdade em vez de um PAT estático colado
+     * no ambiente (ex.: rede Besu real da EBS, E27 complemento/DEC-095). Reaproveita o padrão do
+     * `ServiceTokenProvider` do código base Anbima (login/refresh/skew/lock), com `RestClient` no lugar
+     * de `WebClient` (o projeto não tem WebFlux no classpath).
+     *
+     * Precedência resolvida em [br.com.bbchain.evex.indexer.adapters.outbound.blockchain
+     * .resolveAuthHeaders]: [KeycloakAuthProperties.tokenUrl] preenchido → Keycloak; senão →
+     * [authToken]/[authEnabled] (PAT estático, DEC-094); senão → sem auth. `tokenUrl` vazio (default)
+     * preserva 100% o comportamento anterior a esta property existir.
+     */
+    var keycloak: KeycloakAuthProperties = KeycloakAuthProperties()
+}
+
+/**
+ * Config do modo de auth via Keycloak (`indexer.blockchain.keycloak.*`) — ver [BlockchainProperties.keycloak].
+ * Classe própria (não `data class`) só por consistência com [BlockchainProperties] (binding via `var`
+ * mutável, sem necessidade de `copy()`/`equals()` estrutural).
+ */
+class KeycloakAuthProperties {
+    /**
+     * Token endpoint do Keycloak (ex.: `https://<host>/realms/<realm>/protocol/openid-connect/token`).
+     * Vazio (default) desliga o modo Keycloak inteiro — cai no PAT estático (`authToken`/`authEnabled`).
+     */
+    var tokenUrl: String = ""
+
+    /**
+     * Client id do Keycloak. Sem default fixo de propósito — o Anbima usava um client público
+     * (`login-app`, sem `client_secret`) como referência, mas cada rede real tem o seu; o operador
+     * informa explicitamente via ambiente.
+     */
+    var clientId: String = ""
+
+    /**
+     * Client secret, opcional — só entra no form de login/refresh se não-branco. Cobre client
+     * confidencial além do público (diferença em relação ao Anbima, que só tinha client público).
+     */
+    var clientSecret: String = ""
+
+    /** Usuário de serviço usado no `grant_type=password`. */
+    var username: String = ""
+
+    /** Senha do usuário de serviço. */
+    var password: String = ""
+
+    /** `scope` enviado no login/refresh — mesmo default do Anbima. */
+    var scope: String = "openid profile email"
+
+    /**
+     * Margem de segurança antes do access token expirar de verdade — [KeycloakTokenProvider] renova
+     * (refresh ou login completo) um pouco antes do `expires_in` reportado pelo Keycloak, não em cima
+     * da hora. Mesmo default do Anbima (`ServiceTokenProvider`).
+     */
+    var refreshSkew: Duration = Duration.ofSeconds(30)
 }

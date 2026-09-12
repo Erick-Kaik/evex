@@ -62,6 +62,11 @@ Todas têm default (funciona sem configurar nada pra rodar contra o `local-env`)
 | `EVEX_POLL_BATCH_SIZE`/`EVEX_POLL_MIN_BATCH_SIZE` | `1000`/`1` | Janela da ingestão + piso do auto-shrink em erro de range do nó. |
 | `EVEX_BLOCKCHAIN_TRANSPORT` | `POLLING` | `POLLING`\|`WEBSOCKET`\|`NONE` — qual gatilho dispara a ingestão (E26). `WEBSOCKET` ainda não foi validado contra um nó real, só via mock (ver `docs/decisions.md` DEC-091). |
 | `EVEX_BLOCKCHAIN_WS_URL` | `ws://localhost:8546` | Endpoint WebSocket do nó — só usado quando `EVEX_BLOCKCHAIN_TRANSPORT=WEBSOCKET`. |
+| `EVEX_BLOCKCHAIN_AUTH_TOKEN`/`_AUTH_ENABLED` | vazio / `true` | PAT/Bearer estático opcional pro RPC (`Authorization: Bearer <token>`) — vazio desliga (E27, DEC-094). Ignorado se `EVEX_BLOCKCHAIN_KEYCLOAK_TOKEN_URL` estiver preenchido (precedência Keycloak > PAT, DEC-095). |
+| `EVEX_BLOCKCHAIN_KEYCLOAK_TOKEN_URL` | vazio | Token endpoint do Keycloak — preenchido, liga a obtenção **dinâmica** de token (`grant_type=password` + refresh), pra redes que exigem login de verdade (ex.: rede Besu real da EBS). Vazio (default) desliga o modo Keycloak inteiro (E27 complemento, DEC-095). |
+| `EVEX_BLOCKCHAIN_KEYCLOAK_CLIENT_ID`/`_CLIENT_SECRET` | vazio / vazio | Client Keycloak — `_CLIENT_SECRET` só entra no form se não-branco (client confidencial); sem default fixo, cada rede tem o seu (o Anbima usava um client público de referência). |
+| `EVEX_BLOCKCHAIN_KEYCLOAK_USERNAME`/`_PASSWORD` | vazio / vazio | Usuário de serviço do `grant_type=password`. |
+| `EVEX_BLOCKCHAIN_KEYCLOAK_SCOPE`/`_REFRESH_SKEW` | `openid profile email` / `30s` | `scope` do login/refresh; margem de segurança antes do access token expirar de verdade. |
 | `EVEX_BLOCKSCOUT_URL` | vazio | URL do Blockscout — vazio desabilita discovery/import de ABI/fallback de detecção de interface. |
 | `EVEX_CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Origens liberadas pro frontend (`indexer.cors`). |
 | `EVEX_ABI_LOCAL_STORAGE_PATH` | `./data/abis` | Caminho do storage `local`/`hybrid` de ABI. |
