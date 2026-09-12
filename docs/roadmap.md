@@ -38,7 +38,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
 | E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — mesmo padrão de `InterfaceDetector`/`BuiltinInterfaceTemplates` (E6) já usado pra ERC20/721/1155, comparando seletores de função conhecidos (`upgradeTo(address)`, `upgradeToAndCall(address,bytes)`, `proxiableUUID()`) contra o ABI cadastrado. Só **detecção/exibição** (badge no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` | 🔲 A fazer — surgiu de uma conversa sobre um projeto futuro relacionado (API "casca" de chamada dinâmica de método de contrato), registrada aqui porque a parte de detecção faz sentido ficar no Evex mesmo (é só leitura). Escopo pequeno, ainda não iniciado |
-| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend (+ frontend pendente) | `hexagonal-architect` (análise) + `kotlin-backend-dev` (execução backend) | 🟡 Backend implementado (DEC-097), conforme a recomendação da DEC-096 (`lineageId` aditivo). **Não concluída**: falta frontend (`frontend-dev`) e revisão de ponta a ponta (`reviewer`) antes de marcar ✅ |
+| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend + frontend | `hexagonal-architect` (análise) + `kotlin-backend-dev` (backend) + `frontend-dev` (frontend) + `reviewer` (revisão) | ✅ Concluída — `lineageId` aditivo (DEC-096/DEC-097/DEC-098), revisada pelo `reviewer` em 2026-09-12 sem achado bloqueante |
 
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
@@ -2561,7 +2561,7 @@ alternativa dinâmica ao PAT estático:
 
 ---
 
-## E29 — Modelagem de "contrato redeployado" (não upgrade) — backend + frontend implementados (DEC-096/DEC-097/DEC-098)
+## E29 — Modelagem de "contrato redeployado" (não upgrade) — ✅ Concluída (DEC-096/DEC-097/DEC-098)
 
 **Depende de**: nada tecnicamente pra começar a análise, mas contexto essencial: E2 (`MonitoredContract`,
 endereço como chave natural imutável), E3 (`ContractAbi`/versionamento por bloco, DEC-007 — pensado
@@ -2569,8 +2569,8 @@ originalmente só pro caso de proxy upgradável).
 
 **Status**: ✅ Análise concluída por `hexagonal-architect` em 2026-09-11 (DEC-096); ✅ **backend
 implementado** por `kotlin-backend-dev` em 2026-09-12 (DEC-097); ✅ **frontend implementado** por
-`frontend-dev` em 2026-09-12 (DEC-098). 🟡 **Etapa ainda não fechada**: falta a revisão de ponta a
-ponta do `reviewer` antes de marcar ✅ concluída.
+`frontend-dev` em 2026-09-12 (DEC-098); ✅ **revisão de ponta a ponta concluída** pelo `reviewer` em
+2026-09-12, sem achado bloqueante — etapa fechada.
 
 **O que foi implementado (frontend, DEC-098)**: `npm run generate:api` (cliente já vinha com
 `predecessorAddress`/`lineageId`/`listContractLineage` — regenerado nesta sessão só pra confirmar,
@@ -2607,6 +2607,83 @@ Migration `V5__monitored_contracts_lineage_and_created_at.sql` só para `created
 mesmo gotcha da DEC-041/DEC-083) — `lineage_id` (nullable) não precisou de migration. `./gradlew build`
 verde, 567/567 testes. Ver DEC-097 para o racional completo das decisões operacionais tomadas na
 implementação.
+
+### Revisão (`reviewer`, 2026-09-12)
+
+✅ **Aprovada, sem achado bloqueante.** Backend e frontend revisados de ponta a ponta contra CLAUDE.md
+(raiz + módulo), `backend/docs/`, DEC-096/097/098 e o próprio código (não só o relato dos agentes
+anteriores). Build/teste de ambos os módulos rodados do zero, de forma independente:
+
+- **Backend**: `./gradlew build` reconfirmado verde — **567/567 testes, 0 falha** (contagem somada dos
+  XMLs de `build/test-results`, não só o texto do relato).
+- **Frontend**: `npx tsc -b` limpo, `npm run lint` limpo, `npx vitest run` **109/109** (27 arquivos),
+  `npm run build` limpo — `npm run generate:api` rodado dentro do build não produziu diff em
+  `src/api/` (`git status` limpo antes/depois), confirmando que o cliente já vinha com os campos da
+  E29 desde a DEC-097.
+
+Pontos específicos pedidos, conferidos por leitura direta do código (não só do roadmap/decisions):
+
+1. **Consistência com a DEC-096**: confirmado por `grep` — `lineageId`/`findAllByLineageId` só
+   aparecem em `domain/contract/`, `adapters/outbound/persistence/{JpaMonitoredContractAdapter,
+   MonitoredContractEntity,MonitoredContractJpaRepository}` e `adapters/inbound/api/
+   {ContractsApiServiceImpl,ApiExceptionHandler}`. Nenhum arquivo de saldo/webhook/Modelo de
+   Entidade/Carteiras/catálogos de ABI foi tocado — os únicos "efeitos colaterais" em outros testes
+   (`AbiRegistrationServiceTest`, `ContractAbiEntryCatalogServiceTest`, `ContractEventCatalogServiceTest`,
+   `EnrichmentProfileServiceTest`, `EntityModelServiceTest`, `WebhookEnrichmentResolverTest`) são
+   puramente mecânicos — adição de `lineageId = null, createdAt = Instant.now()` nos fixtures de
+   `MonitoredContract`, exigida só porque o construtor ganhou 2 campos novos, sem nenhuma mudança de
+   comportamento nesses módulos (confirmado lendo o diff de cada um, `git show 907cbf9`). A API pública
+   não quebrou: os 9 endpoints `{contractAddress}` pré-existentes continuam intocados; o único endpoint
+   novo (`GET /v1/contracts/{address}/lineage`) segue o mesmo path parameter.
+2. **Regra de "batizar" o predecessor**: `MonitoredContractService.resolveLineageId` confirmada
+   correta — herda `predecessor.lineageId ?: predecessor.id`, e só grava (`contracts.save(predecessor.
+   copy(lineageId = lineageId))`) quando o predecessor ainda não tinha `lineageId`. Comportamento
+   verificado tanto por unit test com `verify(exactly = 2/1) { contracts.save(...) }`
+   (`MonitoredContractServiceTest`, casos "christens it if it had none" vs. "reuses an already-
+   christened lineageId without saving the predecessor again") quanto por teste real contra Postgres
+   via Testcontainers (`JpaMonitoredContractAdapterTest > findAllByLineageId returns the whole lineage
+   ordered by createdAt, excludes contracts from other lineages`) — a persistência real (não só o
+   valor em memória) foi exercitada.
+3. **Migration `V5__monitored_contracts_lineage_and_created_at.sql`**: correta e equivalente à classe
+   de gotcha da DEC-041/DEC-083 — `lineage_id UUID NULL` sem migration nenhuma (`ddl-auto: update` já
+   resolve coluna nova nullable), `created_at TIMESTAMP NOT NULL DEFAULT now()` via `ADD COLUMN IF NOT
+   EXISTS`, no-op num banco novo onde o Hibernate já criou a coluna certa antes da migration rodar
+   (`PostSchemaFlywayMigrator`). Comentário no SQL explica corretamente por que `DEFAULT now()` aqui não
+   é um sentinela de domínio como nas migrations anteriores (`-1`/`'[]'::jsonb`), e por que isso é
+   aceitável (linhas pré-existentes já são "contrato sem lineage", `created_at` delas não alimenta
+   nenhuma regra de negócio).
+4. **Validação de rede**: `LineageNetworkMismatchException` mapeada em `ApiExceptionHandler` →
+   `400 LINEAGE_NETWORK_MISMATCH`, confirmado **de ponta a ponta via MockMvc** (não só a exceção sendo
+   lançada em isolamento) — `ContractsApiTest > create with a predecessorAddress on a different network
+   returns 400` assevera `status().isBadRequest` + `jsonPath("$.code").value("LINEAGE_NETWORK_MISMATCH")`
+   contra a stack HTTP real (Testcontainers Postgres). `predecessorAddress` de endereço inexistente
+   reaproveitando `ContractNotFoundException` (404) é coerente com o padrão já usado no resto da API.
+5. **Frontend**: `ContractFormPage.tsx` confirmado — o checkbox/autocomplete de redeploy só existe
+   dentro de `ContractCreateForm` (renderizada só em `mode === 'create'`); `ContractFieldsForm`
+   (compartilhado `view`/`edit`) não referencia `predecessorAddress` em nenhum ponto, e o teste
+   `modo edit/view: não mostra o campo de redeploy` cobre isso explicitamente para os 2 modos.
+   `ContractLineageSection.tsx` confirmado retornando `null` (sem card vazio) tanto no estado pendente
+   quanto quando `data.length <= 1` — coberto por `ContractLineageSection.test.tsx` com
+   `expect(container).toBeEmptyDOMElement()` nos 2 casos.
+6. **Suítes completas rodadas de forma independente** (não só o relato dos agentes): `./gradlew build`
+   → 567/567; `npx tsc -b && npm run lint && npx vitest run && npm run build` → 109/109 testes, tudo
+   verde, cliente gerado sem diff.
+
+**Achados não-bloqueantes** (não impedem o fechamento da etapa):
+
+- `ContractsApiTest` cobre `predecessorAddress` inexistente só a nível de unit test
+  (`MonitoredContractServiceTest > register throws ContractNotFoundException when the
+  predecessorAddress is not registered`), sem um teste HTTP (`MockMvc`) equivalente para
+  `POST /v1/contracts` especificamente com esse cenário — o mapeamento `ContractNotFoundException` →
+  404 já é validado ponta a ponta em outros endpoints (`GET /v1/contracts/{address}`,
+  `GET /v1/contracts/{address}/lineage`), então o risco real é baixo, mas um teste HTTP dedicado
+  fecharia esse último canto.
+- `<ContractAutocomplete>` usado para escolher o predecessor não filtra pela `network` já selecionada
+  no formulário — o usuário pode escolher um predecessor de rede diferente e só descobrir o erro depois
+  de submeter (400 `LINEAGE_NETWORK_MISMATCH`, tratado com clareza pelo `ApiErrorAlert`). Já registrado
+  como decisão consciente em DEC-098 ("Alternativas consideradas" — descartado por não ter sido pedido);
+  mantido aqui só como lembrete de UX pra uma iteração futura, não é uma lacuna nova encontrada nesta
+  revisão.
 
 **Contexto/problema**: um proxy upgradável (UUPS/ERC-1967) mantém o **mesmo endereço pra sempre** — é
 esse o caso que `ContractAbi` já resolve (várias versões de ABI, mesmo endereço, faixas de bloco
