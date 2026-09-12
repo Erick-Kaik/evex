@@ -116,6 +116,20 @@ export function useContractAbiEntries(address: string | undefined) {
 }
 
 /**
+ * Linhagem de "contratos redeployados" (E29/DEC-096/DEC-097) que este contrato pertence, inclusive
+ * ele mesmo (`GET /v1/contracts/{address}/lineage`) — lista simples, sem paginação, ordenada por
+ * data de cadastro. Um contrato sem `lineageId`/nunca envolvido num redeploy devolve uma lista de
+ * 1 item (ele mesmo) — a tela decide não mostrar nada nesse caso (`ContractLineageSection`).
+ */
+export function useContractLineage(address: string | undefined) {
+  return useQuery({
+    queryKey: ['contract-lineage', address],
+    queryFn: async () => (await contractsApi.listContractLineage(address as string)).data,
+    enabled: Boolean(address),
+  })
+}
+
+/**
  * Sugere interfaces padrão (ERC20/ERC721/ERC1155) pra um contrato — sob demanda (botão), não
  * automático no carregamento da tela (`GET /v1/contracts/{address}/abi/suggestions`, via `mutate()`
  * sem parâmetros).

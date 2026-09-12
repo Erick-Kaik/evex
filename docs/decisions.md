@@ -1538,3 +1538,40 @@ DEC-096 recomendou (sem implementar) um campo aditivo `MonitoredContract.lineage
 ### Consequências
 
 `./gradlew build` verde: compilação completa + suíte inteira, **567/567 testes, 0 falha**. Nenhum módulo fora de `MonitoredContract`/`ContractsApiServiceImpl`/`ApiExceptionHandler`/a spec de Contracts foi tocado — confirma na prática o "zero impacto nos outros 5 módulos" que a DEC-096 previu. Pendente para sessões seguintes (fora do escopo desta etapa): UI de cadastro (`predecessorAddress` opcional) e de navegação de linhagem no frontend (`frontend-dev`), e revisão de ponta a ponta pelo `reviewer` antes de marcar a E29 como ✅ concluída no roadmap.
+
+---
+
+## DEC-098 — E29 (execução, frontend): campo `predecessorAddress` só em `create` + `ContractLineageSection` que só aparece com linhagem não trivial, sem tratamento especial pro erro `LINEAGE_NETWORK_MISMATCH`
+
+Data: 2026-09-12
+
+Módulo: frontend (`frontend-dev`, execução da E29 — parte final da recomendação da DEC-096/DEC-097)
+
+Autor: `frontend-dev`
+
+### Contexto
+
+DEC-097 implementou o backend completo da E29 (`lineageId` aditivo, `predecessorAddress` no cadastro, `GET /v1/contracts/{address}/lineage`), deixando explicitamente pendentes o formulário de cadastro e a navegação de linhagem no frontend. Esta etapa implementa essas 2 telas.
+
+### Decisões operacionais tomadas na implementação
+
+**1. Nenhum tratamento especial de código pro erro `400 LINEAGE_NETWORK_MISMATCH`** — o pedido da etapa era "trate com uma mensagem clara", e o padrão já existente (`<ApiErrorAlert error={createContract.error} />`, já presente no formulário de cadastro antes desta etapa) já satisfaz isso: `ApiErrorAlert` extrai `error.response.data.message` de qualquer `ApiError` genericamente, e a mensagem que `LineageNetworkMismatchException` carrega ("O predecessor informado (...) pertence a uma rede diferente do contrato novo (...)") já é clara o suficiente sem precisar de um `code === 'LINEAGE_NETWORK_MISMATCH'` tratado à parte. Adicionar um `if` especial só pra esse código teria sido tratamento duplicado sem ganho — o padrão genérico já é o "tratamento" pedido.
+
+**2. Campo de redeploy vive só dentro de `ContractCreateForm`** (a função interna que só é renderizada quando `mode === 'create'`), não como um campo condicional dentro de um componente compartilhado entre os 3 modos — mesma decisão estrutural que o campo "Endereço" já seguia (também só existe em `ContractCreateForm`, nunca em `ContractFieldsForm`, que é o componente compartilhado `view`/`edit`). Não precisou de nenhum `if (mode === 'create')` disperso pelo JSX porque a própria árvore de componentes já separava isso.
+
+**3. `ContractLineageSection` renderiza `null` enquanto a consulta está pendente**, em vez de mostrar um texto "Carregando..." como `ContractBalancesSection` faz. Decisão deliberada, diferente do padrão da seção-irmã: como o critério de exibição da seção inteira é "só aparece com lineage > 1", mostrar um estado de carregamento que na maioria das vezes (lineage trivial, o caso comum hoje) desaparece um instante depois seria mais ruído visual do que sinal — a seção "pisca" e some pra a maioria dos contratos, que nunca foram redeployados. Erro de rede, por outro lado, é mostrado (não escondido) — ver decisão 4.
+
+**4. Erro na consulta de linhagem é mostrado, não escondido silenciosamente** — mesmo a seção sendo condicional por padrão, um erro real (rede fora do ar, 500) é informação relevante o suficiente pra não desaparecer atrás do mesmo `return null` do estado "lineage trivial". Único caso em que a seção aparece para **qualquer** contrato, mesmo sem redeploy.
+
+**5. Navegação de cada item da linhagem via `<AddressCell kind="contract">`**, não `<RowActions>` (padrão das listagens principais como `ContractsListPage`). `RowActions` exige `onView` **e** `onEdit` (2 ações) — não fazia sentido oferecer edição inline dentro de uma seção de detalhe que só existe pra navegação/consulta. `AddressCell` já é o componente usado nas outras listagens *read-only* do projeto (`EventsPage`, `ContractBalancesSection`, `WalletBalancesSection`) pra resolver nome+link a partir de um endereço, e reaproveita o catálogo de contratos já carregado em cache pelo React Query — sem essa escolha, seria preciso outro componente/lógica só pra esta seção.
+
+**6. Contrato atualmente aberto ganha um `Chip` "Atual"** ao lado do nome na tabela de linhagem, em vez de ficar sem nenhuma marca visual (o que faria o usuário clicar num link que só recarrega a mesma página) ou de virar uma linha sem link (quebraria a uniformidade visual da tabela — todas as linhas usam `AddressCell` do mesmo jeito).
+
+### Alternativas consideradas
+
+- Mostrar a seção sempre, com um estado vazio explícito tipo "Este contrato não faz parte de uma linhagem de redeploys" (mesmo padrão de `ContractBalancesSection`) — descartado porque o próprio pedido da etapa foi explícito: "linhagem de tamanho 1 não mostra nada, não é informação útil". Isso é uma diferença consciente de padrão em relação a `ContractBalancesSection`, não um esquecimento.
+- Auto-preencher o campo `network` do formulário de cadastro a partir da rede do predecessor escolhido, pra evitar o erro `LINEAGE_NETWORK_MISMATCH` na origem — descartado por não ter sido pedido e por adicionar um acoplamento entre 2 campos que hoje são independentes; o erro 400 já é tratado de forma clara (decisão 1), então prevenir o erro na UI é um refinamento futuro, não uma necessidade desta etapa.
+
+### Consequências
+
+`npx tsc -b && npm run lint && npx vitest run && npm run build` verdes — 27 arquivos de teste, 109 testes, 0 falha (10 novos testes desta etapa: 6 em `ContractFormPage.test.tsx`, 4 em `ContractLineageSection.test.tsx`). `npm run generate:api` rodado nesta sessão não gerou diff — o cliente já vinha com os campos da E29 desde a DEC-097 (`git status` limpo em `src/api/` antes e depois). Etapa E29 segue **não fechada** — falta a revisão de ponta a ponta do `reviewer` antes de marcar ✅ no roadmap.

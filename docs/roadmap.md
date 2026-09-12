@@ -2561,17 +2561,40 @@ alternativa dinâmica ao PAT estático:
 
 ---
 
-## E29 — Modelagem de "contrato redeployado" (não upgrade) — backend implementado (DEC-096/DEC-097)
+## E29 — Modelagem de "contrato redeployado" (não upgrade) — backend + frontend implementados (DEC-096/DEC-097/DEC-098)
 
 **Depende de**: nada tecnicamente pra começar a análise, mas contexto essencial: E2 (`MonitoredContract`,
 endereço como chave natural imutável), E3 (`ContractAbi`/versionamento por bloco, DEC-007 — pensado
 originalmente só pro caso de proxy upgradável).
 
 **Status**: ✅ Análise concluída por `hexagonal-architect` em 2026-09-11 (DEC-096); ✅ **backend
-implementado** por `kotlin-backend-dev` em 2026-09-12 (DEC-097), conforme a recomendação confirmada
-pelo usuário. 🟡 **Etapa ainda não fechada**: falta o frontend (`frontend-dev` — campo opcional
-`predecessorAddress` no formulário de cadastro + UI de navegação de linhagem) e a revisão de ponta a
+implementado** por `kotlin-backend-dev` em 2026-09-12 (DEC-097); ✅ **frontend implementado** por
+`frontend-dev` em 2026-09-12 (DEC-098). 🟡 **Etapa ainda não fechada**: falta a revisão de ponta a
 ponta do `reviewer` antes de marcar ✅ concluída.
+
+**O que foi implementado (frontend, DEC-098)**: `npm run generate:api` (cliente já vinha com
+`predecessorAddress`/`lineageId`/`listContractLineage` — regenerado nesta sessão só pra confirmar,
+sem diff). `ContractFormPage.tsx` (`ContractCreateForm`, só modo `create`): checkbox "Isto é um
+redeploy de um contrato existente?" que revela um `<ContractAutocomplete>` pra escolher o
+predecessor por endereço — `predecessorAddress` só vai no `CreateContractPayload` quando marcado e
+preenchido; ausente em `edit`/`view` (mesmo racional do endereço — decisão tomada uma vez só, no
+cadastro). Erro `400 LINEAGE_NETWORK_MISMATCH` já cai no `<ApiErrorAlert>` existente do formulário
+sem nenhum tratamento especial — o componente já extrai `ApiError.message` genericamente, e a
+mensagem que o backend devolve (`LineageNetworkMismatchException`) já é clara o suficiente.
+`ContractLineageSection.tsx` (novo, mesmo padrão visual/estrutural de `ContractBalancesSection` —
+`Card`/`CardContent`, título, tabela): busca `GET /v1/contracts/{address}/lineage`
+(`useContractLineage`, novo hook em `useContracts.ts`) e só renderiza quando `data.length > 1` — sem
+estado "vazio" explícito (diferente de `ContractBalancesSection`), porque linhagem de tamanho 1 não é
+informação útil, é só ruído visual no detalhe de todo contrato comum. Cada linha usa
+`<AddressCell kind="contract">` (mesmo componente/padrão de navegação de `EventsPage`/
+`ContractBalancesSection`) pra linkar pro detalhe do respectivo contrato; o contrato atualmente
+aberto ganha um `Chip` "Atual" ao lado do nome. Seção plugada em `ContractViewEditForm`, depois de
+`ContractBalancesSection` (`view`/`edit`, nunca `create` — só existe contrato pra consultar lá).
+Testes novos: `ContractFormPage.test.tsx` (6 casos — campo aparece só em `create`, ausente em
+`edit`/`view`; payload com/sem `predecessorAddress`; mensagem de erro de rede incompatível
+renderizada) e `ContractLineageSection.test.tsx` (4 casos — pendente/erro/lineage trivial não
+renderiza, lineage com 2+ linka pro detalhe de cada um). `npx tsc -b && npm run lint && npx vitest
+run && npm run build` verdes (27 arquivos de teste, 109 testes).
 
 **O que foi implementado (backend, DEC-097)**: `MonitoredContract.lineageId: UUID?` (aditivo, `null`
 para contratos cadastrados antes desta etapa) + `createdAt: Instant`; `MonitoredContractPort.

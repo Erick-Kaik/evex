@@ -7,8 +7,10 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   Divider,
+  FormControlLabel,
   Grid,
   Link as MuiLink,
   List,
@@ -22,6 +24,8 @@ import EditIcon from '@mui/icons-material/Edit'
 import type { Contract, Network } from '../../api/api'
 import { ContractStatus } from '../../api/api'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
+import { ContractAutocomplete } from '../../components/ContractAutocomplete'
+import type { ContractRef } from '../../components/ContractAutocomplete'
 import { CopyableHash } from '../../components/CopyableHash'
 import { NetworkSelect } from '../../components/NetworkSelect'
 import { LabeledField } from '../../components/LabeledField'
@@ -30,6 +34,7 @@ import type { StatusOption } from '../../components/StatusToggle'
 import type { PageMode } from '../../components/pageMode'
 import { AbiSection } from './AbiSection'
 import { ContractBalancesSection } from './ContractBalancesSection'
+import { ContractLineageSection } from './ContractLineageSection'
 import {
   useContract,
   useCreateContract,
@@ -83,6 +88,8 @@ function ContractCreateForm() {
   const [description, setDescription] = useState('')
   const [version, setVersion] = useState('')
   const [network, setNetwork] = useState<Network | ''>('')
+  const [isRedeploy, setIsRedeploy] = useState(false)
+  const [predecessor, setPredecessor] = useState<ContractRef | null>(null)
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -91,7 +98,14 @@ function ContractCreateForm() {
     }
 
     createContract.mutate(
-      { address, name, description: description || undefined, version: version || undefined, network },
+      {
+        address,
+        name,
+        description: description || undefined,
+        version: version || undefined,
+        network,
+        predecessorAddress: isRedeploy ? predecessor?.address || undefined : undefined,
+      },
       { onSuccess: (contract) => navigate(`/contracts/${contract.address}`) },
     )
   }
@@ -139,6 +153,29 @@ function ContractCreateForm() {
               placeholder="ex.: 1.0.0"
             />
             <NetworkSelect required value={network} onChange={setNetwork} />
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={isRedeploy}
+                  onChange={(event) => {
+                    setIsRedeploy(event.target.checked)
+                    if (!event.target.checked) {
+                      setPredecessor(null)
+                    }
+                  }}
+                />
+              }
+              label="Isto é um redeploy de um contrato existente?"
+            />
+            {isRedeploy && (
+              <ContractAutocomplete
+                label="Contrato predecessor"
+                required
+                value={predecessor}
+                onChange={setPredecessor}
+              />
+            )}
 
             {createContract.isError && <ApiErrorAlert error={createContract.error} />}
 
@@ -277,6 +314,7 @@ function ContractViewEditForm({ address, mode }: { address: string; mode: PageMo
 
           <AbiSection address={address} />
           <ContractBalancesSection address={address} />
+          <ContractLineageSection address={address} />
         </>
       )}
     </Box>
