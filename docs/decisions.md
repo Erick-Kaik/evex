@@ -1436,3 +1436,72 @@ Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual, mes
 **Não validado ao vivo contra o Keycloak real da EBS** (ainda não provisionado/testado nesta sessão) — só a máquina de estados (via `MockRestServiceServer`) e o wiring (`Web3jBlockchainClientTest`/`WebSocketPollTriggerTest`) foram cobertos.
 
 `./gradlew clean build` limpo (compilação completa + suíte inteira, 555+ testes) confirmado ao final.
+
+## DEC-096 — E29 (análise, RECOMENDAÇÃO — não implementada): modelagem de "contrato redeployado" — endereço permanece a identidade primária em todo o sistema; aditivo `lineageId` compartilhado em `MonitoredContract` recomendado em vez do refactor de fundação ou do link `supersedes`/`replacedBy` pareado
+
+Data: 2026-09-11
+
+Módulo: backend (análise apenas — `hexagonal-architect`, etapa E29 do roadmap)
+
+Autor: `hexagonal-architect`
+
+**Esta é uma recomendação a confirmar com o usuário antes de qualquer implementação real começar.** Nenhum código foi alterado nesta etapa — o critério de aceite da E29 é só esta análise registrada.
+
+### Contexto
+
+`MonitoredContract.address` é hoje tratado como chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço (E3/DEC-007) — premissa pensada só pro caso de proxy upgradável (UUPS/ERC-1967), onde o endereço nunca muda entre versões de implementação. Não existe forma de expressar "isto é um redeploy de verdade — contrato novo, sem proxy, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` totalmente desconexos. O roadmap listou 2 abordagens candidatas (refactor de fundação movendo a identidade primária para dentro de `ContractAbi`; ou um link aditivo `supersedes`/`replacedBy` entre 2 `MonitoredContract`) e pediu um levantamento de todo lugar que hoje assume "1 endereço fixo = 1 contrato" antes de decidir.
+
+### Levantamento (arquivo:linha)
+
+O padrão encontrado é muito mais absoluto do que o problema da E29 sugeria: **não existe hoje, em lugar nenhum do sistema, uma associação por `MonitoredContract.id` (FK/UUID)** — cada módulo resolve tudo por `contractAddress` (string, normalizada lowercase) de forma independente. `MonitoredContract` funciona, na prática, como um registro de metadados (nome/descrição/versão/status) *ao lado* do endereço, não como o dono/pai de quem os outros módulos dependem por FK.
+
+1. **Persistência de contrato monitorado** — `domain/contract/MonitoredContractPort.kt:14` (`fun findByAddress(address: String): MonitoredContract?`) — nenhum `findById`. Toda a aplicação resolve "existe esse contrato?" por endereço, nunca por UUID:
+   - `application/abi/AbiRegistrationService.kt:69,130`
+   - `application/webhook/WebhookEnrichmentResolver.kt:82`
+   - `adapters/inbound/api/ContractsApiServiceImpl.kt:72,86,134` (inclusive `suggestInterface`, que nem sequer exige `MonitoredContract` — funciona "pra qualquer endereço com `topic0`s observados", comentário citando DEC-001 na linha 131)
+   - Todos os 3 catálogos de ABI (E16/E24): `ContractEventCatalogService`, `ContractMethodCatalogService`, `ContractAbiEntryCatalogService` — mesmo padrão `contracts.findByAddress(address) ?: 404`.
+
+2. **Ingestão** (já sabido, mas confirmado): `BlockchainEvent.contractAddress` (`domain/event/BlockchainEvent.kt:19`) é `String` cru, gravado direto do log (`IngestionBatchProcessor` — `contractAddress = log.contractAddress.lowercase()`), sem qualquer FK/lookup contra `MonitoredContract` no caminho quente. DEC-001 é explícito: a rede inteira é indexada, endereço nunca cadastrado incluso — a existência de `MonitoredContract` é irrelevante pra decidir se um evento é gravado.
+
+3. **ABI versionada (E3/DEC-007)** — `domain/abi/ContractAbi.kt:19` (`contractAddress: String`), `ContractAbiPort.kt` inteiro (`findAllByContractAddress(address: String)`, `findCurrentOpenVersion(address: String)`, sem nenhum método por id). Constraint de banco real: `V1__contract_abis_unique_open_version.sql` — índice único parcial em `contract_address` (não em nenhuma FK) garantindo no máximo 1 versão aberta por endereço. **Cache em memória crítico** (`adapters/outbound/abi/AbiCache.kt:43`): `ConcurrentHashMap<String, List<CachedAbiVersion>>` — chave é o endereço (lowercase), não um id de `MonitoredContract`.
+
+4. **Saldo (E7/E14)** — `domain/balance/BalanceMonitorConfig.kt:29` (`contractAddress: String`), `domain/balance/AssetBalance.kt`/`AssetBalanceSnapshot.kt` (mesma chave natural `(walletAddress, contractAddress, tokenId, network)`, sem `id` de propósito, conforme o próprio KDoc da classe). `application/balance/BalanceProjectionService.kt:59` casa configs ativas via `configs.findActive(event.contractAddress, eventName)` — direto do endereço bruto do evento, nunca passa por `MonitoredContract`.
+
+5. **Webhooks (E8/E19)** — `domain/webhook/WebhookConfig.kt:30` (`contractAddress: String`). `application/webhook/WebhookMatchingService.kt:58` (`webhookConfigs.findActive(event.contractAddress, eventName)`) e `:130` (matching de `ModelContributor` por `it.contractAddress.equals(event.contractAddress, ...)`) — mesmo padrão, direto do endereço do evento decodificado.
+
+6. **Modelo de Entidade (E19)** — `domain/model/EntityModel.kt` (`ModelContributor.contractAddress: String`) — cada contribuidor de um modelo aponta pra um `(contractAddress, eventName)` cru, validado no cadastro contra o catálogo de eventos daquele endereço (`ContractEventCatalogService`), não contra um id de `MonitoredContract`.
+
+7. **Carteiras (E22)** — módulo **inteiramente ortogonal**: `domain/wallet/WalletPort.kt`/`WalletService.kt` não importam `MonitoredContractPort` em nenhum ponto; `looksLikeContract` (DEC-080) é calculado via `BlockchainPort.hasCode(address)` direto na rede, sem nenhuma consulta a `MonitoredContract`. "Saldos desta carteira"/"Saldos deste contrato" (E21/E22, frontend) são só filtros client-side sobre `GET /v1/balances` por `walletAddress`/`contractAddress` — nenhuma FK envolvida.
+
+8. **Explorador de ABI (E24)** — `ContractAbiEntryCatalogService` é mirror exato do padrão do item 1 (`findByAddress` → 404 se `null` → lê `ContractAbiPort` por endereço).
+
+9. **Contrato da API (fronteira backend/frontend, OpenAPI)** — a barreira mais rígida encontrada: **9 arquivos de `paths/` inteiros** (`contract-detail`, `contract-status`, `contract-abi`, `contract-abi-suggestions`, `contract-abi-entries`, `contract-events`, `contract-methods`, `balances`, `balances-history`, `events`) usam `{contractAddress}` (`base/components/param/path/contract-address.yaml`) como **path parameter**, não um `{contractId}`. Isso significa que o próprio contrato público da API — a fronteira que este agente trata como intocável fora de consenso explícito — já modela "endereço = identidade do recurso `/v1/contracts/{contractAddress}`" em toda a seção de Contratos. Espelhado no frontend: `frontend/src/routes/router.tsx:53-55` (`contracts/:address`, `contracts/:address/edit`, `contracts/:address/abi-entries`) e `frontend/src/components/AddressCell.tsx:23` (link de navegação construído a partir do endereço).
+
+10. **Escala do achado**: `grep -rl contractAddress backend/src/main/kotlin` retorna **66 arquivos**; o mesmo grep em `backend/src/test/kotlin` retorna **42 arquivos**. Não há nenhum resultado de `monitoredContractId`/`contractId` (FK) em lugar nenhum do código de produção.
+
+### Avaliação de custo/risco por abordagem, à luz do levantamento
+
+**Abordagem 1 (refactor de fundação — identidade primária migra pra dentro de `ContractAbi`)**: o levantamento mostra que isto não é "mover uma FK que já existe em paralelo" — é **introduzir pela primeira vez** um nível de indireção (grupo lógico → endereço) em um sistema onde hoje 66 arquivos de produção + 42 de teste + toda a seção "Contracts" do contrato OpenAPI público + as rotas do frontend assumem "endereço é o identificador do recurso". O impacto atravessa exatamente os 4 eixos que a E29 pediu para auditar (ingestão, saldo, webhook, carteira) mais 2 que não estavam na lista original (Modelo de Entidade e o próprio contrato OpenAPI/rotas do frontend) — e nenhum desses 6 hoje tem uma FK a trocar; teriam que **ganhar** uma noção de agrupamento que não existe. Isto não é invasivo, é uma reescrita de fundação com quebra de contrato público de API. Risco desproporcional ao problema de produto real (redeploys de contrato não-proxy não são, pelo relato do usuário, um evento frequente ou crítico da PoC).
+
+**Abordagem 2 (aditiva, `supersedes`/`replacedBy` pareado)**: risco baixo, mas com uma limitação real que o levantamento não muda, mas que vale nomear: um link pareado (`A.replacedBy = B.id`, `B.supersedes = A.id`) modela bem 1 redeploy, mas uma linhagem com 3+ redeploys (`A → B → C`) vira uma lista encadeada — qualquer relatório "todo o histórico desta linhagem" precisa andar a cadeia nó a nó (`findById` repetido) em vez de 1 lookup. Funcional, mas desnecessariamente indireto para o caso de N versões.
+
+**3ª abordagem (recomendada) — variante da 2, `lineageId` compartilhado em vez de ponteiro pareado**: adicionar em `MonitoredContract` um campo aditivo `lineageId: UUID?` (nulo por padrão — 100% dos contratos existentes continuam sem lineage, migração `ddl-auto: update` de 1 coluna nullable, sem dado a migrar). Ao cadastrar um redeploy, o usuário informa o `lineageId` do contrato anterior (ou o backend atribui `lineageId = self.id` na criação de qualquer contrato, tornando todo contrato "lineage de tamanho 1" trivialmente); redeploys subsequentes reusam o mesmo `lineageId`. Diferença prática para a abordagem 2 original:
+- **1 query** (`findAllByLineageId`) recupera a linhagem inteira, em qualquer tamanho, sem caminhar nó a nó — melhor para o caso real de N redeploys, não só 1.
+- **Zero custo de migração nos outros 5 módulos do levantamento** (saldo, webhook, Modelo de Entidade, Carteiras, ingestão): todos continuam indexando por `contractAddress` exatamente como hoje. Uma consulta agregada "saldo/eventos de toda a linhagem" simplesmente resolve o conjunto de endereços da linhagem primeiro (`MonitoredContractPort.findAllByLineageId(id).map { it.address }`) e usa esse conjunto num `WHERE contract_address IN (...)` nos módulos existentes — o mesmo padrão de query que já existe, sem alterar nenhuma tabela/porta desses módulos.
+- **Zero impacto na fronteira OpenAPI**: `/v1/contracts/{contractAddress}` continua sendo o recurso primário de cada endereço; `lineageId` é só mais um campo do `ContractDto`/filtro opcional de listagem (`GET /v1/contracts?lineageId=...`), sem quebrar nenhuma rota existente do frontend.
+- Continua tecnicamente "2 entidades relacionadas" (mesma limitação conceitual apontada na abordagem 2 original — não é uma fusão real de identidade), mas resolve navegação/relatório de histórico de forma mais direta que um ponteiro pareado, com o mesmo perfil de risco baixo.
+
+### Decisão (recomendação, a confirmar com o usuário)
+
+Recomenda-se a **3ª abordagem**: `MonitoredContract.lineageId: UUID?` (aditivo, nullable, default `null`/auto-atribuído ao próprio `id`), com endpoint/filtro para navegar a linhagem, em vez de (a) mover a identidade primária pra `ContractAbi` (custo/risco desproporcional — quebraria a fronteira OpenAPI pública em 9 endpoints e exigiria introduzir agrupamento em pelo menos 6 módulos que hoje não têm nenhuma FK a trocar) ou (b) o link pareado `supersedes`/`replacedBy` (funcional, mas pior para linhagens com mais de 1 redeploy).
+
+**Isto não é uma implementação — é uma recomendação de design.** Fica explicitamente para o usuário confirmar antes de qualquer código real (schema, porta, endpoint) ser escrito. Se confirmado, a implementação (schema, `MonitoredContractPort.findAllByLineageId`, campo no `ContractDto`/spec OpenAPI, UI de navegação de linhagem no frontend) fica para uma etapa de implementação nova, não coberta por este DEC.
+
+### Alternativas descartadas
+
+- Abordagem 1 (refactor de fundação): descartada por ora — custo real (levantamento acima) desproporcional ao problema relatado (redeploy sem proxy não é um cenário frequente citado pelo usuário; é uma lacuna de modelagem identificada em conversa sobre um projeto irmão greenfield, Summoner, que não carrega o mesmo débito histórico).
+- Abordagem 2 original (ponteiro pareado `supersedes`/`replacedBy`): descartada em favor da variante `lineageId` compartilhado pelo mesmo custo de implementação, mas sem o custo de caminhar a cadeia nó a nó para linhagens com mais de 1 redeploy.
+
+### Consequências
+
+Nenhuma mudança de código nesta etapa. Se a recomendação for confirmada, o próximo passo é uma etapa de implementação nova no roadmap (schema + porta + endpoint + frontend), a cargo de `kotlin-backend-dev`/`frontend-dev` com revisão do `reviewer`, não deste agente.

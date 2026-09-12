@@ -38,7 +38,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
 | E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — mesmo padrão de `InterfaceDetector`/`BuiltinInterfaceTemplates` (E6) já usado pra ERC20/721/1155, comparando seletores de função conhecidos (`upgradeTo(address)`, `upgradeToAndCall(address,bytes)`, `proxiableUUID()`) contra o ABI cadastrado. Só **detecção/exibição** (badge no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` | 🔲 A fazer — surgiu de uma conversa sobre um projeto futuro relacionado (API "casca" de chamada dinâmica de método de contrato), registrada aqui porque a parte de detecção faz sentido ficar no Evex mesmo (é só leitura). Escopo pequeno, ainda não iniciado |
-| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos. **Só análise nesta etapa, nenhuma decisão tomada ainda** | backend | sessão principal (análise, nova sessão dedicada) | 🔲 A fazer — análise pendente, ver "Contexto" abaixo antes de escolher uma abordagem |
+| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend | `hexagonal-architect` (análise) | ✅ Análise concluída (DEC-096) — **recomendação a confirmar com o usuário antes de qualquer implementação**: `lineageId` aditivo em `MonitoredContract` (variante da abordagem 2), não o refactor de fundação (abordagem 1) nem o ponteiro pareado `supersedes`/`replacedBy` original. Implementação real fica para etapa futura, se confirmada |
 
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
@@ -2561,14 +2561,16 @@ alternativa dinâmica ao PAT estático:
 
 ---
 
-## E29 — Modelagem de "contrato redeployado" (não upgrade) — análise pendente
+## E29 — Modelagem de "contrato redeployado" (não upgrade) — análise concluída (DEC-096)
 
 **Depende de**: nada tecnicamente pra começar a análise, mas contexto essencial: E2 (`MonitoredContract`,
 endereço como chave natural imutável), E3 (`ContractAbi`/versionamento por bloco, DEC-007 — pensado
 originalmente só pro caso de proxy upgradável).
 
-**Status**: 🔲 A fazer — **só análise nesta etapa, nenhuma decisão tomada ainda**. Uma nova sessão vai
-avaliar as abordagens abaixo (e possivelmente achar uma 3ª melhor) antes de qualquer implementação.
+**Status**: ✅ Análise concluída por `hexagonal-architect` em 2026-09-11 (DEC-096). **Nenhuma
+implementação feita** — o critério de aceite desta etapa era só a decisão registrada. A recomendação
+(`lineageId` aditivo, variante da abordagem 2) precisa ser confirmada pelo usuário antes de virar uma
+etapa de implementação nova no roadmap.
 
 **Contexto/problema**: um proxy upgradável (UUPS/ERC-1967) mantém o **mesmo endereço pra sempre** — é
 esse o caso que `ContractAbi` já resolve (várias versões de ABI, mesmo endereço, faixas de bloco
@@ -2602,3 +2604,21 @@ muda o cálculo de custo/risco de cada solução.
 qual abordagem seguir, incluindo um levantamento de tudo que hoje assume implicitamente "endereço
 fixo do contrato" (ingestão, saldo, webhook, carteira, etc.) antes de escolher — sem esse
 levantamento, o custo real da abordagem 1 não dá pra estimar direito.
+
+**Resultado da análise (DEC-096)**: o levantamento (ver DEC-096 para a lista completa arquivo:linha)
+achou um padrão mais absoluto do que o esperado — **nenhum módulo do sistema hoje associa nada por
+`MonitoredContract.id`** (FK/UUID); ingestão, saldo, webhook, Modelo de Entidade, Carteiras e os 3
+catálogos de ABI (E16/E24) resolvem tudo por `contractAddress` (string) direto, sem passar por
+`MonitoredContract`. Mais grave para o custo da abordagem 1: **9 arquivos de `paths/` da própria spec
+OpenAPI** usam `{contractAddress}` como identificador do recurso `/v1/contracts/{contractAddress}`
+(espelhado nas rotas do frontend, `contracts/:address`) — mover a identidade primária pra dentro de
+`ContractAbi` (abordagem 1) quebraria a fronteira pública da API, não só código interno.
+
+**Recomendação (a confirmar com o usuário, nenhuma implementação feita)**: nem a abordagem 1
+(refactor de fundação — descartada, custo/risco desproporcional) nem a abordagem 2 original
+(`supersedes`/`replacedBy` pareado — funcional mas ruim pra linhagens com mais de 1 redeploy), e sim
+uma 3ª variante da abordagem 2: campo aditivo `MonitoredContract.lineageId: UUID?` (nullable, migração
+de 1 coluna, zero impacto nos outros módulos — uma consulta de linhagem resolve o conjunto de
+endereços e usa `WHERE contract_address IN (...)` nos módulos existentes, exatamente como hoje). Ver
+DEC-096 para o racional completo. Próximo passo, se confirmado: nova etapa de implementação
+(`kotlin-backend-dev` + `frontend-dev` + `reviewer`), fora do escopo desta análise.
