@@ -36,7 +36,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E24 | Explorador de ABI — tela nova, somente leitura, listando **todos** os itens do ABI cadastrado de um contrato (funções de qualquer `stateMutability`, eventos, erros customizados/`"type": "error"`, constructor/fallback/receive) numa tabela só, com coluna de tipo e faixa de blocos por versão. Botão de acesso na linha de cada versão de ABI (`AbiSection`). A pedido do usuário, olhando a tela de Contratos | backend+frontend | `blockchain-integration` + `kotlin-backend-dev` + `frontend-dev` + `reviewer` | ✅ Concluído — **revisão FINAL combinada `reviewer` 2026-09-07 ✅ APROVADA, sem achado bloqueante** (backend 525/525, frontend 93/93, `tsc -b`/lint/build limpos, todos reconfirmados do zero pela revisão). Ver "Revisão" na seção E24 (DEC-089) |
 | E25 | Validação do cenário de Modelo de Entidade (E19, 3ª peça — nunca validada ao vivo até aqui) — contrato novo `TestGameLibrary` (jogos que só rodam se o `TestComputer` tiver poder suficiente, chamada cross-contract real + erro customizado `InsufficientPower`) prova a acumulação de campos de eventos diferentes (`ComputerCreated`/`PartsChanged`/`GameRunSucceeded`, todos correlacionados por `computerId`) num Modelo de Entidade, exposto via `{{model.*}}` num webhook. Sinergia com a E24: o `InsufficientPower` também vira dado real pro Explorador de ABI | local-env | sessão principal (sem agente dedicado — `local-env` é ad-hoc) | ✅ Concluído — **revisão FINAL combinada `reviewer` 2026-09-07 ✅ APROVADA, sem achado bloqueante** (fix da DEC-088 confirmado correto e isolado; 1 achado não-bloqueante registrado, DEC-089 — ordem `projectBatch`/`matchAndEnqueue` sem teste de regressão). Ver "Revisão" na seção E25 (DEC-089) |
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
-| E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia | infra (`deploy/`) | sessão principal (ad-hoc, mesma classe de E20/E23/E25) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina |
+| E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
 
@@ -2501,3 +2501,36 @@ alternativa dinâmica ao PAT estático:
   relacionado): `BlockscoutClient.kt` tinha uma corrupção de sintaxe já presente no working tree ao
   iniciar esta sessão (`root.pa/th("items")`) — corrigida pra desbloquear a compilação.
 - **Não validado ao vivo contra o Keycloak real da EBS** (ainda não provisionado/testado nesta sessão).
+
+**Revisão (`reviewer`, 2026-09-11)** — commit `78c39de` ("auth dinamyc token for rpc", feito direto em
+`develop` sem passar pelo `reviewer` antes), validando a DEC-095 (Keycloak dinâmico):
+- **✅ Aprovado, sem achado bloqueante.**
+- Precedência **Keycloak > PAT > sem auth** confirmada em `BlockchainAuth.kt::resolveAuthHeaders` —
+  `tokenUrl` vazio (default) preserva 100% o comportamento anterior (nenhum header), exatamente como
+  descrito na DEC-095.
+- Máquina de estados de `KeycloakTokenProvider` conferida linha a linha contra a descrição da DEC-095
+  (access válido → usa; perto de expirar com refresh válido → tenta refresh; refresh falha
+  (`RestClientResponseException`) → fallback pra login completo; sem refresh válido → login completo);
+  `ReentrantLock` (single-flight) presente. Nenhum log imprime `password`/`client_secret`/`access_token`/
+  `refresh_token` — só URL, status HTTP e tempos de expiração.
+- `Web3jBlockchainClient.refreshAuthHeader()` confirmado chamado no início dos 5 métodos que efetivamente
+  falam com o nó (`currentBlockNumber`/`getLogs`/`getBlockTimestamp`/`hasCode`/`call`) — nenhum esquecido.
+- `WebSocketPollTrigger.connectionFactory` confirmado chamado tanto em `start()` (conexão inicial) quanto
+  em `connectAndSubscribe(isReconnect = true)` (toda reconexão) — teste novo
+  (`each reconnect attempt recreates the connection via connectionFactory`) de fato prova isso via
+  contador de chamadas da factory, não só verifica o resultado final.
+- Fix do `BlockscoutClient.kt` (`root.pa/th("items")` → `root.path("items")`) conferido correto; grep de
+  sanidade por padrão semelhante (identificador quebrado por `/`) no resto do `src/main`/`src/test` não
+  encontrou nenhuma outra ocorrência.
+- `backend/.env.example`/`backend/README.md`/`backend/.gitignore`: consistente com o padrão já usado em
+  `frontend/.env.example`/`deploy/.env.example`/`e2e/.env.example` (não é um padrão órfão) — o próprio
+  `.env.example` documenta explicitamente que não há carregamento automático de `.env` no backend (só
+  `source` manual antes do `bootRun`), sem dependência de dotenv adicionada ao `build.gradle.kts`. Todos
+  os valores em `.env.example` vazios (placeholders) — nenhum segredo real versionado; `.gitignore` novo
+  exclui `.env`/`.env.local` corretamente.
+- Domínio (`domain/`) seguindo limpo — as únicas ocorrências de `org.web3j`/`org.springframework` ali são
+  menções em KDoc explicando por que a porta existe, não imports reais.
+- `./gradlew clean build` reexecutado do zero por esta revisão (não só confiando no relato da DEC-095):
+  **555 testes, 0 falhas, 0 erros**, JAR gerado — confirma de forma independente o número citado na
+  DEC-095.
+- Nenhum achado — nenhuma entrada nova em `docs/decisions.md` necessária.
