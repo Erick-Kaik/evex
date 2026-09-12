@@ -30,3 +30,12 @@ properties:
     $ref: "../enum/network.yaml"
   status:
     $ref: "../enum/contract-status.yaml"
+  lineageId:
+    type: string
+    format: uuid
+    nullable: true
+    description: >-
+      Identificador da linhagem de "contratos redeployados" (E29/DEC-096) que este contrato pertence.
+      `null` para contratos cadastrados antes desta funcionalidade (sem linhagem conhecida). Não nulo
+      para qualquer contrato cadastrado depois — mesmo sem `predecessorAddress` informado, toda linhagem
+      nasce trivialmente com tamanho 1.

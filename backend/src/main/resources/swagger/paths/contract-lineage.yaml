@@ -1,0 +1,19 @@
+get:
+  tags:
+    - Contracts
+  operationId: listContractLineage
+  summary: Lista a linhagem de "contratos redeployados" deste contrato monitorado
+  description: >-
+    Todos os contratos monitorados da mesma linhagem lógica de produto (E29/DEC-096/DEC-097) — contrato
+    novo, sem proxy, endereço novo, cadastrado como redeploy de um predecessor — ordenados por data de
+    cadastro, inclusive o próprio contrato consultado. Sem paginação (mesmo padrão de
+    `listContractAbiVersions`/`listContractMethods` — não deveria ter dezenas de itens). Contrato sem
+    `lineageId` (cadastrado antes desta funcionalidade, ou nunca envolvido num redeploy) devolve `200`
+    com uma lista de 1 item: ele mesmo.
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/contract-lineage-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

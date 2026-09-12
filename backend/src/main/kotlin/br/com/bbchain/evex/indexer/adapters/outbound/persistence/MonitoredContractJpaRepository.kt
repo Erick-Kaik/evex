@@ -10,4 +10,7 @@ interface MonitoredContractJpaRepository : JpaRepository<MonitoredContractEntity
     fun findByAddress(address: String): MonitoredContractEntity?
 
     fun findByNetwork(network: Network, pageable: Pageable): Page<MonitoredContractEntity>
+
+    /** Linhagem inteira (E29/DEC-096/DEC-097), ordenada por `createdAt` — sem paginação (não deveria ter dezenas de itens). */
+    fun findByLineageIdOrderByCreatedAt(lineageId: UUID): List<MonitoredContractEntity>
 }

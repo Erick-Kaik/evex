@@ -10,6 +10,7 @@ import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigNotFoundEx
 import br.com.bbchain.evex.indexer.domain.balance.InvalidBalanceMonitorConfigException
 import br.com.bbchain.evex.indexer.domain.contract.ContractAlreadyExistsException
 import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
+import br.com.bbchain.evex.indexer.domain.contract.LineageNetworkMismatchException
 import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutUnavailableException
 import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentProfileNotFoundException
 import br.com.bbchain.evex.indexer.domain.enrichment.InvalidEnrichmentProfileException
@@ -61,6 +62,13 @@ class ApiExceptionHandler {
     fun handleDataIntegrityViolation(ex: DataIntegrityViolationException): ResponseEntity<ApiError> =
         ResponseEntity.status(HttpStatus.CONFLICT).body(
             ApiError(code = "CONTRACT_ALREADY_EXISTS", message = "Contrato já cadastrado", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `POST /v1/contracts` com `predecessorAddress` de uma `network` diferente do contrato novo (E29/DEC-096/DEC-097). */
+    @ExceptionHandler(LineageNetworkMismatchException::class)
+    fun handleLineageNetworkMismatch(ex: LineageNetworkMismatchException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "LINEAGE_NETWORK_MISMATCH", message = ex.message ?: "Predecessor de rede diferente", timestamp = OffsetDateTime.now()),
         )
 
     /** `POST /v1/contracts/{address}/abi` com ABI JSON malformada ou schema/tipo Solidity não suportado. */

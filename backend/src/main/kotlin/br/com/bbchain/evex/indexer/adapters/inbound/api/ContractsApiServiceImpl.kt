@@ -65,6 +65,7 @@ class ContractsApiServiceImpl(
             network = createContractPayload.network.toDomain(),
             description = createContractPayload.description,
             version = createContractPayload.version,
+            predecessorAddress = createContractPayload.predecessorAddress,
         )
         return contract.toDto()
     }
@@ -124,6 +125,9 @@ class ContractsApiServiceImpl(
     override fun listContractAbiEntries(address: kotlin.String): MutableList<AbiEntryDto> =
         contractAbiEntryCatalogService.catalogFor(address).map { it.toDto() }.toMutableList()
 
+    override fun listContractLineage(address: kotlin.String): MutableList<ContractDto> =
+        monitoredContractService.getLineage(address).map { it.toDto() }.toMutableList()
+
     /**
      * 404 se o contrato não estiver cadastrado — `getByAddress` (não usado no resto deste método)
      * lança [br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException] sozinho;
@@ -152,6 +156,7 @@ class ContractsApiServiceImpl(
         version = version,
         network = network.toDto(),
         status = status.toDto(),
+        lineageId = lineageId,
     )
 
     private fun NetworkDto.toDomain(): Network = Network.valueOf(this.name)

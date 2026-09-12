@@ -1505,3 +1505,36 @@ Recomenda-se a **3ª abordagem**: `MonitoredContract.lineageId: UUID?` (aditivo,
 ### Consequências
 
 Nenhuma mudança de código nesta etapa. Se a recomendação for confirmada, o próximo passo é uma etapa de implementação nova no roadmap (schema + porta + endpoint + frontend), a cargo de `kotlin-backend-dev`/`frontend-dev` com revisão do `reviewer`, não deste agente.
+
+## DEC-097 — E29 (execução, backend): `lineageId` aditivo em `MonitoredContract` implementado conforme DEC-096; `created_at` exigiu migration Flyway pontual, `lineage_id` não
+
+Data: 2026-09-12
+
+Módulo: backend (`kotlin-backend-dev`, execução da E29 — recomendação da DEC-096 confirmada pelo usuário)
+
+Autor: `kotlin-backend-dev`
+
+### Contexto
+
+DEC-096 recomendou (sem implementar) um campo aditivo `MonitoredContract.lineageId: UUID?` para modelar "contrato redeployado, não upgrade" — endereço continua sendo a identidade primária em toda a API, sem tocar nos 9 endpoints `{contractAddress}` já existentes nem em nenhum dos outros 5 módulos que resolvem tudo por `contractAddress` cru (saldo, webhook, Modelo de Entidade, Carteiras, ingestão). Esta etapa implementa essa recomendação no backend (frontend e revisão do `reviewer` ficam para sessões seguintes).
+
+### Decisões operacionais tomadas na implementação
+
+**1. `lineageId` (nullable) vs. `createdAt` (NOT NULL) exigiram tratamentos diferentes de schema, confirmando empiricamente o que a DEC-096/plano já antecipava.** `monitored_contracts` é uma tabela pré-existente desde E2, com linhas reais em qualquer ambiente de dev de longa duração. `lineage_id UUID NULL` é uma coluna nova sem `NOT NULL` — `ddl-auto: update` (DEC-006) lida com isso sem qualquer migration, exatamente como a DEC-096 previu ("migração de 1 coluna nullable, zero impacto"). `created_at TIMESTAMP NOT NULL` (necessário para `findByLineageIdOrderByCreatedAt` ter um critério de ordenação determinístico) é a mesma classe de gotcha já documentada em DEC-041 (`balance_monitor_configs`) e DEC-083 (`webhook_configs`): Postgres recusa `ALTER TABLE ... ADD COLUMN ... NOT NULL` sem `DEFAULT` contra uma tabela com linhas, e `SchemaUpdate` do Hibernate falha *silenciosamente* (loga `WARN`, não derruba o boot) — resolvido com `V5__monitored_contracts_lineage_and_created_at.sql` (`ADD COLUMN IF NOT EXISTS ... DEFAULT now()`, no-op num banco novo onde o Hibernate já criou a coluna certa antes da migration rodar, `PostSchemaFlywayMigrator`/DEC-041). Diferença notável em relação às migrations anteriores (V2/V4): lá o `DEFAULT` era um valor-sentinela com significado de domínio (`-1`, `'[]'::jsonb`); aqui não existe um "sem significado" possível para uma data de criação — `DEFAULT now()` carimba as linhas pré-existentes com o instante em que a migration rodou (aproximação aceita: `created_at` dessas linhas não alimenta nenhuma regra de negócio, só ordena a linhagem de contratos cadastrados dali em diante — e contratos pré-existentes já ficam com `lineage_id = NULL`, então nunca entram numa consulta de linhagem de qualquer forma).
+
+**2. Regra de "batizar" o predecessor implementada literalmente como no plano**: `MonitoredContractService.register()` ganhou `resolveLineageId()` — se `predecessorAddress` foi informado, resolve `predecessor.lineageId ?: predecessor.id` e, só quando o predecessor ainda não tinha `lineageId` (`null`), grava-o de volta com `lineageId = seu próprio id` (1 `save()` extra nesse caso, nenhum quando o predecessor já tinha lineage — 2ª chamada de registro na mesma linhagem não regrava o predecessor de novo). Sem `predecessorAddress`, `lineageId = newId` (o próprio id do contrato novo) — toda linhagem nasce trivialmente com tamanho 1, sem exigir uma 2ª leitura/gravação.
+
+**3. Validação de rede**: `LineageNetworkMismatchException` (`domain/contract/`) lançada quando `predecessor.network != network` do contrato novo, mapeada para `400 LINEAGE_NETWORK_MISMATCH` em `ApiExceptionHandler`. `predecessorAddress` apontando para um endereço não cadastrado reaproveita `ContractNotFoundException` (mesma exceção/404 já usada para "endereço sem contrato monitorado" em qualquer outro fluxo) — não foi criada uma exceção nova só para esse caso, considerado desnecessário (mesmo significado semântico: "esse endereço não é um contrato monitorado conhecido").
+
+**4. Endpoint novo `GET /v1/contracts/{address}/lineage`** (`listContractLineage`) devolve `List<Contract>` sem paginação — mirror direto de `listContractAbiVersions`/`listContractMethods` (o roadmap já cita esse precedente). `MonitoredContractService.getLineage()`: sem `lineageId`, devolve `listOf(contract)` sem tocar o banco de novo (linhagem trivial resolvida em memória); com `lineageId`, delega para `MonitoredContractPort.findAllByLineageId` (`findByLineageIdOrderByCreatedAt` no repositório JPA).
+
+**5. Spec OpenAPI**: `predecessorAddress` (opcional, mesmo `pattern` de endereço) em `create-contract-payload.yaml`; `lineageId` (nullable) em `contract.yaml`; `contract-list.yaml` (schema array simples, mirror de `contract-method-list.yaml`) + `contract-lineage-response.yaml` + `paths/contract-lineage.yaml`, registrados em `base/base.yaml`.
+
+### Alternativas consideradas
+
+- Exceção de domínio dedicada para "predecessorAddress não encontrado" (`PredecessorNotFoundException` ou similar) — descartada em favor de reaproveitar `ContractNotFoundException`, já mapeada para 404 com o código `CONTRACT_NOT_FOUND`; introduzir uma exceção nova só mudaria o `code` do `ApiError` sem agregar informação nova ao cliente.
+- Backfill retroativo de `lineage_id` para contratos pré-existentes (ex.: `lineage_id = id` para todo mundo via migration) — descartado, conforme já decidido no plano: não há como inferir linhagem histórica real, e um `lineage_id` auto-atribuído silenciosamente esconderia a diferença entre "eu sei que isso é uma linhagem de tamanho 1" (contrato novo, pós-feature) e "eu não sei nada sobre a linhagem deste contrato" (pré-feature) — a primeira reflete uma decisão consciente do usuário no cadastro, a segunda seria uma inferência do sistema sem base real.
+
+### Consequências
+
+`./gradlew build` verde: compilação completa + suíte inteira, **567/567 testes, 0 falha**. Nenhum módulo fora de `MonitoredContract`/`ContractsApiServiceImpl`/`ApiExceptionHandler`/a spec de Contracts foi tocado — confirma na prática o "zero impacto nos outros 5 módulos" que a DEC-096 previu. Pendente para sessões seguintes (fora do escopo desta etapa): UI de cadastro (`predecessorAddress` opcional) e de navegação de linhagem no frontend (`frontend-dev`), e revisão de ponta a ponta pelo `reviewer` antes de marcar a E29 como ✅ concluída no roadmap.

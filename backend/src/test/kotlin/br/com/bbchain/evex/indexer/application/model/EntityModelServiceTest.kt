@@ -63,6 +63,8 @@ class EntityModelServiceTest {
         version = null,
         network = Network.TESTNET,
         status = ContractStatus.ACTIVE,
+        lineageId = null,
+        createdAt = Instant.now(),
     )
 
     private val abi = ContractAbi(

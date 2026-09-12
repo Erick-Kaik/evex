@@ -1,0 +1,7 @@
+description: >-
+  Linhagem de "contratos redeployados" (E29/DEC-096/DEC-097), ordenada por data de cadastro, inclusive o
+  próprio contrato consultado.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/contract-list.yaml"

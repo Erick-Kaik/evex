@@ -1,0 +1,6 @@
+type: array
+description: >-
+  Lista simples de contratos monitorados, sem paginação (E29/DEC-096/DEC-097) — usada por
+  `GET /v1/contracts/{address}/lineage`, que não deveria retornar dezenas de itens.
+items:
+  $ref: "./contract.yaml"

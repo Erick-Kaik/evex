@@ -4,6 +4,8 @@ import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.contract.ContractStatus
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContract
 import br.com.bbchain.evex.indexer.support.AbstractIntegrationTest
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -32,7 +34,7 @@ class JpaMonitoredContractAdapterTest : AbstractIntegrationTest() {
 
         adapter.save(contract)
 
-        assertThat(adapter.findByAddress(contract.address)).isEqualTo(contract)
+        assertThat(adapter.findByAddress(contract.address)?.copy(createdAt = contract.createdAt)).isEqualTo(contract)
     }
 
     @Test
@@ -75,6 +77,24 @@ class JpaMonitoredContractAdapterTest : AbstractIntegrationTest() {
         assertThat(all.totalElements).isGreaterThanOrEqualTo(2)
     }
 
+    @Test
+    fun `findAllByLineageId returns the whole lineage ordered by createdAt, excludes contracts from other lineages`() {
+        val lineageId = UUID.randomUUID()
+        val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+        val predecessor = newContract(address = "0x777777777777777777777777777777777777777a")
+            .copy(lineageId = lineageId, createdAt = now)
+        val successor = newContract(address = "0x888888888888888888888888888888888888888b")
+            .copy(lineageId = lineageId, createdAt = now.plusSeconds(1))
+        val unrelated = newContract(address = "0x999999999999999999999999999999999999998c")
+        adapter.save(predecessor)
+        adapter.save(successor)
+        adapter.save(unrelated)
+
+        val lineage = adapter.findAllByLineageId(lineageId)
+
+        assertThat(lineage).extracting("address").containsExactly(predecessor.address, successor.address)
+    }
+
     private fun newContract(
         address: String,
         network: Network = Network.TESTNET,
@@ -86,5 +106,7 @@ class JpaMonitoredContractAdapterTest : AbstractIntegrationTest() {
         version = null,
         network = network,
         status = ContractStatus.ACTIVE,
+        lineageId = null,
+        createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS),
     )
 }

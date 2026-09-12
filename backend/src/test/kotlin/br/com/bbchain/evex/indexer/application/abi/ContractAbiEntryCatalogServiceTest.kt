@@ -49,6 +49,8 @@ class ContractAbiEntryCatalogServiceTest {
         version = null,
         network = Network.TESTNET,
         status = ContractStatus.ACTIVE,
+        lineageId = null,
+        createdAt = Instant.now(),
     )
 
     private fun abi(validFromBlock: Long, validToBlock: Long?): ContractAbi = ContractAbi(

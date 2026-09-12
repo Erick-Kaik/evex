@@ -38,7 +38,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
 | E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — mesmo padrão de `InterfaceDetector`/`BuiltinInterfaceTemplates` (E6) já usado pra ERC20/721/1155, comparando seletores de função conhecidos (`upgradeTo(address)`, `upgradeToAndCall(address,bytes)`, `proxiableUUID()`) contra o ABI cadastrado. Só **detecção/exibição** (badge no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` | 🔲 A fazer — surgiu de uma conversa sobre um projeto futuro relacionado (API "casca" de chamada dinâmica de método de contrato), registrada aqui porque a parte de detecção faz sentido ficar no Evex mesmo (é só leitura). Escopo pequeno, ainda não iniciado |
-| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend | `hexagonal-architect` (análise) | ✅ Análise concluída (DEC-096) — **recomendação a confirmar com o usuário antes de qualquer implementação**: `lineageId` aditivo em `MonitoredContract` (variante da abordagem 2), não o refactor de fundação (abordagem 1) nem o ponteiro pareado `supersedes`/`replacedBy` original. Implementação real fica para etapa futura, se confirmada |
+| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend (+ frontend pendente) | `hexagonal-architect` (análise) + `kotlin-backend-dev` (execução backend) | 🟡 Backend implementado (DEC-097), conforme a recomendação da DEC-096 (`lineageId` aditivo). **Não concluída**: falta frontend (`frontend-dev`) e revisão de ponta a ponta (`reviewer`) antes de marcar ✅ |
 
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
@@ -2561,16 +2561,29 @@ alternativa dinâmica ao PAT estático:
 
 ---
 
-## E29 — Modelagem de "contrato redeployado" (não upgrade) — análise concluída (DEC-096)
+## E29 — Modelagem de "contrato redeployado" (não upgrade) — backend implementado (DEC-096/DEC-097)
 
 **Depende de**: nada tecnicamente pra começar a análise, mas contexto essencial: E2 (`MonitoredContract`,
 endereço como chave natural imutável), E3 (`ContractAbi`/versionamento por bloco, DEC-007 — pensado
 originalmente só pro caso de proxy upgradável).
 
-**Status**: ✅ Análise concluída por `hexagonal-architect` em 2026-09-11 (DEC-096). **Nenhuma
-implementação feita** — o critério de aceite desta etapa era só a decisão registrada. A recomendação
-(`lineageId` aditivo, variante da abordagem 2) precisa ser confirmada pelo usuário antes de virar uma
-etapa de implementação nova no roadmap.
+**Status**: ✅ Análise concluída por `hexagonal-architect` em 2026-09-11 (DEC-096); ✅ **backend
+implementado** por `kotlin-backend-dev` em 2026-09-12 (DEC-097), conforme a recomendação confirmada
+pelo usuário. 🟡 **Etapa ainda não fechada**: falta o frontend (`frontend-dev` — campo opcional
+`predecessorAddress` no formulário de cadastro + UI de navegação de linhagem) e a revisão de ponta a
+ponta do `reviewer` antes de marcar ✅ concluída.
+
+**O que foi implementado (backend, DEC-097)**: `MonitoredContract.lineageId: UUID?` (aditivo, `null`
+para contratos cadastrados antes desta etapa) + `createdAt: Instant`; `MonitoredContractPort.
+findAllByLineageId`; `POST /v1/contracts` ganhou campo opcional `predecessorAddress` (herda o
+`lineageId` do predecessor, "batizando-o" com `lineageId = seu próprio id` se ele ainda não tinha um);
+validação nova `LineageNetworkMismatchException` → `400 LINEAGE_NETWORK_MISMATCH` quando o predecessor é
+de uma `network` diferente; endpoint novo `GET /v1/contracts/{address}/lineage` (lista simples, sem
+paginação, ordenada por `createdAt`, mirror de `listContractAbiVersions`/`listContractMethods`).
+Migration `V5__monitored_contracts_lineage_and_created_at.sql` só para `created_at` (`NOT NULL`,
+mesmo gotcha da DEC-041/DEC-083) — `lineage_id` (nullable) não precisou de migration. `./gradlew build`
+verde, 567/567 testes. Ver DEC-097 para o racional completo das decisões operacionais tomadas na
+implementação.
 
 **Contexto/problema**: um proxy upgradável (UUPS/ERC-1967) mantém o **mesmo endereço pra sempre** — é
 esse o caso que `ContractAbi` já resolve (várias versões de ABI, mesmo endereço, faixas de bloco

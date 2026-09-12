@@ -138,6 +138,102 @@ class ContractsApiTest(
     }
 
     @Test
+    fun `create with a predecessorAddress inherits its lineageId, christening the predecessor`() {
+        val predecessorAddress = "0x777777777777777777777777777777777777777a"
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createPayload(predecessorAddress, name = "Token G v1")),
+        ).andExpect(status().isCreated)
+
+        val successorAddress = "0x888888888888888888888888888888888888888b"
+        val successorResult = mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createPayload(successorAddress, name = "Token G v2", predecessorAddress = predecessorAddress)),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.lineageId").exists())
+            .andReturn()
+
+        val lineageId = objectMapper.readTree(successorResult.response.contentAsString).get("lineageId").asText()
+
+        mockMvc.perform(get("/v1/contracts/$predecessorAddress"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.lineageId").value(lineageId))
+    }
+
+    @Test
+    fun `create with a predecessorAddress on a different network returns 400`() {
+        val predecessorAddress = "0x999999999999999999999999999999999999998c"
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createPayload(predecessorAddress, name = "Token H v1", network = "TESTNET")),
+        ).andExpect(status().isCreated)
+
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    createPayload(
+                        "0x101010101010101010101010101010101010101d",
+                        name = "Token H v2",
+                        network = "MAINNET",
+                        predecessorAddress = predecessorAddress,
+                    ),
+                ),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("LINEAGE_NETWORK_MISMATCH"))
+    }
+
+    @Test
+    fun `lineage returns only the contract itself when it has no lineageId`() {
+        val address = "0x111111111111111111111111111111111111112e"
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createPayload(address, name = "Token I")),
+        ).andExpect(status().isCreated)
+
+        mockMvc.perform(get("/v1/contracts/$address/lineage"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].address").value(address))
+    }
+
+    @Test
+    fun `lineage returns the whole group when the contract has a lineageId`() {
+        val predecessorAddress = "0x121212121212121212121212121212121212123f"
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createPayload(predecessorAddress, name = "Token J v1")),
+        ).andExpect(status().isCreated)
+
+        val successorAddress = "0x131313131313131313131313131313131313134a"
+        mockMvc.perform(
+            post("/v1/contracts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(createPayload(successorAddress, name = "Token J v2", predecessorAddress = predecessorAddress)),
+        ).andExpect(status().isCreated)
+
+        mockMvc.perform(get("/v1/contracts/$successorAddress/lineage"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].address").value(predecessorAddress))
+            .andExpect(jsonPath("$[1].address").value(successorAddress))
+    }
+
+    @Test
+    fun `lineage returns 404 for a well-formed but unregistered address`() {
+        mockMvc.perform(get("/v1/contracts/0x141414141414141414141414141414141414145b/lineage"))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("CONTRACT_NOT_FOUND"))
+    }
+
+    @Test
     fun `patch status updates only the status`() {
         val address = "0x666666666666666666666666666666666666666f"
         mockMvc.perform(
@@ -162,10 +258,12 @@ class ContractsApiTest(
         network: String = "TESTNET",
         description: String? = null,
         version: String? = null,
+        predecessorAddress: String? = null,
     ): String {
         val payload = mutableMapOf<String, Any?>("address" to address, "name" to name, "network" to network)
         description?.let { payload["description"] = it }
         version?.let { payload["version"] = it }
+        predecessorAddress?.let { payload["predecessorAddress"] = it }
         return objectMapper.writeValueAsString(payload)
     }
 }

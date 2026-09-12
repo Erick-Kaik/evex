@@ -4,6 +4,7 @@ import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContract
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContractPort
+import java.util.UUID
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Component
@@ -41,6 +42,9 @@ class JpaMonitoredContractAdapter(
         )
     }
 
+    override fun findAllByLineageId(lineageId: UUID): List<MonitoredContract> =
+        repository.findByLineageIdOrderByCreatedAt(lineageId).map { it.toDomain() }
+
     private fun MonitoredContract.toEntity(isNew: Boolean) = MonitoredContractEntity(
         id = id,
         address = address,
@@ -49,6 +53,8 @@ class JpaMonitoredContractAdapter(
         version = version,
         network = network,
         status = status,
+        lineageId = lineageId,
+        createdAt = createdAt,
         new = isNew,
     )
 
@@ -60,5 +66,7 @@ class JpaMonitoredContractAdapter(
         version = version,
         network = network,
         status = status,
+        lineageId = lineageId,
+        createdAt = createdAt,
     )
 }

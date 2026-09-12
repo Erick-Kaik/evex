@@ -25,3 +25,12 @@ properties:
     description: "Versão do contrato monitorado (ex.: versão da implementação atrás de um proxy)."
   network:
     $ref: "../enum/network.yaml"
+  predecessorAddress:
+    type: string
+    nullable: true
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: >-
+      Opcional. Endereço de um contrato monitorado já cadastrado, se este contrato novo for um redeploy
+      dele (contrato novo, endereço novo, mesma linhagem lógica de produto — E29/DEC-096, diferente de
+      um proxy upgradável, que mantém o mesmo endereço). Precisa ser da mesma `network` deste contrato
+      novo. Deixe em branco para um contrato sem predecessor conhecido (linhagem nova, de tamanho 1).
