@@ -38,6 +38,8 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E26 | 2ª forma de disparar a ingestão — `eth_subscribe("newHeads")` via WebSocket, alternativa ao polling (`indexer.blockchain.transport: POLLING`\|`WEBSOCKET`\|`NONE`, default `POLLING` preserva 100% o comportamento anterior). Lógica de janela/auto-shrink extraída pra `PollTickService`, disparada por 2 gatilhos possíveis (`ScheduledPollTrigger`/`WebSocketPollTrigger`) | backend | `blockchain-integration` | ✅ Concluído — estruturado e testado via mock (533→544 testes); **não validado ao vivo contra nó Besu/Hardhat com WS real** (ver DEC-091). Sem revisão do `reviewer` — decisão do usuário pra esta tarefa pontual |
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
 | E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — mesmo padrão de `InterfaceDetector`/`BuiltinInterfaceTemplates` (E6) já usado pra ERC20/721/1155, comparando seletores de função conhecidos (`upgradeTo(address)`, `upgradeToAndCall(address,bytes)`, `proxiableUUID()`) contra o ABI cadastrado. Só **detecção/exibição** (badge no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` | 🔲 A fazer — surgiu de uma conversa sobre um projeto futuro relacionado (API "casca" de chamada dinâmica de método de contrato), registrada aqui porque a parte de detecção faz sentido ficar no Evex mesmo (é só leitura). Escopo pequeno, ainda não iniciado |
+| E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos. **Só análise nesta etapa, nenhuma decisão tomada ainda** | backend | sessão principal (análise, nova sessão dedicada) | 🔲 A fazer — análise pendente, ver "Contexto" abaixo antes de escolher uma abordagem |
+
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
 
@@ -2556,3 +2558,47 @@ alternativa dinâmica ao PAT estático:
 **Docs de referência**: `backend/docs/abi-strategy-design.md` (Strategy de detecção de interface, E6), `docs/decisions.md` (registrar DEC quando implementado — inclusive se a decisão de onde a "detecção" vs. "execução" mora mudar).
 
 **Critério de aceite**: contrato UUPS real (o mesmo par V1/V2 do `local-env` validado na E20 já serve) mostrando o badge corretamente no Explorador de ABI; contrato não-upgradeável não mostra nada.
+
+---
+
+## E29 — Modelagem de "contrato redeployado" (não upgrade) — análise pendente
+
+**Depende de**: nada tecnicamente pra começar a análise, mas contexto essencial: E2 (`MonitoredContract`,
+endereço como chave natural imutável), E3 (`ContractAbi`/versionamento por bloco, DEC-007 — pensado
+originalmente só pro caso de proxy upgradável).
+
+**Status**: 🔲 A fazer — **só análise nesta etapa, nenhuma decisão tomada ainda**. Uma nova sessão vai
+avaliar as abordagens abaixo (e possivelmente achar uma 3ª melhor) antes de qualquer implementação.
+
+**Contexto/problema**: um proxy upgradável (UUPS/ERC-1967) mantém o **mesmo endereço pra sempre** — é
+esse o caso que `ContractAbi` já resolve (várias versões de ABI, mesmo endereço, faixas de bloco
+diferentes). Mas existe um cenário diferente e real: um **redeploy de verdade** — contrato novo, sem
+proxy, **endereço novo** — que ainda assim é, na prática, "a próxima versão do mesmo produto". Hoje
+não existe nenhuma forma de expressar isso: registrar o contrato novo cria um `MonitoredContract`
+inteiramente desconexo do anterior, perdendo a continuidade de histórico/relatório entre os dois
+deploys.
+
+Surgiu de uma conversa sobre o projeto irmão Summoner (repositório separado, ver
+`docs/decisions.md`) — o Summoner, greenfield, já nasce sem essa limitação (endereço vive em cada
+versão de ABI, não fixo num "contrato pai"), porque lá isso não custa nada a mais. Aqui no Evex o
+mesmo problema existe, mas o código já construído em cima da premissa "endereço fixo" (E2 em diante)
+muda o cálculo de custo/risco de cada solução.
+
+**Abordagens candidatas identificadas** (nenhuma escolhida ainda — é isso que a análise decide):
+
+1. **Refactor de fundação**: mover a identidade primária do endereço pra dentro de `ContractAbi`
+   (cada versão carrega seu próprio endereço), deixando de tratar `MonitoredContract.address` como
+   fixo/chave natural — um "contrato monitorado" vira mais um agrupador lógico do que um endereço
+   único. Mais elegante/correto, mas invasivo: a ingestão hoje associa evento por endereço cru
+   (`BlockchainEvent.contractAddress`, não por FK pra `MonitoredContract`) — não auditado ainda até
+   onde saldo/webhook/carteira também assumem esse endereço fixo em algum grau.
+2. **Aditivo, sem tocar o modelo existente**: um link `supersedes`/`replacedBy` entre 2
+   `MonitoredContract` distintos (cada um com seu próprio endereço, cada um indexado exatamente como
+   hoje) — resolve a navegação/relatório de histórico entre deploys sem mexer em nada que já funciona.
+   Menor risco, menos elegante (tecnicamente continuam sendo 2 entidades separadas, só anotadas como
+   relacionadas).
+
+**Critério de aceite desta etapa** (só a análise): decisão registrada em `docs/decisions.md` sobre
+qual abordagem seguir, incluindo um levantamento de tudo que hoje assume implicitamente "endereço
+fixo do contrato" (ingestão, saldo, webhook, carteira, etc.) antes de escolher — sem esse
+levantamento, o custo real da abordagem 1 não dá pra estimar direito.
