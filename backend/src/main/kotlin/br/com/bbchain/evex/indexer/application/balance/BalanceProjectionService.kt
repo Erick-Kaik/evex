@@ -8,6 +8,7 @@ import br.com.bbchain.evex.indexer.domain.balance.BalanceBehaviorStrategy
 import br.com.bbchain.evex.indexer.domain.balance.BalanceDelta
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfig
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigPort
+import br.com.bbchain.evex.indexer.domain.balance.BatchEventExpander
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -113,11 +114,17 @@ class BalanceProjectionService(
      * `eventName`) processa um evento e não gera nenhum delta. E11 (item 4, resíduo de DEC-035): os
      * dois `WARN` abaixo passam por [warnLogDeduper] — uma config persistentemente mal configurada
      * (ex.: typo nunca corrigido) não gera mais 1 linha de log a cada evento que bate nela.
+     *
+     * DEC-110: evento inválido em lote (tamanhos diferentes, não-lista, elemento não numérico) e
+     * lista chegando em config `batch=false` lançam `BatchEventInvalidException`, que cai neste mesmo
+     * `catch`: o evento INTEIRO é descartado (atomicidade) com WARN deduplicado, sem derrubar o lote.
      */
     private fun applySafely(config: BalanceMonitorConfig, event: BlockchainEvent): List<BalanceDelta> =
         try {
-            val result = strategies.getValue(config.behavior).apply(config, event)
-            if (result.isEmpty() && warnLogDeduper.shouldLog(config.id)) {
+            val computed = computeDeltas(config, event)
+            val result = computed.deltas
+            // Lote legitimamente vazio (ids/values == []) é no-op, não config mal configurada: sem WARN.
+            if (result.isEmpty() && !computed.emptyBatch && warnLogDeduper.shouldLog(config.id)) {
                 logger.warn(
                     "balanceMonitorConfig={} (contractAddress={}, eventName={}) não gerou nenhum delta pro evento txHash={}, logIndex={} — verifique se walletParam/fromParam/toParam/valueParam realmente existem nos parâmetros decodificados deste evento.",
                     config.id,
@@ -142,4 +149,24 @@ class BalanceProjectionService(
             }
             emptyList()
         }
+
+    /**
+     * DEC-110: `batch=true` expande o evento em N eventos escalares (um por posição) e aplica a MESMA
+     * strategy do behavior em cada um, concatenando os deltas; `batch=false` valida que valor/tokenId
+     * são escalares (lista -> evento inválido, em vez de gerar um tokenId lixo "[2, 3]").
+     */
+    private fun computeDeltas(config: BalanceMonitorConfig, event: BlockchainEvent): ComputedDeltas {
+        val strategy = strategies.getValue(config.behavior)
+        val params = event.decodedParameters ?: return ComputedDeltas(strategy.apply(config, event))
+        if (!config.batch) {
+            BatchEventExpander.requireScalar(config, params)
+            return ComputedDeltas(strategy.apply(config, event))
+        }
+        val expanded = BatchEventExpander.expand(config, params)
+        val deltas = expanded.flatMap { scalar -> strategy.apply(config, event.copy(decodedParameters = scalar)) }
+        return ComputedDeltas(deltas, emptyBatch = expanded.isEmpty())
+    }
+
+    /** Deltas calculados para um evento; [emptyBatch] = o lote veio legitimamente vazio (no-op, DEC-110). */
+    private data class ComputedDeltas(val deltas: List<BalanceDelta>, val emptyBatch: Boolean = false)
 }

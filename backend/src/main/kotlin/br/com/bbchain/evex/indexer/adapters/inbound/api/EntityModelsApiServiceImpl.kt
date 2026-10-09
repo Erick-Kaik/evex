@@ -5,6 +5,7 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.CreateEn
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.EntityModel as EntityModelDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.EntityModelPage
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.EntityModelStatus as EntityModelStatusDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ModelCorrelationKeyPart as CorrelationKeyPartDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ModelContributor as ModelContributorDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ModelFieldMapping as ModelFieldMappingDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Network as NetworkDto
@@ -12,6 +13,7 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateEn
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateEntityModelStatusPayload
 import br.com.bbchain.evex.indexer.application.model.EntityModelService
 import br.com.bbchain.evex.indexer.domain.common.Network
+import br.com.bbchain.evex.indexer.domain.model.CorrelationKeyPart
 import br.com.bbchain.evex.indexer.domain.model.EntityModel
 import br.com.bbchain.evex.indexer.domain.model.EntityModelStatus
 import br.com.bbchain.evex.indexer.domain.model.ModelContributor
@@ -73,21 +75,27 @@ class EntityModelsApiServiceImpl(
 
     private fun EntityModelStatus.toDto(): EntityModelStatusDto = EntityModelStatusDto.valueOf(this.name)
 
-    private fun ModelFieldMappingDto.toDomain(): ModelFieldMapping = ModelFieldMapping(decodedParam = decodedParam, modelField = modelField)
+    private fun ModelFieldMappingDto.toDomain(): ModelFieldMapping = ModelFieldMapping(decodedParam = decodedParam, modelField = modelField, source = source ?: "PARAM")
 
-    private fun ModelFieldMapping.toDto(): ModelFieldMappingDto = ModelFieldMappingDto(decodedParam = decodedParam, modelField = modelField)
+    private fun ModelFieldMapping.toDto(): ModelFieldMappingDto = ModelFieldMappingDto(decodedParam = decodedParam, modelField = modelField, source = source)
+
+    private fun CorrelationKeyPartDto.toDomain(): CorrelationKeyPart = CorrelationKeyPart(type = type, arg = arg)
+
+    private fun CorrelationKeyPart.toDto(): CorrelationKeyPartDto = CorrelationKeyPartDto(type = type, arg = arg)
 
     private fun ModelContributorDto.toDomain(): ModelContributor = ModelContributor(
         contractAddress = contractAddress,
         eventName = eventName,
         correlationParam = correlationParam,
         fieldMappings = fieldMappings.map { it.toDomain() },
+        correlationKey = correlationKey?.map { it.toDomain() },
     )
 
     private fun ModelContributor.toDto(): ModelContributorDto = ModelContributorDto(
         contractAddress = contractAddress,
         eventName = eventName,
         correlationParam = correlationParam,
+        correlationKey = correlationKey?.map { it.toDto() }?.toMutableList(),
         fieldMappings = fieldMappings.map { it.toDto() }.toMutableList(),
     )
 

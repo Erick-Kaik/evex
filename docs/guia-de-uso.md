@@ -30,6 +30,7 @@ campo `network` (`MAINNET` | `TESTNET`).
 - [3. Detectar automaticamente a interface (ERC20 / 721 / 1155)](#3-detectar-automaticamente-a-interface-erc20--721--1155)
 - [4. Pegar eventos já gravados e decodificar (redecode do histórico)](#4-pegar-eventos-já-gravados-e-decodificar-redecode-do-histórico)
 - [5. Monitorar saldo de carteiras ao vivo](#5-monitorar-saldo-de-carteiras-ao-vivo)
+- [5.1. Saldo de eventos em lote (arrays)](#51-saldo-de-eventos-em-lote-arrays)
 - [6. Backfill de saldo (config criada depois dos eventos)](#6-backfill-de-saldo-config-criada-depois-dos-eventos)
 - [7. Configurar um webhook (notificação de saída)](#7-configurar-um-webhook-notificação-de-saída)
 - [8. Os 3 modos de formulário (guiado / visual / manual)](#8-os-3-modos-de-formulário-guiado--visual--manual)
@@ -39,6 +40,7 @@ campo `network` (`MAINNET` | `TESTNET`).
 - [11.1. Importar histórico de versões de ABI (proxy UUPS)](#111-importar-histórico-de-versões-de-abi-proxy-uuups)
 - [12. Consultar saldo numa data / histórico](#12-consultar-saldo-numa-data--histórico)
 - [13. Eventos enriquecidos no payload de webhook](#13-eventos-enriquecidos-no-payload-de-webhook)
+- [14. Chave de correlação do Modelo de Entidade](#14-chave-de-correlação-do-modelo-de-entidade)
 - [Referência rápida](#referência-rápida)
 - [Troubleshooting](#troubleshooting)
 
@@ -343,6 +345,64 @@ POST /v1/balance-monitors    { contractAddress, network, eventName, behavior,
 GET  /v1/balances?walletAddress=&contractAddress=&tokenId=
 PATCH /v1/balance-monitors/{id}/status   { active: false }
 ```
+
+---
+
+## 5.1. Saldo de eventos em lote (arrays)
+
+Alguns contratos emitem **um único evento com vários lançamentos** em parâmetros do tipo array — o caso
+típico é o `TransferBatch(operator, from, to, uint256[] ids, uint256[] values)` de um ERC-1155 genérico.
+A config de saldo tem a flag `batch` para isso.
+
+**Como configurar** — por contrato ERC-1155 são **2 configs**, uma por evento (o `behavior` é o mesmo,
+`TRANSFER`):
+
+```jsonc
+// 1) lançamentos individuais (batch omitido = false)
+{ "contractAddress": "0xbbbb...02", "network": "TESTNET", "eventName": "TransferSingle",
+  "behavior": "TRANSFER", "fromParam": "from", "toParam": "to", "valueParam": "value", "tokenIdParam": "id" }
+
+// 2) lançamentos em lote — valueParam e tokenIdParam são arrays
+{ "contractAddress": "0xbbbb...02", "network": "TESTNET", "eventName": "TransferBatch",
+  "behavior": "TRANSFER", "fromParam": "from", "toParam": "to", "valueParam": "values", "tokenIdParam": "ids",
+  "batch": true }
+```
+
+**Regras**
+
+- Com `batch=true`, cada posição `i` dos arrays vira um lançamento independente, aplicado com o mesmo
+  `behavior`; `from`/`to`/`wallet` continuam escalares e valem para todas as posições. Endereço zero é
+  tratado por posição (mint só credita o destinatário, burn só debita o remetente).
+- **Descarte atômico**: se os arrays tiverem tamanhos diferentes, algum parâmetro não for lista ou algum
+  elemento não for numérico, o evento **inteiro** é descartado (nenhuma posição é aplicada) com um WARN
+  deduplicado por config; o restante do lote segue. Arrays vazios não geram nenhum lançamento. Ids repetidos
+  no mesmo lote somam.
+- Com `batch=false`, um parâmetro de valor/tokenId que chega como lista também descarta o evento, com WARN
+  sugerindo `batch=true`.
+- **Validação contra a ABI** (só no cadastro/edição): se o contrato tem ABI cadastrada e o evento existe,
+  `batch=true` exige `valueParam`/`tokenIdParam` do tipo array numérico (ex.: `uint256[]`) e `batch=false`
+  exige escalares. São consideradas **todas** as versões da ABI (proxy upgradável): se **nenhuma** for
+  compatível, a API responde `400`; se **só algumas** forem, a config é aceita e a resposta traz
+  `warnings` (texto em português) com as faixas de blocos afetadas, onde o evento será descartado. Sem ABI
+  cadastrada, nada é validado.
+- **Editar uma config para `batch=true` não reprojeta o histórico.** Para contabilizar eventos já indexados,
+  crie uma config nova (ela nasce com a marca d'água do cursor) e rode o backfill (seção 6). Backfill e
+  redecode usam o mesmo caminho da ingestão ao vivo e chegam ao mesmo saldo.
+
+**Pela UI:** em **Saldos → Cadastrar** (ou Editar) a configuração tem o checkbox **"Lote (batch)"**,
+nos 3 modos do formulário. No **guiado**, ao escolher um evento que só oferece parâmetros array
+(ex.: `TransferBatch`) o Lote é marcado sozinho (dá para desmarcar) e os selects de montante/tokenId
+passam a listar só arrays numéricos (sem Lote, só escalares); no **visual**, os slots ganham o sufixo
+"(array)" e vincular um array ao montante sugere o Lote; no **manual** é um checkbox simples. Um aviso
+amarelo aparece se o tipo do parâmetro não combina com o Lote (o backend continua sendo a garantia final:
+`400` mostrado no formulário). Se a resposta do cadastro/edição trouxer `warnings`, o detalhe da config
+abre com um alerta "Configuração salva com avisos". Configs em lote exibem o chip **"Lote"** na listagem
+e no detalhe.
+
+**Limitação de precisão** — `balance` e `tokenId` da API de saldos são `string` e o banco usa inteiro
+exato, então saldos e ids grandes (até 2^256-1) estão corretos. Já os `decodedParameters` da **API de
+eventos** são números JSON: ids/valores acima de 2^53 perdem precisão em clientes JavaScript que usam
+`JSON.parse` direto (o dado gravado continua exato). Para ids grandes, use a API de saldos.
 
 ---
 
@@ -706,6 +766,61 @@ webhook também for um dos contribuintes do modelo. **Contrato real pra testar i
 **Limitação conhecida (não bloqueia os cenários acima):** argumento de `EnrichmentCall` só aceita tipos
 escalares (`address`/`bool`/`string`/`bytesN`/`uintN`/`intN`) — array/tupla como **entrada** de uma
 chamada ainda não tem convenção definida (saída com múltiplos valores funciona normalmente).
+
+---
+
+## 14. Chave de correlação do Modelo de Entidade
+
+Cada contribuinte de um Modelo diz **qual chave** identifica a entidade. Dois eventos só acumulam no
+mesmo registro se as chaves finais forem **iguais**. A chave é uma lista ordenada de partes
+(`correlationKey`); o atalho antigo `correlationParam: "id"` continua valendo e equivale a
+`[PARAM(id)]` (quando os dois vêm, `correlationKey` vence). Tipos de parte (strings extensíveis, não é
+enum fechado): `PARAM` (arg = parâmetro decodificado), `EMITTER_ADDRESS` (contrato que emitiu o log),
+`TX_HASH`, `BLOCK_NUMBER`, `LITERAL` (arg = constante). Tipo desconhecido é rejeitado com 400 no
+cadastro/edição.
+
+Exemplos (endereços fictícios):
+
+| Situação | Chave de cada contribuinte | O que resolve |
+|---|---|---|
+| O mesmo `id` aparece em contratos diferentes (token A e token B) e não podem se misturar | `[EMITTER_ADDRESS, PARAM(id)]` em todos | `A\|7` e `B\|7` viram registros distintos |
+| A entidade é identificada por 2 parâmetros | `[PARAM(org), PARAM(id)]` | chave composta; `\|` e `\` nos valores são escapados |
+| Eventos de contratos diferentes na mesma transação | `[TX_HASH]` em todos | um registro por transação, campos de todos os contratos |
+| Registro singleton do modelo | `[LITERAL("global")]` em todos | uma única entidade (cuidado: um registro só acumula tudo) |
+
+**O que NÃO resolve (limites):** `EMITTER_ADDRESS` é o endereço do **próprio** emissor do evento, então só
+correlaciona eventos do **mesmo emissor**. Para unir contratos **diferentes** as partes precisam avaliar
+**igual** nos dois lados: um parâmetro que traga o endereço do outro contrato (ex.: o registry emite
+`TokenRegistered(address token, uint256 id)` com `[PARAM(token), PARAM(id)]` e o token usa
+`[EMITTER_ADDRESS, PARAM(id)]` — endereços são comparados em minúsculas), `TX_HASH` ou `LITERAL`.
+**Eventos que não carregam a chave não correlacionam entre contratos.** Parte ausente/nula/lista/struct
+faz o evento não correlacionar (nenhum registro, aviso no log por modelo). Todos os contribuintes do
+mesmo modelo precisam ter o **mesmo número de partes** (os tipos podem diferir).
+
+**Mudar a chave de um modelo já populado deixa os registros antigos ÓRFÃOS** (chave diferente): eventos
+novos criam registros novos e não existe reprojeção histórica de modelo nesta entrega. Para o histórico,
+crie um modelo novo (eventos anteriores à criação do modelo também não entram).
+*(Nota: manter um modelo por organização, cada um com chave própria, é um contorno possível, mas não é
+a recomendação — prefira a chave composta.)*
+
+**Campo `source` no mapeamento:** cada `fieldMapping` pode trazer `source` (default `PARAM` = lê
+`decodedParam`, como sempre). Fontes iniciais: `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER` e
+`BLOCK_TIMESTAMP`, que ignoram `decodedParam`. Útil para um registro chaveado por `TX_HASH` guardar o
+endereço emissor de cada evento. `BLOCK_TIMESTAMP` só preenche se o timestamp do bloco já estiver
+gravado no evento (a projeção nunca consulta a rede); senão o campo é omitido naquele evento, com aviso.
+`source` desconhecida = 400 no cadastro.
+
+**Pela UI:** em **Modelos de Entidade → Cadastrar/Editar**, cada evento contribuinte tem o **construtor
+de chave**: lista ordenada de partes (adicionar, remover, subir/descer), cada uma com tipo (`PARAM`,
+`EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `LITERAL`) e o argumento só quando aplicável (`PARAM` →
+parâmetro do evento; `LITERAL` → texto), com a pré-visualização da chave (ex.:
+`EMITTER_ADDRESS | PARAM(id)`). Modelos legados (só `correlationParam`) aparecem como uma parte
+`PARAM` e são salvos exatamente como vieram se a chave não for tocada; ao alterá-la, a UI passa a
+enviar `correlationKey` e avisa que os registros antigos ficam órfãos. O formulário exige ao menos uma
+parte, argumento preenchido e o mesmo número de partes em todos os contribuintes. Em cada campo
+mapeado há o seletor de **fonte** (`PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`,
+`BLOCK_TIMESTAMP`); o parâmetro do evento só aparece para `PARAM`. O modo leitura mostra a chave e a
+fonte dos campos. (O editor de modelo tem um único modo — selects/construtor —, sem guiado/visual/manual.)
 
 ---
 

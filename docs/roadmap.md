@@ -2898,3 +2898,38 @@ Ordem fixada pelo usuário (2026-10-08): **A** backend DEC-104 → **B** anális
 - Pedido do usuário: o cadastro de ABI por Blockscout vinha sempre de bloco 0. Agora, sem `validFromBlock` e com `source=BLOCKSCOUT`, usa o bloco de criação do contrato no Blockscout (fallback 0 sem derrubar o cadastro); valor explícito sempre respeitado; regra saiu do `ContractsApiServiceImpl`; removido `default: 0` do yaml; rótulo do formulário ajustado. Backend 752/752. Sem revisão separada do `reviewer` (ajuste pequeno coberto por 15 testes).
 - Limite: proxy usa o bloco de criação do proxy (aproximação); faixas por upgrade = import de histórico (DEC-105).
 
+---
+
+## E32 — Saldo com parâmetros em array (ERC-1155 `TransferBatch`) e correlação do Modelo de Entidade por escopo — ✅ Concluída (A, A.2, B, C e D feitas; revisão `reviewer` 2026-10-09 aprovada com ressalvas, sem achado bloqueante)
+
+Origem: lacunas apontadas ao testar um ciclo de ativos tokenizados num QA de projeto cliente (2026-10-09). Ordem fixada pelo usuário: **A** análise (PARA e espera confirmação) → **B** backend da Lacuna 1 → **C** backend da Lacuna 2 (só se escolhida a mudança de código; senão documenta o workaround em guia + DEC) → **D** uma única passada de frontend + revisão única do `reviewer`. Mesma branch (`feat/discovery-proxy-implementation-awareness`), após commit único `bf287c7` do trabalho anterior (DEC-103 a DEC-109).
+
+### Etapa A — análise ✅ (2026-10-09, sem código)
+
+- Relatórios: validação da decodificação de arrays (`blockchain-integration`) e desenho das duas lacunas (`hexagonal-architect`). Próximo ID de decisão livre: DEC-110.
+- Lacuna 1 (fatos): `uint256[]` decodifica como `List<BigInteger>` mas, relido do JSONB, os elementos voltam `Integer`/`Long`/`BigInteger` misturados; nenhum behavior trata `List` — hoje o evento fica `decoded=true` sem saldo projetado (WARN deduplicado); o saldo é só acumulador por (wallet, contract, tokenId, network), sem ledger por evento.
+- Lacuna 2 (fatos): a chave do registro é `parameters[correlationParam].toString()`; a mesma derivação está duplicada em `WebhookMatchingService`; eventos de um contrato compartilhado entre organizações que não trazem o endereço do contrato de token não correlacionam com os eventos de cada token por nenhuma chave de parâmetro/emissor.
+- Decisões em aberto e recomendações: ver relatório da sessão. Nada implementado.
+
+### Etapa A.2 — desenho final genérico ✅ (2026-10-09, sem código; aguardando confirmação do usuário para a Etapa B)
+
+- Princípio fixado pelo usuário: Evex genérico e configurável; nenhuma regra/nome/endereço de projeto específico (inclusive o projeto de origem) no código (fixtures neutras); limitação de contrato específico resolvida por mecanismo de configuração geral, não por atalho nem alteração de contrato externo; strings extensíveis em vez de enums fechados; sem soluções com N cadastros manuais por org.
+- Lacuna 1 (DEC-110 previsto): flag opcional `batch` na config de saldo (sem behavior novo no enum), expansor puro no domain reusando as 4 strategies, evento inválido descartado inteiro com WARN deduplicado, validação contra o ABI quando houver, migration `V7`.
+- Lacuna 2 (DEC-111 previsto): `correlationKey` = lista ordenada de partes (`PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `LITERAL`) por contribuinte, aditiva; `correlationParam` segue como atalho com a MESMA chave de hoje; `CorrelationKeyResolver` no domain como fonte única (projeção do modelo + `{{model.*}}` do webhook).
+
+### Etapa B — backend da Lacuna 1 (DEC-110, 2026-10-09) — ✅ implementado
+
+- Flag `batch` + `BatchEventExpander` + validação contra todas as versões de ABI (`400` só se nenhuma compatível; aviso em `warnings` se só algumas) + migration `V7`. Backend 787/787. Spec e2e `10-balance-batch.spec.ts` escrito e **não executado** (sem Hardhat neste ambiente).
+- Pendente: Etapa C (backend da Lacuna 2, DEC-111, incluindo `source` no mapeamento de campo), Etapa D (frontend das duas) e revisão única do `reviewer`.
+
+### Etapa C — backend da Lacuna 2 (DEC-111, 2026-10-09) — ✅ implementado
+
+- `correlationKey` configurável por contribuinte (`PARAM`/`EMITTER_ADDRESS`/`TX_HASH`/`BLOCK_NUMBER`/`LITERAL`, strings extensíveis), `source` opcional no mapeamento de campo, `CorrelationKeyResolver` como fonte única (projeção do modelo + `{{model.*}}`), legado intacto (`correlationParam` com a mesma chave), validação 400 e aridade igual, mapper JSONB tolerante; sem migration. Backend 820/820. Reprojeção opt-in de modelo fica como evolução futura.
+- Pendente: Etapa D (UMA passada de frontend das duas lacunas: formulário de saldo nos 3 modos com `batch` e construtor de chave/`source` do Modelo de Entidade; cliente TS regenerado, mock, testes, lint, build) e revisão única do `reviewer`; e2e `10-balance-batch.spec.ts` ainda não executado.
+
+### Etapa D — frontend das duas lacunas + revisão final ✅ (2026-10-09)
+
+- `frontend-dev`, uma única passada (DEC-112): saldo em lote — checkbox `batch` nos 3 modos (guiado auto-sugere ao escolher evento com parâmetros só array, filtro de parâmetros arrays numéricos vs escalares, visual com slots "(array)", manual), chip "Lote", `warnings` exibidos após create/update, validação de tipo não bloqueante; Modelo de Entidade — `CorrelationKeyBuilder` (partes, pré-visualização, tipo desconhecido tolerado, validação de aridade/`arg`), legado preservado sem alteração, alerta de órfãos ao editar a chave, `source` no mapeamento de campo; mock (inclui handlers de modelos de entidade que não existiam e correção PATCH→PUT do update de saldo); cliente TS regenerado.
+- Revisão (`reviewer`, 2026-10-09): **aprovada com ressalvas, sem achado bloqueante**. Backend **820/820**, frontend **160/160** (34 arquivos; `tsc -b`/lint/build limpos), reconfirmados do zero. N1 (esta seção citava o projeto de origem) e N2 (status desatualizado) corrigidos aqui; S1 (WARN espúrio em array vazio) corrigido (teste estendido); N3 e S2/S3 registrados na DEC-112.
+- **Pendências:** e2e `10-balance-batch.spec.ts` escrito e **não executado** (sem Hardhat neste ambiente); e2e Playwright existentes não rodados; reprojeção opt-in de modelo, contribuinte por `topic0` e parte de chave por enriquecimento ficam como evolução futura (DEC-111).
+

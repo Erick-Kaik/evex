@@ -186,6 +186,8 @@ export interface BalanceMonitorDto {
   toParam?: string
   valueParam?: string
   tokenIdParam?: string
+  batch?: boolean
+  warnings?: string[]
   active: boolean
 }
 
@@ -203,6 +205,8 @@ export interface CreateBalanceMonitorInput {
   toParam?: string
   valueParam: string
   tokenIdParam?: string
+  /** DEC-110: valor/tokenId são arrays (ex.: ERC-1155 TransferBatch). Omitido = false. */
+  batch?: boolean
 }
 
 /**

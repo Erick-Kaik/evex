@@ -43,6 +43,8 @@ interface ParamBindingCanvasProps {
 const KIND_LABEL: Record<EventParamKind, string> = {
   address: 'endereço',
   numeric: 'numérico',
+  numericScalar: 'numérico (escalar)',
+  numericArray: 'array numérico',
   any: 'qualquer tipo',
 }
 

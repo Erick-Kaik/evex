@@ -67,4 +67,23 @@ describe('BalanceMonitorListSection', () => {
     // contrato não cadastrado -> endereço encurtado, sem link
     expect(screen.getByText('0xbbb000…0002')).toBeInTheDocument()
   })
+
+  it('mostra o chip "Lote" só nas configurações com batch=true', async () => {
+    listMonitoredContracts.mockResolvedValue({ data: { content: [] } })
+    listBalanceMonitors.mockResolvedValue({
+      data: {
+        page: 0,
+        size: 20,
+        totalElements: 2,
+        totalPages: 1,
+        content: [
+          { id: 'm1', contractAddress: KNOWN, network: 'TESTNET', eventName: 'TransferSingle', behavior: 'TRANSFER', fromParam: 'from', toParam: 'to', valueParam: 'value', batch: false, active: true },
+          { id: 'm2', contractAddress: KNOWN, network: 'TESTNET', eventName: 'TransferBatch', behavior: 'TRANSFER', fromParam: 'from', toParam: 'to', valueParam: 'values', batch: true, active: true },
+        ],
+      },
+    })
+    renderWithProviders(<BalanceMonitorListSection />)
+    await screen.findByText('TransferBatch')
+    expect(screen.getAllByText('Lote')).toHaveLength(1)
+  })
 })

@@ -1,13 +1,15 @@
-import { Box, Button, IconButton, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, IconButton, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
-import type { ModelContributor } from '../../api/api'
+import type { ModelContributor, ModelFieldMapping } from '../../api/api'
 import { ContractAutocomplete } from '../../components/ContractAutocomplete'
 import type { ContractRef } from '../../components/ContractAutocomplete'
 import { EventPicker } from '../../components/EventPicker'
 import { EventParamSelect } from '../../components/EventParamSelect'
 import { useContractEventCatalog } from '../../components/contractCatalog'
 import type { Network } from '../../api/api'
+import { CorrelationKeyBuilder } from './CorrelationKeyBuilder'
+import { FIELD_SOURCES, effectiveKeyParts, isLegacyKey, withKeyParts } from './correlationKey'
 
 interface ModelContributorRowProps {
   index: number
@@ -20,8 +22,10 @@ interface ModelContributorRowProps {
 /**
  * Uma linha do builder de `contributors` de um Modelo de Entidade (E19/DEC-082/083): contrato +
  * evento (catálogo `GET /v1/contracts/{address}/events`, mesmo componente `<EventPicker>` da E16),
- * `correlationParam` (qual campo decodificado deste evento identifica a entidade — `<EventParamSelect
- * kind="any">`) e a lista de `fieldMappings` (campo decodificado → nome do campo no modelo acumulado).
+ * chave de correlação (`<CorrelationKeyBuilder>`, DEC-111: partes PARAM/EMITTER_ADDRESS/TX_HASH/
+ * BLOCK_NUMBER/LITERAL; modelo legado só com `correlationParam` aparece como 1 parte PARAM e é enviado
+ * intacto se não for alterado) e a lista de `fieldMappings` (fonte `source` + parâmetro decodificado,
+ * só para PARAM → nome do campo no modelo acumulado).
  */
 export function ModelContributorRow({ index, contributor, network, onChange, onRemove }: ModelContributorRowProps) {
   const { inputsByEvent } = useContractEventCatalog(contributor.contractAddress || undefined)
@@ -36,29 +40,39 @@ export function ModelContributorRow({ index, contributor, network, onChange, onR
       ...contributor,
       contractAddress: next?.address ?? '',
       eventName: '',
-      correlationParam: '',
+      correlationParam: undefined,
+      correlationKey: [{ type: 'PARAM', arg: '' }],
       fieldMappings: [],
     })
   }
 
   function handleEventChange(eventName: string) {
-    onChange(index, { ...contributor, eventName, correlationParam: '', fieldMappings: [] })
+    // Trocar o evento invalida os parâmetros escolhidos: mantém a forma da chave (nº de partes e tipos),
+    // zerando só os `arg` de PARAM — não migra um modelo legado sem o usuário mexer no evento.
+    const parts = effectiveKeyParts(contributor)
+    const nextParts = parts.length === 0 ? [{ type: 'PARAM', arg: '' }] : parts.map((p) => (p.type === 'PARAM' ? { ...p, arg: '' } : p))
+    onChange(index, { ...withKeyParts(contributor, nextParts), eventName, fieldMappings: [] })
   }
 
   function addFieldMapping() {
     onChange(index, {
       ...contributor,
-      fieldMappings: [...contributor.fieldMappings, { decodedParam: '', modelField: '' }],
+      fieldMappings: [...contributor.fieldMappings, { decodedParam: '', modelField: '', source: 'PARAM' }],
     })
   }
 
-  function updateFieldMapping(mappingIndex: number, patch: Partial<{ decodedParam: string; modelField: string }>) {
+  function updateFieldMapping(mappingIndex: number, patch: Partial<ModelFieldMapping>) {
     onChange(index, {
       ...contributor,
       fieldMappings: contributor.fieldMappings.map((mapping, i) =>
         i === mappingIndex ? { ...mapping, ...patch } : mapping,
       ),
     })
+  }
+
+  function changeSource(mappingIndex: number, source: string) {
+    // `decodedParam` só vale para PARAM: as demais fontes o descartam.
+    updateFieldMapping(mappingIndex, { source, decodedParam: source === 'PARAM' ? '' : undefined })
   }
 
   function removeFieldMapping(mappingIndex: number) {
@@ -87,13 +101,11 @@ export function ModelContributorRow({ index, contributor, network, onChange, onR
           required
         />
 
-        <EventParamSelect
-          kind="any"
-          inputs={eventInputs}
-          value={contributor.correlationParam}
-          onChange={(paramName) => onChange(index, { ...contributor, correlationParam: paramName })}
-          label="Parâmetro de correlação (identifica a entidade)"
-          required
+        <CorrelationKeyBuilder
+          parts={effectiveKeyParts(contributor)}
+          eventInputs={eventInputs}
+          legacy={isLegacyKey(contributor)}
+          onChange={(parts) => onChange(index, withKeyParts(contributor, parts))}
         />
 
         <Box>
@@ -113,17 +125,38 @@ export function ModelContributorRow({ index, contributor, network, onChange, onR
           )}
 
           <Stack sx={{ gap: 1, mt: 1 }}>
-            {contributor.fieldMappings.map((mapping, mappingIndex) => (
+            {contributor.fieldMappings.map((mapping, mappingIndex) => {
+              const source = mapping.source ?? 'PARAM'
+              const knownSource = (FIELD_SOURCES as readonly string[]).includes(source)
+              return (
               <Stack key={mappingIndex} direction="row" sx={{ alignItems: 'center', gap: 1 }}>
-                <EventParamSelect
-                  kind="any"
-                  inputs={eventInputs}
-                  value={mapping.decodedParam}
-                  onChange={(paramName) => updateFieldMapping(mappingIndex, { decodedParam: paramName })}
-                  label="parâmetro do evento"
-                  required
-                  sx={{ width: 220 }}
-                />
+                <TextField
+                  select
+                  size="small"
+                  label="fonte"
+                  value={source}
+                  onChange={(event) => changeSource(mappingIndex, event.target.value)}
+                  helperText={source === 'BLOCK_TIMESTAMP' ? 'Exige o timestamp já gravado no evento.' : undefined}
+                  sx={{ width: 190 }}
+                >
+                  {FIELD_SOURCES.map((option) => (
+                    <MenuItem key={option} value={option}>
+                      {option}
+                    </MenuItem>
+                  ))}
+                  {!knownSource && <MenuItem value={source}>{source}</MenuItem>}
+                </TextField>
+                {source === 'PARAM' && (
+                  <EventParamSelect
+                    kind="any"
+                    inputs={eventInputs}
+                    value={mapping.decodedParam ?? ''}
+                    onChange={(paramName) => updateFieldMapping(mappingIndex, { decodedParam: paramName })}
+                    label="parâmetro do evento"
+                    required
+                    sx={{ width: 220 }}
+                  />
+                )}
                 <TextField
                   size="small"
                   required
@@ -141,7 +174,8 @@ export function ModelContributorRow({ index, contributor, network, onChange, onR
                   <DeleteIcon fontSize="small" />
                 </IconButton>
               </Stack>
-            ))}
+              )
+            })}
           </Stack>
         </Box>
       </Stack>

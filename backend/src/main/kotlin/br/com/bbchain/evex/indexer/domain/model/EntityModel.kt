@@ -45,12 +45,31 @@ data class EntityModel(
 data class ModelContributor(
     val contractAddress: String,
     val eventName: String,
-    val correlationParam: String,
+    /** Atalho legado da chave de correlação (equivale a `[PARAM(correlationParam)]`); opcional desde a DEC-111. */
+    val correlationParam: String? = null,
     val fieldMappings: List<ModelFieldMapping>,
+    /** Chave composta (lista ordenada de partes); quando informada e não vazia, vence [correlationParam]. */
+    val correlationKey: List<CorrelationKeyPart>? = null,
 )
 
-/** Um campo decodificado de um [ModelContributor] mapeado pra um nome de campo do modelo acumulado. */
+/**
+ * Uma parte da chave de correlação (DEC-111). [type] é um código **extensível** (string, não enum fechado):
+ * valores iniciais `PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `LITERAL`. [arg] é o nome do
+ * parâmetro decodificado (`PARAM`) ou a constante (`LITERAL`); ignorado nos demais tipos.
+ */
+data class CorrelationKeyPart(
+    val type: String,
+    val arg: String? = null,
+)
+
+/**
+ * Um campo de um [ModelContributor] mapeado para um nome de campo do modelo acumulado. [source] é um
+ * código extensível (default `PARAM` = lê o parâmetro decodificado [decodedParam], comportamento
+ * original); `EMITTER_ADDRESS`/`TX_HASH`/`BLOCK_NUMBER`/`BLOCK_TIMESTAMP` leem metadados do evento e
+ * ignoram [decodedParam].
+ */
 data class ModelFieldMapping(
-    val decodedParam: String,
+    val decodedParam: String? = null,
     val modelField: String,
+    val source: String = "PARAM",
 )

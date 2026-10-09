@@ -156,9 +156,22 @@ export function useContractMethodCatalog(address: string | undefined): ContractM
 }
 
 /** Filtro de `inputs` de evento por tipo Solidity, compartilhado entre `<EventParamSelect>` e testes. */
-export type EventParamKind = 'address' | 'numeric' | 'any'
+export type EventParamKind = 'address' | 'numeric' | 'numericScalar' | 'numericArray' | 'any'
 
 const NUMERIC_TYPE = /^u?int(\d+)?(\[\])?$/
+const NUMERIC_SCALAR_TYPE = /^u?int(\d+)?$/
+/** Mesma regra do backend para `batch=true` (DEC-110): array numérico, de tamanho fixo ou dinâmico. */
+const NUMERIC_ARRAY_TYPE = /^u?int\d*\[\d*\]$/
+
+/** `true` quando o tipo Solidity é um array (termina em `]`). */
+export function isArrayType(type: string): boolean {
+  return type.endsWith(']')
+}
+
+/** `true` quando o tipo é um array numérico (`uint256[]`, `int8[3]`...) — o que `batch=true` exige. */
+export function isNumericArrayType(type: string): boolean {
+  return NUMERIC_ARRAY_TYPE.test(type)
+}
 
 export function matchesParamKind(type: string, kind: EventParamKind): boolean {
   switch (kind) {
@@ -166,6 +179,10 @@ export function matchesParamKind(type: string, kind: EventParamKind): boolean {
       return type === 'address'
     case 'numeric':
       return NUMERIC_TYPE.test(type)
+    case 'numericScalar':
+      return NUMERIC_SCALAR_TYPE.test(type)
+    case 'numericArray':
+      return NUMERIC_ARRAY_TYPE.test(type)
     case 'any':
       return true
   }

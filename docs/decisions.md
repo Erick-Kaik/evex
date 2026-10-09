@@ -2067,3 +2067,128 @@ Manter o `?: 0L` no ApiServiceImpl e só ajustar o valor lá (regra de negócio 
 ### Testes
 
 `BlockscoutClientTest` +6, `AbiRegistrationServiceTest` +6, `ContractAbiCreationBlockApiTest` +3 (POST BLOCKSCOUT sem `validFromBlock` devolve o bloco de criação mockado; `0` explícito respeitado e `getCreationBlock` não chamado; `UPLOAD_TEXT` sem valor fica em 0). Backend 752/752; frontend `src/features/contracts` 45/45, `tsc -b` e lint limpos.
+
+---
+
+## DEC-110 — Saldo com parâmetros em array (eventos em lote): flag opcional `batch` na config de saldo + expansor puro, sem behavior novo
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/balance`, `application/balance`, `adapters/outbound/persistence`, contrato OpenAPI de balance-monitor, migration `V7`). Frontend na etapa D (única passada, com a DEC-111). Epic E32.
+
+Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev` (implementação), consolidado pela sessão principal. Decisões do usuário confirmadas (opção C; descarte atômico; validação contra **todas** as versões de ABI).
+
+### Princípio do produto (vale para toda a E32)
+
+O Evex é um indexador **genérico e configurável**: nenhuma regra, nome, endereço ou formato de projeto específico entra no código (fixtures neutras: ERC-1155 genérico, endereços fictícios); limitação de um contrato específico se resolve com **mecanismo geral de configuração + limite documentado**, nunca com atalho nem pedindo alteração de contrato externo; strings extensíveis no lugar de enums fechados; sem soluções com N cadastros manuais por org/cliente.
+
+### Contexto
+
+`BalanceBehaviorStrategy` (CREDIT/DEBIT/TRANSFER/DELTA) lê `fromParam`/`toParam`/`valueParam`/`tokenIdParam` como **escalares**. Eventos em lote (ex.: `TransferBatch` do ERC-1155, `uint256[] ids`/`uint256[] values`) não eram suportados: `toBalanceAmount` lança com `List`, `applySafely` captura, WARN deduplicado e **o evento ficava `decoded=true` sem saldo projetado**; com `tokenIdParam` apontando para array e valor escalar, `readTokenId` gerava o tokenId lixo `"[2, 3]"`. Fatos medidos: `uint256[]` decodifica como `List<BigInteger>`, mas relido do JSONB os elementos voltam `Integer`/`Long`/`BigInteger` **misturados**; o saldo é acumulador puro por `(wallet, contract, tokenId, network)` (sem ledger por evento); a idempotência é por evento (`(tx_hash, log_index)` na ingestão, `decoded=false→true` no redecode, cursor do backfill).
+
+### Decisão
+
+- **Flag opcional `batch: boolean` (default `false`)** na config de saldo (create/update/resposta), reusando `valueParam`/`tokenIdParam` como arrays (sem `idsParam`/`valuesParam`). **O enum `BalanceBehavior` fica intacto**; vale para os 4 behaviors e para qualquer evento em lote de qualquer contrato. No `PUT`, `batch` omitido = `false`.
+- **`BatchEventExpander` puro no domain:** 1 evento em lote → N eventos escalares (valor e tokenId são listas de mesmo tamanho; os demais parâmetros são replicados em cada posição); conversão **elemento a elemento** via `toBigIntegerOrNull` (Int/Long/BigInteger/String). `BatchEventInvalidException` se tamanhos diferem, o parâmetro-chave não é lista ou há elemento não numérico; **lista vazia = no-op legítimo**.
+- **Projeção:** `applySafely` → `computeDeltas`: com `batch=true` expande e chama a **mesma strategy** em cada posição (as 4 strategies não mudam); exceção inválida cai no `catch` existente e **descarta o evento inteiro (atomicidade)** com WARN deduplicado por `config.id` (`WarnLogDeduper`), sem derrubar o lote. Endereço zero por posição (`TransferBehavior` já ignora mint/burn). Ids repetidos somam (`applyDeltas` já agrega). Ingestão ao vivo, redecode e backfill passam todos por `applySafely` ⇒ **mesmo saldo**. Com `batch=false`, valor/tokenId que chegam como lista **não geram mais tokenId lixo**: descarte com WARN que sugere `batch=true`.
+- **Validação no create/update contra o ABI (ajuste do usuário):** considera **TODAS as versões de ABI** do contrato (proxy upgradável pode ter assinaturas diferentes por faixa de blocos, DEC-007), via `ContractEventCatalogService.catalogFor`. Sem ABI cadastrada, contrato ainda não monitorado ou evento inexistente em todas as versões ⇒ **não valida** (retrocompat). Versão "compatível": `batch=true` ⇒ `valueParam` e `tokenIdParam` são arrays numéricos (`^u?int\d*\[\d*]$`); `batch=false` ⇒ nenhum termina em `]`; parâmetro ausente numa versão é neutro. **400 (`INVALID_BALANCE_MONITOR_CONFIG`) somente se NENHUMA versão for compatível; se só algumas, aceita e devolve aviso PT-BR** (um por config, listando as faixas incompatíveis, ex. `0..99`, `100..atual`) no novo campo opcional **`warnings: string[]`** do schema de resposta (só `POST`/`PUT` preenchem; `GET`/listagem não trazem). Validação só no create/update: configs já gravadas, leitura e projeção não são afetadas.
+- **Persistência:** coluna `batch boolean NOT NULL DEFAULT false` + Flyway pontual `V7__balance_monitor_batch_flag.sql` (`ADD COLUMN IF NOT EXISTS`, padrão V2/DEC-041/066: o `ddl-auto` não adiciona `NOT NULL` em tabela com linhas; em banco novo o Hibernate cria a coluna e a V7 vira no-op). `BalanceMonitorsApiServiceImpl` continua fina.
+
+### Alternativas rejeitadas
+
+Behavior novo `TRANSFER_BATCH` (enum fechado: valor novo quebra clientes com enum estrito, mesma consequência aceita para `kind`/N3 da DEC-104); detecção implícita de lista em `TRANSFER` (ambígua); `idsParam`/`valuesParam` redundantes; aplicar parcialmente um lote inválido (viola atomicidade); ledger por posição/sub-índice no array (o saldo é acumulador e a idempotência vem por evento); validar só a ABI vigente (proxy com assinaturas diferentes por faixa); reprojeção automática ao editar para `batch=true`.
+
+### Limites documentados (guia §5.1)
+
+- ERC-1155 precisa de **2 configs por contrato**: `TransferSingle` (escalar) e `TransferBatch` (`batch=true`).
+- Editar para `batch=true` **não reprojeta** o histórico (o `update` não reseta o cursor): para histórico, config nova + backfill. Eventos `TransferBatch` já ingeridos como `decoded=true` sem saldo só são reprojetados pelo backfill, não pelo redecode.
+- **Precisão de ids > 2^53:** `decodedParameters` na API de eventos é número JSON e perde precisão em clientes JS (DEC-062/063); o saldo e o `tokenId` da API de saldo já saem como string.
+- `AbiParser` não suporta tuplas/structs em eventos (`InvalidAbiContentException`); fora do escopo.
+
+### Testes
+
+`BatchEventExpanderTest` (10), `BalanceProjectionServiceTest` (+9: mint/transferência/burn em lote, CREDIT/DEBIT/DELTA, descarte atômico com WARN deduplicado, `batch=false` com lista, vazio, ids repetidos, 2^256−1, backfill expande), `BalanceMonitorConfigServiceTest` (+10: compatível, nenhuma versão compatível → 400, `address[]`, `batch=false` com array → 400, só algumas versões → aceita + aviso, sem ABI, contrato não monitorado, evento inexistente, PUT omitido), `BalanceBatchAcceptanceTest` (2, Testcontainers: log real de `TransferBatch` ABI-codificado e decodificado pelo decoder real; saldo **idêntico** entre ingestão ao vivo, **redecode** e **backfill**; backfill não duplica; round-trip JSONB com elementos mistos; contrato da API), `BalanceMonitorBatchMigrationTest` (V7 em banco com linhas, idempotente), +1 round-trip no adapter, +1 `JpaAssetBalanceAdapterTest` (ids repetidos; 2^256−1 cabe em `numeric(78,0)`). Backend **787/787**.
+
+**Não executado:** `e2e/tests/10-balance-batch.spec.ts` (spec só de API com o `mintBatch` do `TestERC1155` do `local-env`, escrito e **não executado nem tipado**: não há scaffold/Hardhat/`node_modules` neste ambiente). Frontend/mock/cliente TS: etapa D.
+
+---
+
+## DEC-111 — Chave de correlação configurável do Modelo de Entidade (`correlationKey`) e fonte `source` no mapeamento de campo, com `CorrelationKeyResolver` como fonte única
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/model`, `application/model`, `application/webhook` — só `resolveModelPlaceholders` —, `adapters/outbound/persistence/JpaEntityModelAdapter`, contrato OpenAPI do Modelo de Entidade). **Sem migration e sem coluna nova.** Frontend na etapa D (única passada, com a DEC-110). Epic E32.
+
+Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev` (implementação), consolidado pela sessão principal. Decisões do usuário confirmadas (incluir `LITERAL`; tipo desconhecido = 400 no cadastro; mapper tolerante; reprojeção opt-in fora da primeira entrega; acréscimo do `source` no mapeamento de campo). Princípio do produto: ver DEC-110.
+
+### Contexto
+
+`EntityModelRecord` é único por `(modelId, correlationValue, network)` e `correlationValue = parameters[contributor.correlationParam].toString()`: **um único parâmetro por contribuinte**, sem noção de emissor, transação ou bloco. Quando o mesmo identificador se repete em contratos diferentes (ex.: um id local a cada contrato emissor), um modelo correlacionado só pelo id mistura entidades distintas. A mesma derivação de chave estava **duplicada** em `EntityModelProjectionService` e em `WebhookMatchingService.resolveModelPlaceholders` (`{{model.*}}`). Limites do mundo real: eventos que não carregam a chave de ligação não correlacionam entre contratos — isso é um limite **genérico** a documentar, não algo que o Evex resolve com atalho nem exigindo mudança de contrato externo.
+
+### Decisão
+
+- **Chave configurável, aditiva e opcional:** cada `ModelContributor` ganha `correlationKey: List<CorrelationKeyPart(type: String, arg: String?)>` (**tipo string extensível**, não enum). Tipos iniciais: `PARAM` (`arg` = parâmetro decodificado), `EMITTER_ADDRESS` (contrato emissor do log, lowercase), `TX_HASH`, `BLOCK_NUMBER`, `LITERAL` (`arg` = constante). `LITERAL` foi incluído porque é a única forma de unir eventos que não carregam chave alguma. `BLOCK_TIMESTAMP` **não** é tipo de parte da chave (só fonte de campo).
+- **Retrocompat total:** `correlationParam` continua válido (agora anulável). **Precedência:** `correlationKey` não vazia vence; nula/vazia ⇒ usa `correlationParam`. O atalho legado segue o **caminho literal `valor.toString()`** (sem lowercase de endereço nem rejeição de lista), para **não mudar chaves já gravadas**; teste de **equivalência** (Int, Long, BigInteger pequeno e 2^200, String numérica, String não numérica, endereço) prova que Int/Long/BigInteger/"42" geram a mesma chave. Partes `PARAM` explícitas aplicam a normalização canônica (divergência intencional em strings de endereço com maiúsculas; não ocorre com Web3j, que entrega lowercase). Modelos existentes mantêm a mesma chave e o mesmo comportamento.
+- **`CorrelationKeyResolver` no domain (Kotlin puro) = ÚNICA fonte da chave**, com registros `Map<String, KeyPartEvaluator>` por tipo (sem `when` espalhado; porta aberta para um futuro avaliador por enriquecimento). Usado por `EntityModelProjectionService` **e** pelo `{{model.*}}` do webhook (derivação duplicada eliminada): evento → chave pelo mesmo resolver → registro; um evento de contribuinte diferente do que criou o registro o enxerga quando a chave coincide, senão os placeholders do modelo saem `null` (como já era).
+- **Normalização determinística (partes `PARAM`):** números (Int/Long/BigInteger/String numérica) → decimal canônico; endereços lowercase; strings como estão; lista/Map/struct/vazio/nulo ⇒ **parte ausente**. **Parte ausente, nula ou tipo desconhecido em execução ⇒ o evento NÃO correlaciona** (nenhum registro escrito, nunca chave parcial) com WARN deduplicado por `model.id`.
+- **Montagem:** 1 parte = valor puro, sem escape (idêntico ao legado); 2+ partes = valores com escape (`\` → `\\`, `|` → `\|`) unidos por `|`.
+- **`source` no mapeamento de campo (acréscimo do usuário):** `ModelFieldMapping.source: String` opcional, código extensível, **default `PARAM`** (comportamento atual); valores iniciais `PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `BLOCK_TIMESTAMP`. Permite, por exemplo, um registro chaveado por `TX_HASH` que guarda também o endereço emissor de cada evento. `decodedParam` passou a opcional/anulável (obrigatório só para `source = PARAM`; relaxamento aditivo). Fonte desconhecida/ausente ⇒ campo omitido com WARN deduplicado, **sem derrubar o evento nem o lote**; `PARAM` com parâmetro ausente mantém o legado (valor nulo). **`BLOCK_TIMESTAMP`:** `BlockchainEvent.blockTimestamp` existe mas é `Instant?` (preenchido pelo poller ou pelo backfill de timestamp); valor em ISO-8601 (`Instant.toString()`); nulo ⇒ campo omitido com WARN; **nenhuma RPC na projeção**.
+- **Validação no create/update (400, PT-BR, `InvalidEntityModelException`):** tipo ou `source` desconhecido; `arg` ausente em `PARAM`/`LITERAL`; `PARAM` com `arg` fora do evento; sem chave nenhuma; **aridade** (nº de partes) diferente entre contribuintes do mesmo modelo. Com `correlationKey` presente o `correlationParam` legado não é validado contra o evento. Modelos já gravados não são revalidados na leitura/projeção.
+- **Persistência:** `contributors` é JSONB ⇒ só ganha a chave `correlationKey` (linhas antigas leem com default nulo) e `source` nos mappings (default `PARAM`); **sem coluna nova, sem mudar a unique `(model_id, correlation_value, network)`, sem migration**; mapper Jackson do adapter com `FAIL_ON_UNKNOWN_PROPERTIES = false` (JSONB interno; o rollback para a versão com o mapper novo continua lendo).
+
+### Alternativas rejeitadas
+
+Um modelo por org/cliente como solução do produto (N cadastros manuais crescendo por org; fica só como **nota** no guia); enum fixo `correlationScope` (fechado, não cobre chave composta nem TX); correlação composta por lista de parâmetros apenas (não cobre emissor nem transação); serializar listas/structs na chave; aceitar e ignorar tipo desconhecido no cadastro (um modelo que nunca correlaciona em silêncio); reprojeção automática ao editar a chave; tabela de alias `txHash → chave`; pedir mudança de contrato externo; atalho específico de projeto; RPC/`eth_call` dentro da projeção.
+
+### Limites documentados (guia §14)
+
+- `EMITTER_ADDRESS` só correlaciona eventos do **mesmo emissor**; correlação **entre contratos diferentes** exige partes que avaliem igual nos dois contribuintes (um `PARAM` que contenha o endereço, `TX_HASH` ou `LITERAL`). **Eventos que não carregam a chave não correlacionam entre contratos.**
+- **Mudar a chave de um modelo já populado cria registros novos e deixa os antigos órfãos** (sem reprojeção histórica de modelo nesta entrega).
+- `BLOCK_TIMESTAMP` depende de o timestamp já estar gravado no evento.
+- Versões anteriores à DEC-111 que ainda usem o mapper sem tolerância não leem linhas com `correlationKey` (rollback de versão).
+
+### Evolução futura (só registrada, não implementada)
+
+- **Reprojeção opt-in de modelo** (`POST /v1/entity-models/{id}/reproject`, nos moldes do backfill DEC-066, marca d'água + cursor): esforço M-G, prioridade média, fecharia também o buraco de eventos anteriores à criação do modelo e os órfãos.
+- **Contribuinte definido por assinatura de evento/interface (`topic0`)** em vez de endereço fixo: esforço M; exige ABI registrada por emissor para decodificar.
+- **Parte de chave resolvida por enriquecimento (`eth_call` no bloco do evento):** esforço G; hoje `evaluate` é síncrono e sem I/O e a E19 decidiu não fazer RPC dentro da ingestão; o tipo string e o `KeyPartEvaluator` por tipo deixam espaço para um avaliador `ENRICHMENT`.
+- "Duplicar modelo" na UI: esforço P, prioridade baixa.
+
+### Testes
+
+`CorrelationKeyResolverTest` (equivalência legado; mesmo id em 2 contratos com `[EMITTER_ADDRESS, PARAM(id)]` ⇒ chaves distintas; composta com escape de `|` e `\`; `TX_HASH` entre contratos ⇒ mesma chave; `LITERAL`; `BLOCK_NUMBER`; ausente/nula/lista ⇒ não correlaciona; tipo desconhecido em execução ⇒ ausente + WARN; precedência; `source`), `EntityModelCorrelationKeyTest` (Testcontainers com adapters JPA reais: projeção e webhook; dois contratos/mesmo id ⇒ registros distintos, modelo legado colide num só; `TX_HASH` funde campos de contratos diferentes; registro por `TX_HASH` que guarda o endereço emissor; reprojeção idempotente; `{{model.*}}` pelo mesmo resolver), `EntityModelServiceCorrelationKeyTest` (validações), `JpaEntityModelCorrelationKeyJsonbTest` (JSONB legado, com propriedades desconhecidas e ida e volta), `EntityModelsCorrelationKeyApiTest` (API: 400 para tipo desconhecido/`arg` faltando/aridade; só `correlationParam` continua aceito). Nenhuma asserção de teste existente foi alterada. Backend **820/820**.
+
+---
+
+## DEC-112 — Frontend da E32: `batch` nos 3 modos do saldo, construtor de chave de correlação e `source` no Modelo de Entidade; resultado da revisão única
+
+Data: 2026-10-09
+
+Módulo: frontend (`features/balances`, `features/models`, `components/contractCatalog.ts`, `ParamBindingCanvas.tsx`, mocks) + docs. Epic E32 (DEC-110 e DEC-111).
+
+Autor: `frontend-dev`, consolidado pela sessão principal.
+
+### Decisões operacionais da UI
+
+- **Saldo, guiado:** o `batch` é sugerido ao **escolher o evento** (quando os parâmetros numéricos do evento são só arrays), não ao escolher o parâmetro — o filtro estrito (sem Lote só escalares) impediria escolher um array antes. O usuário pode desmarcar e a escolha dele prevalece. Com Lote marcado os selects de montante/tokenId listam só **arrays numéricos**; sem Lote, só escalares. Marcar/desmarcar limpa a escolha que ficou incompatível. Ao editar, o formulário também lê os tipos do catálogo (antes os selects do guiado ficavam desabilitados até reescolher o evento).
+- **Saldo, visual:** slots ganham o sufixo "(array)" com Lote marcado; vincular um array ao montante sugere o Lote (o slot numérico aceita escalar ou array para a sugestão poder disparar). **Manual:** checkbox simples (sem validação de tipos: não há catálogo).
+- **Validação de tipo × Lote é não bloqueante** (Alert amarelo): o backend é a garantia final. O body **sempre** leva `batch` (true/false). Chip "Lote" no detalhe e na listagem. `warnings` do POST/PUT chegam ao detalhe pelo `state` do router (Alert "Configuração salva com avisos"); 400 pelo `ApiErrorAlert`. Texto de ajuda nos 3 modos: 2 configs por contrato ERC-1155, editar para `batch=true` não reprojeta o histórico, evento inválido é descartado inteiro com WARN.
+- **`contractCatalog.ts`/`ParamBindingCanvas.tsx`:** novos kinds `numericScalar`/`numericArray`; o kind `numeric` e a regex `NUMERIC_TYPE` ficam **intactos** (o webhook não regrediu).
+- **Modelo de Entidade:** o editor tem **um único modo** (selects/builders); não existem guiado/visual/manual nele, então não foram criados modos novos. `CorrelationKeyBuilder` por contribuinte: partes com adicionar/remover/subir/descer (sem arrastar), select de tipo (PARAM com select dos parâmetros do evento; LITERAL com texto; demais sem `arg`), pré-visualização (`EMITTER_ADDRESS | PARAM(id)`), **tipo desconhecido tolerado e preservado** como texto cru. **Modelo legado** (só `correlationParam`): exibido como uma parte PARAM com nota; **se a chave não for tocada, o body mantém `correlationParam` e não leva `correlationKey`** (sem migrar silenciosamente); se for alterada, envia `correlationKey` e omite `correlationParam`. Validação no formulário: ≥ 1 parte, `arg` em PARAM/LITERAL, mesma aridade entre contribuintes (Salvar desabilitado). Alerta de **órfãos** ao editar a chave de contribuinte existente. Mapeamento de campo com `source` (select; `decodedParam` só para PARAM; trocar de fonte o descarta; fonte desconhecida como texto cru; nota sobre `BLOCK_TIMESTAMP`). Contribuinte novo nasce com `correlationKey: [PARAM(vazio)]`; trocar o evento zera os `arg` de PARAM mantendo a forma. O mapeamento novo envia `source: 'PARAM'` explícito.
+- **Mocks:** novo contrato ERC-1155 genérico (versão escalar até o bloco 99 e `uint256[]` a partir do 100), configs de saldo em lote, POST/PUT com `warnings` e 400 `INVALID_BALANCE_MONITOR_CONFIG`; o mock **não tinha nenhum handler de modelos de entidade** — criados list/create/get/put/status com 3 modelos (chave composta, `TX_HASH` com fontes não-PARAM, e um **legado**) e validações 400 espelhadas. **Correção:** o handler de update de saldo estava como `PATCH` e o cliente usa `PUT` (`updateBalanceMonitor`); o `PATCH` real é só o `/status`.
+
+### Revisão do `reviewer` (2026-10-09) — aprovada com ressalvas, sem achado bloqueante
+
+Backend 820/820 e frontend 160/160 (34 arquivos; `tsc -b`/lint/build limpos) reconfirmados do zero. Confirmado: fonte única do `CorrelationKeyResolver`, legado com a mesma chave, atomicidade do saldo em lote, saldo idêntico entre ao vivo/redecode/backfill com decoder real, mapper tolerante, webhook sem regressão, cliente gerado não editado à mão, domain sem Spring/JPA/Web3j/Jackson, ApiServiceImpl finas, nenhum segredo/URL/endereço real e **nenhuma menção ao projeto de origem em código/testes/mocks/e2e novos** (princípio do produto).
+
+- **N1 (corrigido):** a seção E32 do roadmap citava o projeto de origem; neutralizada.
+- **N2 (corrigido):** status da E32 desatualizado; atualizado com a Etapa D e esta revisão.
+- **N3 (aceito, registrar no changelog da API):** `ModelContributor.correlationParam` e `ModelFieldMapping.decodedParam` deixaram de ser obrigatórios e viraram `nullable` — relaxamento **aditivo** para requests, mas esses schemas também são usados em **respostas**: no cliente TS regenerado o campo vira opcional (quebra tipagem de quem o lê como `string`), e modelos novos com `correlationKey` e sem `correlationParam` o omitem (pode quebrar clientes estritos). O frontend foi adaptado (`effectiveKeyParts`).
+- **S1 (corrigido):** array vazio legítimo gerava WARN espúrio em `applySafely` ("não gerou nenhum delta"), contradizendo a documentação (vazio = no-op). `computeDeltas` agora devolve `ComputedDeltas(deltas, emptyBatch)` e o WARN é suprimido quando o lote veio legitimamente vazio; o teste existente do array vazio foi estendido para provar a ausência de WARN e de `applyDeltas`.
+- **S2 (aceito):** os `warnings` de create/update chegam ao detalhe pelo `state` do router e somem num reload — aceitável, o aviso aparece uma vez ao salvar.
+- **S3 (aceito):** o teste de equivalência do legado compara `toString` e a parte `PARAM`, não executa o código pré-mudança; a leitura do diff cobre a lacuna.
+
+### Não executado / fora do escopo
+
+- `e2e/tests/10-balance-batch.spec.ts` (escrito, plausível por leitura — helpers existentes e `mintBatch([2,3])` do `local-env` — mas **não executado nem tipado**: sem Hardhat/`node_modules` neste ambiente) e os specs Playwright existentes.
+- Sem "duplicar modelo" nem reprojeção de modelo (DEC-111, evolução futura); sem reordenar partes por arrastar.

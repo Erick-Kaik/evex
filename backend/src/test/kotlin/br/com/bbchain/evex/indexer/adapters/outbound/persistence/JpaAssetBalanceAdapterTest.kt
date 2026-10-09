@@ -76,6 +76,25 @@ class JpaAssetBalanceAdapterTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `DEC-110 - repeated ids from one batch event sum, and a 2^256-1 amount fits the numeric column`() {
+        val wallet = randomAddress()
+        val contract = randomAddress()
+        val max = BigInteger.TWO.pow(256).subtract(BigInteger.ONE)
+        adapter.applyDeltas(
+            listOf(
+                BalanceDelta(wallet, contract, Network.TESTNET, tokenId = "5", amount = BigInteger.valueOf(3)),
+                BalanceDelta(wallet, contract, Network.TESTNET, tokenId = "5", amount = BigInteger.valueOf(4)),
+                BalanceDelta(wallet, contract, Network.TESTNET, tokenId = "6", amount = max),
+            ),
+        )
+
+        val five = adapter.search(walletAddress = wallet, contractAddress = contract, tokenId = "5", network = Network.TESTNET, page = 0, size = 10)
+        val six = adapter.search(walletAddress = wallet, contractAddress = contract, tokenId = "6", network = Network.TESTNET, page = 0, size = 10)
+        assertThat(five.content.single().balance).isEqualTo(BigInteger.valueOf(7))
+        assertThat(six.content.single().balance).isEqualTo(max)
+    }
+
+    @Test
     fun `applyDeltas with an empty list is a no-op`() {
         adapter.applyDeltas(emptyList())
         // não lança, não bate no banco — se batesse com lista vazia num IN vazio isso quebraria.

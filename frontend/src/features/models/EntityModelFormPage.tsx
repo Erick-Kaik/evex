@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { Box, Button, Card, CardContent, Chip, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, CardContent, Chip, Stack, Typography } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import EditIcon from '@mui/icons-material/Edit'
 import type { EntityModel, ModelContributor, Network } from '../../api/api'
@@ -13,6 +13,13 @@ import { StatusToggle } from '../../components/StatusToggle'
 import type { StatusOption } from '../../components/StatusToggle'
 import type { PageMode } from '../../components/pageMode'
 import { ModelContributorListEditor } from './ModelContributorListEditor'
+import {
+  describeFieldSource,
+  effectiveKeyParts,
+  keyChanged,
+  previewKey,
+  validateCorrelationKeys,
+} from './correlationKey'
 import {
   useCreateEntityModel,
   useEntityModel,
@@ -107,7 +114,7 @@ function EntityModelCreateForm() {
         <Button
           type="submit"
           variant="contained"
-          disabled={createModel.isPending || contributors.length === 0}
+          disabled={createModel.isPending || contributors.length === 0 || validateCorrelationKeys(contributors).length > 0}
           sx={{ alignSelf: 'flex-start' }}
         >
           {createModel.isPending ? 'Cadastrando...' : 'Cadastrar'}
@@ -226,15 +233,28 @@ function EntityModelFieldsForm({ model, mode }: EntityModelFieldsFormProps) {
               {contributors.length === 0 && <Typography variant="body2">—</Typography>}
               {contributors.map((contributor, index) => (
                 <Typography key={index} variant="body2">
-                  {index + 1}. {contributor.eventName} em {contributor.contractAddress} (correlação:{' '}
-                  {contributor.correlationParam}) →{' '}
-                  {contributor.fieldMappings.map((m) => `${m.decodedParam}→{{model.${m.modelField}}}`).join(', ') ||
-                    'nenhum campo mapeado'}
+                  {index + 1}. {contributor.eventName} em {contributor.contractAddress} (chave:{' '}
+                  {previewKey(effectiveKeyParts(contributor))}) →{' '}
+                  {contributor.fieldMappings
+                    .map((m) => `${describeFieldSource(m)}→{{model.${m.modelField}}}`)
+                    .join(', ') || 'nenhum campo mapeado'}
                 </Typography>
               ))}
             </Box>
           ) : (
-            <ModelContributorListEditor contributors={contributors} network={model.network} onChange={setContributors} />
+            <>
+              {keyChanged(model.contributors, contributors) && (
+                <Alert severity="warning">
+                  Você alterou a chave de correlação de um modelo já existente: registros já gravados com a chave
+                  antiga ficam órfãos (sem reprojeção histórica).
+                </Alert>
+              )}
+              <ModelContributorListEditor
+                contributors={contributors}
+                network={model.network}
+                onChange={setContributors}
+              />
+            </>
           )}
 
           {mode !== 'view' && updateModel.isError && <ApiErrorAlert error={updateModel.error} />}
@@ -243,7 +263,7 @@ function EntityModelFieldsForm({ model, mode }: EntityModelFieldsFormProps) {
             <Button
               type="submit"
               variant="contained"
-              disabled={updateModel.isPending || contributors.length === 0}
+              disabled={updateModel.isPending || contributors.length === 0 || validateCorrelationKeys(contributors).length > 0}
               sx={{ alignSelf: 'flex-start' }}
             >
               {updateModel.isPending ? 'Salvando...' : 'Salvar'}

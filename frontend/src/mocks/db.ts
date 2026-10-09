@@ -10,6 +10,7 @@ import type {
   BalanceMonitorConfig,
   BlockscoutContract,
   Contract,
+  EntityModel,
   ContractAbi,
   ContractEvent,
   Event as IndexedEvent,
@@ -31,6 +32,8 @@ export const ADDR = {
   erc20: '0x5fbdb2315678afecb367f032d93f642f64180aa3',
   widgets: '0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9',
   erc1155: '0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0',
+  /** ERC-1155 genérico COM ABI (TransferSingle escalar + TransferBatch em array; a faixa 0..99 do batch tem a ABI antiga, incompatível com `batch=true`). */
+  multiToken: '0xbbbb000000000000000000000000000000000002',
   proxy: '0x1111000000000000000000000000000000009999',
   /** Proxy com versão de ABI legada (BLOCKSCOUT sem implementação, from=0) — cenário do opt-in "substituir legado" (DEC-105). */
   legacyProxy: '0x1111000000000000000000000000000000008888',
@@ -54,6 +57,7 @@ export const db = {
   webhooks: [] as WebhookConfig[],
   deliveries: [] as WebhookDelivery[],
   wallets: [] as Wallet[],
+  entityModels: [] as EntityModel[],
 }
 
 // ---------- Catálogos de eventos (GET /v1/contracts/{address}/events) ----------
@@ -105,6 +109,44 @@ export const eventCatalogs: Record<string, ContractEvent[]> = {
       validFromBlock: 150000,
     },
   ],
+  // ERC-1155 genérico com ABI. `TransferBatch` mudou de assinatura no bloco 100: antes `ids`/`values` eram
+  // escalares (incompatível com `batch=true` → aviso nas faixas 0..99); depois são `uint256[]`.
+  [ADDR.multiToken]: [
+    {
+      name: 'TransferSingle',
+      inputs: [
+        input('operator', 'address', true),
+        input('from', 'address', true),
+        input('to', 'address', true),
+        input('id', 'uint256'),
+        input('value', 'uint256'),
+      ],
+      validFromBlock: 0,
+    },
+    {
+      name: 'TransferBatch',
+      inputs: [
+        input('operator', 'address', true),
+        input('from', 'address', true),
+        input('to', 'address', true),
+        input('ids', 'uint256'),
+        input('values', 'uint256'),
+      ],
+      validFromBlock: 0,
+      validToBlock: 99,
+    },
+    {
+      name: 'TransferBatch',
+      inputs: [
+        input('operator', 'address', true),
+        input('from', 'address', true),
+        input('to', 'address', true),
+        input('ids', 'uint256[]'),
+        input('values', 'uint256[]'),
+      ],
+      validFromBlock: 100,
+    },
+  ],
   // ERC1155 (ADDR.erc1155) fica de fora de propósito: contrato sem ABI → catálogo vazio.
 }
 
@@ -131,6 +173,7 @@ function seed(): void {
     { id: uid(), address: ADDR.erc20, name: 'Token BRLX (ERC20)', description: 'Stablecoin de teste', version: '1.0.0', network: 'TESTNET', status: 'ACTIVE' },
     { id: uid(), address: ADDR.widgets, name: 'Registro de Widgets', description: 'Contrato de eventos variados', network: 'TESTNET', status: 'ACTIVE' },
     { id: uid(), address: ADDR.erc1155, name: 'Coleção NFT (ERC1155)', description: 'Ainda sem ABI cadastrada', network: 'TESTNET', status: 'ACTIVE' },
+    { id: uid(), address: ADDR.multiToken, name: 'Coleção multi-token (ERC-1155 genérico)', description: 'TransferSingle + TransferBatch — cenário de saldo em lote', network: 'TESTNET', status: 'ACTIVE' },
     { id: uid(), address: ADDR.proxy, name: 'Cofre (proxy upgradável)', description: 'ERC1967Proxy — ABI versionada por faixa de blocos', version: '2.1.0', network: 'MAINNET', status: 'ACTIVE' },
     { id: uid(), address: ADDR.legacyProxy, name: 'Proxy com ABI legada do Blockscout', description: 'Demonstra a importação de histórico com versão legada a substituir', network: 'TESTNET', status: 'ACTIVE' },
   ]
@@ -139,6 +182,8 @@ function seed(): void {
     { id: uid(), contractAddress: ADDR.erc20, network: 'TESTNET', source: 'UPLOAD_TEXT', storageType: 'DATABASE', validFromBlock: 0, createdAt: NOW },
     { id: uid(), contractAddress: ADDR.widgets, network: 'TESTNET', source: 'BLOCKSCOUT', storageType: 'DATABASE', validFromBlock: 0, createdAt: NOW },
     { id: uid(), contractAddress: ADDR.proxy, network: 'MAINNET', source: 'AUTO_DETECTED', storageType: 'DATABASE', validFromBlock: 0, validToBlock: 149999, createdAt: '2026-08-01T10:00:00Z' },
+    { id: uid(), contractAddress: ADDR.multiToken, network: 'TESTNET', source: 'UPLOAD_TEXT', storageType: 'DATABASE', validFromBlock: 0, validToBlock: 99, createdAt: NOW },
+    { id: uid(), contractAddress: ADDR.multiToken, network: 'TESTNET', source: 'UPLOAD_TEXT', storageType: 'DATABASE', validFromBlock: 100, createdAt: NOW },
     { id: LEGACY_ABI_ID, contractAddress: ADDR.legacyProxy, network: 'TESTNET', source: 'BLOCKSCOUT', storageType: 'DATABASE', validFromBlock: 0, createdAt: NOW },
     { id: uid(), contractAddress: ADDR.proxy, network: 'MAINNET', source: 'UPLOAD_TEXT', storageType: 'DATABASE', validFromBlock: 150000, createdAt: NOW },
   ]
@@ -181,6 +226,52 @@ function seed(): void {
   db.monitors = [
     { id: uid(), contractAddress: ADDR.erc20, network: 'TESTNET', eventName: 'Transfer', behavior: 'TRANSFER', fromParam: 'from', toParam: 'to', valueParam: 'value', active: true, createdAt: NOW },
     { id: uid(), contractAddress: ADDR.widgets, network: 'TESTNET', eventName: 'WidgetCreated', behavior: 'CREDIT', walletParam: 'creator', valueParam: 'value', active: false, createdAt: NOW },
+    { id: uid(), contractAddress: ADDR.multiToken, network: 'TESTNET', eventName: 'TransferSingle', behavior: 'TRANSFER', fromParam: 'from', toParam: 'to', valueParam: 'value', tokenIdParam: 'id', batch: false, active: true, createdAt: NOW },
+    { id: uid(), contractAddress: ADDR.multiToken, network: 'TESTNET', eventName: 'TransferBatch', behavior: 'TRANSFER', fromParam: 'from', toParam: 'to', valueParam: 'values', tokenIdParam: 'ids', batch: true, active: true, createdAt: NOW },
+  ]
+
+  db.entityModels = [
+    // Chave composta: o mesmo `id` em contratos diferentes não colide (EMITTER_ADDRESS + PARAM).
+    {
+      id: uid(), name: 'Registro por emissor', description: 'Chave composta por emissor + id', network: 'TESTNET', status: 'ACTIVE', createdAt: NOW,
+      contributors: [
+        {
+          contractAddress: ADDR.multiToken, eventName: 'TransferSingle',
+          correlationKey: [{ type: 'EMITTER_ADDRESS' }, { type: 'PARAM', arg: 'id' }],
+          fieldMappings: [{ decodedParam: 'to', modelField: 'owner' }, { modelField: 'emitter', source: 'EMITTER_ADDRESS' }],
+        },
+      ],
+    },
+    // Registro chaveado pela transação: junta eventos de contratos diferentes da mesma tx.
+    {
+      id: uid(), name: 'Operação por transação', description: 'Chave TX_HASH com campos de fonte não-PARAM', network: 'TESTNET', status: 'ACTIVE', createdAt: NOW,
+      contributors: [
+        {
+          contractAddress: ADDR.erc20, eventName: 'Transfer',
+          correlationKey: [{ type: 'TX_HASH' }],
+          fieldMappings: [{ decodedParam: 'value', modelField: 'amount' }, { modelField: 'block', source: 'BLOCK_NUMBER' }, { modelField: 'at', source: 'BLOCK_TIMESTAMP' }],
+        },
+        {
+          contractAddress: ADDR.widgets, eventName: 'WidgetCreated',
+          correlationKey: [{ type: 'TX_HASH' }],
+          fieldMappings: [{ decodedParam: 'name', modelField: 'widget' }, { modelField: 'tx', source: 'TX_HASH' }],
+        },
+      ],
+    },
+    // LEGADO: só `correlationParam` (sem correlationKey) — a UI deve mostrar 1 parte PARAM e preservar o envio.
+    {
+      id: uid(), name: 'Widget (legado)', description: 'Modelo anterior à chave composta: só correlationParam', network: 'TESTNET', status: 'ACTIVE', createdAt: NOW,
+      contributors: [
+        {
+          contractAddress: ADDR.widgets, eventName: 'WidgetCreated', correlationParam: 'id',
+          fieldMappings: [{ decodedParam: 'creator', modelField: 'creator' }],
+        },
+        {
+          contractAddress: ADDR.widgets, eventName: 'WidgetStatusChanged', correlationParam: 'id',
+          fieldMappings: [{ decodedParam: 'newStatus', modelField: 'status' }],
+        },
+      ],
+    },
   ]
 
   db.balances = [

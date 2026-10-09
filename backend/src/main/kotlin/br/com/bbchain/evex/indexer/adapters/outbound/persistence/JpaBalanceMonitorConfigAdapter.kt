@@ -55,6 +55,7 @@ class JpaBalanceMonitorConfigAdapter(
         backfillWatermarkBlock = backfillWatermarkBlock,
         backfillCursorBlock = backfillCursorBlock,
         backfillCursorLogIndex = backfillCursorLogIndex,
+        batch = batch,
         new = isNew,
     )
 
@@ -74,5 +75,6 @@ class JpaBalanceMonitorConfigAdapter(
         backfillWatermarkBlock = backfillWatermarkBlock,
         backfillCursorBlock = backfillCursorBlock,
         backfillCursorLogIndex = backfillCursorLogIndex,
+        batch = batch,
     )
 }

@@ -1,5 +1,5 @@
-import { useNavigate, useParams } from 'react-router'
-import { Box, Button, Card, CardContent, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
+import { useLocation, useNavigate, useParams } from 'react-router'
+import { Alert, Box, Button, Card, Chip, CardContent, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import EditIcon from '@mui/icons-material/Edit'
 import HistoryIcon from '@mui/icons-material/History'
@@ -58,7 +58,9 @@ function CreateForm() {
 
   function handleSubmit(payload: BalanceMonitorFormValues) {
     createMonitor.mutate(payload, {
-      onSuccess: (config) => navigate(`/balances/monitors/${config.id}`),
+      // `warnings` (DEC-110) só vêm na resposta do POST/PUT: segue para o detalhe via `state` da navegação.
+      onSuccess: (config) =>
+        navigate(`/balances/monitors/${config.id}`, { state: { warnings: config.warnings ?? [] } }),
     })
   }
 
@@ -83,15 +85,23 @@ function CreateForm() {
   )
 }
 
+/** Lê `warnings` do `state` da navegação pós-create/update, tolerando qualquer outro formato. */
+function readWarnings(state: unknown): string[] {
+  if (typeof state !== 'object' || state === null || !('warnings' in state)) return []
+  const { warnings } = state as { warnings: unknown }
+  return Array.isArray(warnings) ? warnings.filter((w): w is string => typeof w === 'string') : []
+}
+
 function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; navigateBack: () => void }) {
   const navigate = useNavigate()
+  const warnings = readWarnings(useLocation().state)
   const monitor = useBalanceMonitor(id)
   const updateMonitor = useUpdateBalanceMonitor(id)
   const updateStatus = useUpdateBalanceMonitorStatus(id)
 
   function handleSubmit(payload: BalanceMonitorFormValues) {
     updateMonitor.mutate(payload, {
-      onSuccess: () => navigate(`/balances/monitors/${id}`),
+      onSuccess: (config) => navigate(`/balances/monitors/${id}`, { state: { warnings: config.warnings ?? [] } }),
     })
   }
 
@@ -118,6 +128,7 @@ function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; 
               <Typography variant="h5" sx={{ fontWeight: 600 }}>
                 Configuração de saldo
               </Typography>
+              {monitor.data.batch && <Chip size="small" color="info" label="Lote" />}
               <StatusToggle
                 value={monitor.data.active}
                 options={ACTIVE_OPTIONS}
@@ -136,6 +147,16 @@ function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; 
             )}
           </Stack>
           {updateStatus.isError && <ApiErrorAlert error={updateStatus.error} />}
+          {warnings.length > 0 && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              <Typography variant="subtitle2">Configuração salva com avisos</Typography>
+              {warnings.map((warning) => (
+                <Typography key={warning} variant="body2">
+                  {warning}
+                </Typography>
+              ))}
+            </Alert>
+          )}
 
           <Box sx={{ mt: 3 }}>
             <BalanceMonitorForm

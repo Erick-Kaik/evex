@@ -7,6 +7,7 @@ import br.com.bbchain.evex.indexer.domain.model.EntityModelPort
 import br.com.bbchain.evex.indexer.domain.model.EntityModelStatus
 import br.com.bbchain.evex.indexer.domain.model.ModelContributor
 import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.util.UUID
 import org.springframework.data.domain.PageRequest
@@ -26,7 +27,8 @@ class JpaEntityModelAdapter(
     private val repository: EntityModelJpaRepository,
 ) : EntityModelPort {
 
-    private val objectMapper = jacksonObjectMapper()
+    // Ignora propriedades desconhecidas: o JSONB é interno e isso permite rollback seguro de versão (DEC-111).
+    private val objectMapper = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
 
     override fun save(model: EntityModel): EntityModel {
         val alreadyPersisted = repository.existsById(model.id)

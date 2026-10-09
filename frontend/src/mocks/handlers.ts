@@ -14,6 +14,12 @@ import type {
   Contract,
   ContractAbi,
   CreateBalanceMonitorPayload,
+  CreateEntityModelPayload,
+  EntityModel,
+  ModelContributor,
+  UpdateBalanceMonitorPayload,
+  UpdateEntityModelPayload,
+  UpdateEntityModelStatusPayload,
   CreateContractPayload,
   CreateWalletPayload,
   CreateWebhookPayload,
@@ -139,6 +145,69 @@ const findContract = (address: string) => db.contracts.find((c) => c.address.toL
 const findWallet = (address: string) => db.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase())
 const notFound = (code = 'NOT_FOUND', message = 'Não encontrado') =>
   HttpResponse.json({ code, message, timestamp: new Date().toISOString() }, { status: 404 })
+
+const apiError = (code: string, message: string, status = 400) =>
+  HttpResponse.json({ code, message, timestamp: new Date().toISOString() }, { status })
+
+type BatchCheck = { error?: string; warnings: string[] }
+
+/**
+ * Equivalente mock da validação `batch` × ABI (DEC-110): considera TODAS as versões do catálogo do
+ * contrato. 400 só se nenhuma versão é compatível; se só algumas, devolve aviso com as faixas incompatíveis.
+ */
+function checkBatch(body: { contractAddress: string; eventName: string; valueParam: string; tokenIdParam?: string; batch?: boolean }): BatchCheck {
+  const batch = body.batch === true
+  const versions = (eventCatalogs[body.contractAddress.toLowerCase()] ?? []).filter((e) => e.name === body.eventName)
+  if (versions.length === 0) return { warnings: [] }
+  const isArray = (type: string) => /^u?int\d*\[\d*]$/.test(type)
+  const compatible = (e: (typeof versions)[number]) =>
+    [body.valueParam, body.tokenIdParam].every((name) => {
+      const t = name ? e.inputs.find((i) => i.name === name)?.type : undefined
+      return t === undefined || (batch ? isArray(t) : !t.endsWith(']'))
+    })
+  const bad = versions.filter((e) => !compatible(e))
+  if (bad.length === versions.length) {
+    return {
+      error: batch
+        ? `A flag batch=true exige que valueParam e tokenIdParam sejam arrays numéricos (ex.: uint256[]), mas nenhuma versão da ABI do evento '${body.eventName}' é compatível.`
+        : `A flag batch=false exige parâmetros escalares, mas nenhuma versão da ABI do evento '${body.eventName}' é compatível (há arrays; use batch=true).`,
+      warnings: [],
+    }
+  }
+  if (bad.length > 0) {
+    const ranges = bad.map((e) => `${e.validFromBlock}..${e.validToBlock ?? 'atual'}`).join(', ')
+    return {
+      warnings: [
+        `A flag batch=${batch} é incompatível com a ABI das versões nas faixas de blocos ${ranges} deste contrato; nessas faixas o evento '${body.eventName}' será descartado com WARN.`,
+      ],
+    }
+  }
+  return { warnings: [] }
+}
+
+const KEY_TYPES = ['PARAM', 'EMITTER_ADDRESS', 'TX_HASH', 'BLOCK_NUMBER', 'LITERAL']
+const FIELD_SOURCES = ['PARAM', 'EMITTER_ADDRESS', 'TX_HASH', 'BLOCK_NUMBER', 'BLOCK_TIMESTAMP']
+
+/** Validações 400 do Modelo de Entidade (DEC-111): tipo/source desconhecido, `arg` ausente, aridade, sem chave. */
+function validateContributors(contributors: ModelContributor[]): string | undefined {
+  const arities = new Set<number>()
+  for (const c of contributors) {
+    const key = c.correlationKey?.length ? c.correlationKey : c.correlationParam ? [{ type: 'PARAM', arg: c.correlationParam }] : []
+    if (key.length === 0) return `O contribuinte '${c.eventName}' precisa de correlationKey ou correlationParam.`
+    for (const part of key) {
+      if (!KEY_TYPES.includes(part.type)) return `Tipo de parte da chave desconhecido: '${part.type}'.`
+      if ((part.type === 'PARAM' || part.type === 'LITERAL') && !part.arg) return `A parte ${part.type} da chave exige 'arg'.`
+    }
+    arities.add(key.length)
+    for (const m of c.fieldMappings) {
+      const source = m.source ?? 'PARAM'
+      if (!FIELD_SOURCES.includes(source)) return `Fonte de campo desconhecida: '${source}'.`
+      if (source === 'PARAM' && !m.decodedParam) return `O campo '${m.modelField}' (fonte PARAM) exige 'decodedParam'.`
+    }
+  }
+  if (arities.size > 1) return 'Todos os contribuintes do modelo precisam ter o mesmo número de partes na chave de correlação.'
+  return undefined
+}
 
 export const handlers = [
   // ---------------- Contratos ----------------
@@ -336,9 +405,12 @@ export const handlers = [
 
   http.post('*/v1/balance-monitors', async ({ request }) => {
     const body = (await request.json()) as CreateBalanceMonitorPayload
-    const created: BalanceMonitorConfig = { id: helpers.uid(), ...body, active: true, createdAt: new Date().toISOString() }
+    const check = checkBatch(body)
+    if (check.error) return apiError('INVALID_BALANCE_MONITOR_CONFIG', check.error)
+    const created: BalanceMonitorConfig = { id: helpers.uid(), ...body, batch: body.batch === true, active: true, createdAt: new Date().toISOString() }
     db.monitors.unshift(created)
-    return HttpResponse.json(created, { status: 201 })
+    // `warnings` só na resposta do POST/PUT (não fica no db: o GET não devolve).
+    return HttpResponse.json(check.warnings.length ? { ...created, warnings: check.warnings } : created, { status: 201 })
   }),
 
   http.get('*/v1/balance-monitors/backfill/status', async () =>
@@ -358,10 +430,52 @@ export const handlers = [
     return m ? HttpResponse.json(m) : notFound('BALANCE_MONITOR_NOT_FOUND')
   }),
 
-  http.patch('*/v1/balance-monitors/:id', async ({ params, request }) => {
+  http.put('*/v1/balance-monitors/:id', async ({ params, request }) => {
     const m = db.monitors.find((x) => x.id === params.id)
     if (!m) return notFound('BALANCE_MONITOR_NOT_FOUND')
-    Object.assign(m, await request.json())
+    const body = (await request.json()) as UpdateBalanceMonitorPayload
+    const check = checkBatch(body)
+    if (check.error) return apiError('INVALID_BALANCE_MONITOR_CONFIG', check.error)
+    Object.assign(m, body, { batch: body.batch === true }) // PUT: `batch` omitido = false
+    return HttpResponse.json(check.warnings.length ? { ...m, warnings: check.warnings } : m)
+  }),
+
+  // ---------------- Modelos de Entidade (E19 + DEC-111) ----------------
+
+  http.get('*/v1/entity-models', async ({ request }) => {
+    const url = new URL(request.url)
+    const network = url.searchParams.get('network')
+    return HttpResponse.json(page(network ? db.entityModels.filter((m) => m.network === network) : db.entityModels, url))
+  }),
+
+  http.post('*/v1/entity-models', async ({ request }) => {
+    const body = (await request.json()) as CreateEntityModelPayload
+    const error = validateContributors(body.contributors)
+    if (error) return apiError('INVALID_ENTITY_MODEL', error)
+    const created: EntityModel = { id: helpers.uid(), ...body, status: 'ACTIVE', createdAt: new Date().toISOString() }
+    db.entityModels.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+
+  http.get('*/v1/entity-models/:id', async ({ params }) => {
+    const m = db.entityModels.find((x) => x.id === params.id)
+    return m ? HttpResponse.json(m) : notFound('ENTITY_MODEL_NOT_FOUND')
+  }),
+
+  http.put('*/v1/entity-models/:id', async ({ params, request }) => {
+    const m = db.entityModels.find((x) => x.id === params.id)
+    if (!m) return notFound('ENTITY_MODEL_NOT_FOUND')
+    const body = (await request.json()) as UpdateEntityModelPayload
+    const error = validateContributors(body.contributors)
+    if (error) return apiError('INVALID_ENTITY_MODEL', error)
+    Object.assign(m, body)
+    return HttpResponse.json(m)
+  }),
+
+  http.patch('*/v1/entity-models/:id/status', async ({ params, request }) => {
+    const m = db.entityModels.find((x) => x.id === params.id)
+    if (!m) return notFound('ENTITY_MODEL_NOT_FOUND')
+    m.status = ((await request.json()) as UpdateEntityModelStatusPayload).status
     return HttpResponse.json(m)
   }),
 

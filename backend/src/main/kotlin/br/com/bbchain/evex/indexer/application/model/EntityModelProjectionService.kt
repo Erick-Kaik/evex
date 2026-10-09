@@ -1,6 +1,11 @@
 package br.com.bbchain.evex.indexer.application.model
 
+import br.com.bbchain.evex.indexer.application.common.WarnLogDeduper
+import br.com.bbchain.evex.indexer.config.IndexerProperties
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent
+import br.com.bbchain.evex.indexer.domain.model.CorrelationKeyResolver
+import br.com.bbchain.evex.indexer.domain.model.CorrelationResult
+import br.com.bbchain.evex.indexer.domain.model.FieldValueResult
 import br.com.bbchain.evex.indexer.domain.model.EntityModel
 import br.com.bbchain.evex.indexer.domain.model.EntityModelPort
 import br.com.bbchain.evex.indexer.domain.model.EntityModelRecordPort
@@ -51,8 +56,13 @@ import org.springframework.stereotype.Service
 class EntityModelProjectionService(
     private val entityModels: EntityModelPort,
     private val records: EntityModelRecordPort,
+    private val resolver: CorrelationKeyResolver = CorrelationKeyResolver(),
+    indexerProperties: IndexerProperties = IndexerProperties(),
 ) {
     private val logger = LoggerFactory.getLogger(EntityModelProjectionService::class.java)
+
+    /** WARN deduplicado por `model.id` (DEC-111): chave/campo ausente não pode virar 1 linha por evento. */
+    private val warnLogDeduper = WarnLogDeduper(indexerProperties.warnLogDedupeInterval)
 
     fun projectBatch(events: List<BlockchainEvent>) {
         for (event in events) {
@@ -70,20 +80,22 @@ class EntityModelProjectionService(
 
     private fun projectSafely(model: EntityModel, contributor: ModelContributor, event: BlockchainEvent) {
         try {
-            val parameters = event.decodedParameters.orEmpty()
-            val correlationValue = parameters[contributor.correlationParam]?.toString() ?: run {
-                logger.warn(
-                    "entityModel={} (contractAddress={}, eventName={}) não achou correlationParam={} nos parâmetros decodificados do evento txHash={}, logIndex={} — pulando.",
-                    model.id,
-                    contributor.contractAddress,
-                    contributor.eventName,
-                    contributor.correlationParam,
-                    event.txHash,
-                    event.logIndex,
-                )
-                return
+            // Única fonte da chave (DEC-111): o webhook usa o mesmo resolver.
+            val correlationValue = when (val result = resolver.resolve(contributor, event)) {
+                is CorrelationResult.Resolved -> result.key
+                is CorrelationResult.Unresolved -> {
+                    warnDeduped(model, contributor, event, "não correlaciona: ${result.reason}")
+                    return
+                }
             }
-            val fields = contributor.fieldMappings.associate { it.modelField to parameters[it.decodedParam] }
+            val fields = mutableMapOf<String, Any?>()
+            for (mapping in contributor.fieldMappings) {
+                when (val value = resolver.resolveFieldValue(mapping, event)) {
+                    is FieldValueResult.Present -> fields[mapping.modelField] = value.value
+                    is FieldValueResult.Absent ->
+                        warnDeduped(model, contributor, event, "campo '${mapping.modelField}' omitido: ${value.reason}")
+                }
+            }
             records.mergeFields(model.id, correlationValue, event.network, fields)
         } catch (ex: Exception) {
             logger.warn(
@@ -96,5 +108,18 @@ class EntityModelProjectionService(
                 ex.message,
             )
         }
+    }
+
+    private fun warnDeduped(model: EntityModel, contributor: ModelContributor, event: BlockchainEvent, message: String) {
+        if (!warnLogDeduper.shouldLog(model.id)) return
+        logger.warn(
+            "entityModel={} (contractAddress={}, eventName={}) {} — evento txHash={}, logIndex={}.",
+            model.id,
+            contributor.contractAddress,
+            contributor.eventName,
+            message,
+            event.txHash,
+            event.logIndex,
+        )
     }
 }
