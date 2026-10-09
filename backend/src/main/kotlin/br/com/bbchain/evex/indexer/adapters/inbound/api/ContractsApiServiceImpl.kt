@@ -2,6 +2,12 @@ package br.com.bbchain.evex.indexer.adapters.inbound.api
 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.ContractsApiService
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiEntry as AbiEntryDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiHistoryDiff as AbiHistoryDiffDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiHistoryImportPayload
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiHistoryItem as AbiHistoryItemDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiHistoryLegacyVersion as AbiHistoryLegacyVersionDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiHistoryPlan as AbiHistoryPlanDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiHistorySource as AbiHistorySourceDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiEntryKind as AbiEntryKindDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiEntryParam as AbiEntryParamDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.AbiSource as AbiSourceDto
@@ -23,6 +29,7 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Register
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateContractStatusPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Upgradeability as UpgradeabilityDto
+import br.com.bbchain.evex.indexer.application.abi.AbiHistoryImportService
 import br.com.bbchain.evex.indexer.application.abi.AbiRegistrationService
 import br.com.bbchain.evex.indexer.application.abi.ContractAbiEntryCatalogService
 import br.com.bbchain.evex.indexer.application.abi.ContractEventCatalogService
@@ -37,6 +44,10 @@ import br.com.bbchain.evex.indexer.domain.abi.CatalogedAbiEntryParam
 import br.com.bbchain.evex.indexer.domain.abi.CatalogedEvent
 import br.com.bbchain.evex.indexer.domain.abi.CatalogedMethod
 import br.com.bbchain.evex.indexer.domain.abi.AbiStorageType
+import br.com.bbchain.evex.indexer.domain.abi.AbiDiff
+import br.com.bbchain.evex.indexer.domain.abi.AbiHistoryItem
+import br.com.bbchain.evex.indexer.domain.abi.AbiHistoryPlan
+import br.com.bbchain.evex.indexer.domain.abi.AbiHistorySource
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbi
 import br.com.bbchain.evex.indexer.domain.abi.DetectionLevel
 import br.com.bbchain.evex.indexer.domain.abi.InterfaceMatch
@@ -55,6 +66,7 @@ import org.springframework.stereotype.Service
 class ContractsApiServiceImpl(
     private val monitoredContractService: MonitoredContractService,
     private val abiRegistrationService: AbiRegistrationService,
+    private val abiHistoryImportService: AbiHistoryImportService,
     private val interfaceDetectionService: InterfaceDetectionService,
     private val contractEventCatalogService: ContractEventCatalogService,
     private val contractMethodCatalogService: ContractMethodCatalogService,
@@ -112,13 +124,34 @@ class ContractsApiServiceImpl(
             abi = registerAbiPayload.abi,
             source = registerAbiPayload.source.toDomain(),
             storage = registerAbiPayload.storage?.toDomain(),
-            validFromBlock = registerAbiPayload.validFromBlock ?: 0L,
+            validFromBlock = registerAbiPayload.validFromBlock,
         )
         return contractAbi.toDto()
     }
 
     override fun listContractAbiVersions(address: kotlin.String): MutableList<ContractAbiDto> =
         abiRegistrationService.listVersions(address).map { it.toDto() }.toMutableList()
+
+    override fun getContractAbiHistoryPlan(
+        address: kotlin.String,
+        historySource: AbiHistorySourceDto?,
+        replaceBlockscoutLegacy: kotlin.Boolean,
+    ): AbiHistoryPlanDto =
+        abiHistoryImportService.plan(address, historySource?.toDomain() ?: AbiHistorySource.AUTO, replaceBlockscoutLegacy).toDto()
+
+    override fun importContractAbiHistory(address: kotlin.String, abiHistoryImportPayload: AbiHistoryImportPayload?): AbiHistoryPlanDto {
+        val result = abiHistoryImportService.apply(
+            address = address,
+            historySource = abiHistoryImportPayload?.historySource?.toDomain() ?: AbiHistorySource.AUTO,
+            storage = abiHistoryImportPayload?.storage?.toDomain(),
+            expectedFingerprint = abiHistoryImportPayload?.expectedFingerprint,
+            replaceBlockscoutLegacy = abiHistoryImportPayload?.replaceBlockscoutLegacy ?: false,
+        )
+        return result.plan.toDto().also {
+            it.appliedCount = result.appliedCount
+            it.redecodeStarted = result.redecodeStarted
+        }
+    }
 
     override fun listContractEvents(address: kotlin.String): MutableList<ContractEventDto> =
         contractEventCatalogService.catalogFor(address).map { it.toDto() }.toMutableList()
@@ -221,6 +254,45 @@ class ContractsApiServiceImpl(
         availableUpgradeMethods = availableUpgradeMethods.toMutableList(),
     )
 
+    private fun AbiHistorySourceDto.toDomain(): AbiHistorySource = AbiHistorySource.valueOf(this.name)
+
+    private fun AbiHistorySource.toDto(): AbiHistorySourceDto = AbiHistorySourceDto.valueOf(this.name)
+
+    private fun AbiDiff.toDto(): AbiHistoryDiffDto = AbiHistoryDiffDto(
+        eventsAdded = eventsAdded.toMutableList(),
+        eventsRemoved = eventsRemoved.toMutableList(),
+        methodsAdded = methodsAdded.toMutableList(),
+        methodsRemoved = methodsRemoved.toMutableList(),
+    )
+
+    private fun AbiHistoryItem.toDto(): AbiHistoryItemDto = AbiHistoryItemDto(
+        sequence = sequence,
+        validFromBlock = validFromBlock,
+        validToBlock = validToBlock,
+        upgradeBlockNumber = upgradeBlockNumber,
+        implementationAddress = implementationAddress,
+        txHash = txHash,
+        upgradeSource = upgradeSource.name,
+        abiAvailable = abiAvailable,
+        status = status,
+        statusReason = statusReason,
+        identicalToPrevious = identicalToPrevious,
+        diffFromPrevious = diffFromPrevious?.toDto(),
+        abiId = abiId,
+    )
+
+    private fun AbiHistoryPlan.toDto(): AbiHistoryPlanDto = AbiHistoryPlanDto(
+        contractAddress = contractAddress,
+        historySource = historySource.toDto(),
+        ingestedUntilBlock = ingestedUntilBlock,
+        truncated = truncated,
+        fingerprint = fingerprint,
+        warnings = warnings.toMutableList(),
+        items = items.map { it.toDto() }.toMutableList(),
+        legacyVersionsToReplace = legacyVersionsToReplace
+            .map { AbiHistoryLegacyVersionDto(abiId = it.abiId, validFromBlock = it.validFromBlock) }.toMutableList(),
+    )
+
     private fun ContractAbi.toDto(): ContractAbiDto = ContractAbiDto(
         id = id,
         contractAddress = contractAddress,
@@ -230,5 +302,6 @@ class ContractsApiServiceImpl(
         validFromBlock = validFromBlock,
         validToBlock = validToBlock,
         createdAt = createdAt.atOffset(java.time.ZoneOffset.UTC),
+        implementationAddress = implementationAddress,
     )
 }

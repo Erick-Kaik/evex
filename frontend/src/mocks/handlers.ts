@@ -7,6 +7,9 @@
  */
 import { http, HttpResponse, delay } from 'msw'
 import type {
+  AbiHistoryImportPayload,
+  AbiHistoryItem,
+  AbiHistoryPlan,
   BalanceMonitorConfig,
   Contract,
   ContractAbi,
@@ -32,6 +35,93 @@ import {
   helpers,
   interfaceSuggestions,
 } from './db'
+
+/** Contratos cujo histórico já foi "importado" nesta sessão do mock (vira SKIP_ALREADY_IMPORTED). */
+const historyImported = new Set<string>()
+
+const IMPL = {
+  v1: '0x4444000000000000000000000000000000000001',
+  v2: '0x4444000000000000000000000000000000000002',
+  v3: '0x4444000000000000000000000000000000000003',
+}
+const TX = (n: number) => `0x${n.toString(16).padStart(64, '0')}`
+
+/**
+ * Plano de histórico de ABI (DEC-105), fictício. AUTO/INGESTED_ONLY: 3 upgrades (o 3º com a mesma ABI
+ * do 2º; diff do 1→2 com 3 métodos adicionados). BLOCKSCOUT_ONLY: variante com o 2º upgrade sem ABI
+ * verificada (PENDING_NO_VERIFIED_ABI) e o 3º BLOCKED_AFTER_PENDING.
+ */
+function buildHistoryPlan(
+  address: string,
+  source: string,
+  applied: boolean,
+  replaceLegacy = false,
+): AbiHistoryPlan {
+  const pendingVariant = source === 'BLOCKSCOUT_ONLY'
+  // Contrato com versão legada (BLOCKSCOUT sem implementação, from=0): sem a flag o legado ocupa o
+  // início da linha do tempo (CONFLICT_MANUAL + BLOCKED_AFTER_PENDING); com a flag, tudo vira APPLY.
+  const legacy =
+    address === ADDR.legacyProxy
+      ? db.abis.filter((a) => a.contractAddress === address && a.source === 'BLOCKSCOUT' && !a.implementationAddress)
+      : []
+  const blockedByLegacy = legacy.length > 0 && !replaceLegacy
+  const done = (status: string) => (applied && status === 'APPLY' ? 'SKIP_ALREADY_IMPORTED' : status)
+  const items: AbiHistoryItem[] = [
+    {
+      sequence: 1, validFromBlock: 0, validToBlock: 299, upgradeBlockNumber: 100, implementationAddress: IMPL.v1,
+      txHash: TX(1), upgradeSource: 'BOTH', abiAvailable: true, identicalToPrevious: false,
+      ...(blockedByLegacy
+        ? { status: 'CONFLICT_MANUAL', statusReason: 'Já existe uma versão de ABI (legada) neste início de faixa.' }
+        : { status: done('APPLY') }),
+    },
+    pendingVariant
+      ? {
+          sequence: 2, validFromBlock: 300, validToBlock: 499, upgradeBlockNumber: 300, implementationAddress: IMPL.v2,
+          txHash: TX(2), upgradeSource: 'BLOCKSCOUT', abiAvailable: false, status: 'PENDING_NO_VERIFIED_ABI',
+          statusReason: 'A implementação não tem ABI verificada no Blockscout.', identicalToPrevious: false,
+        }
+      : {
+          sequence: 2, validFromBlock: 300, validToBlock: 499, upgradeBlockNumber: 300, implementationAddress: IMPL.v2,
+          txHash: TX(2), upgradeSource: 'BLOCKSCOUT', abiAvailable: true, identicalToPrevious: false,
+          ...(blockedByLegacy
+            ? { status: 'BLOCKED_AFTER_PENDING', statusReason: 'Vem depois de um item em conflito.' }
+            : { status: done('APPLY') }),
+          diffFromPrevious: {
+            eventsAdded: ['EventTwo(uint256)'],
+            eventsRemoved: ['EventOne(uint256)'],
+            methodsAdded: ['burn(uint256)', 'mint(address,uint256)', 'pause()'],
+            methodsRemoved: [],
+          },
+        },
+    pendingVariant
+      ? {
+          sequence: 3, validFromBlock: 500, upgradeBlockNumber: 500, implementationAddress: IMPL.v3, txHash: TX(3),
+          upgradeSource: 'BLOCKSCOUT', abiAvailable: true, status: 'BLOCKED_AFTER_PENDING',
+          statusReason: 'Vem depois de um item pendente.', identicalToPrevious: false,
+        }
+      : {
+          sequence: 3, validFromBlock: 500, upgradeBlockNumber: 500, implementationAddress: IMPL.v3, txHash: TX(3),
+          upgradeSource: 'INGESTED', abiAvailable: true, identicalToPrevious: true,
+          ...(blockedByLegacy
+            ? { status: 'BLOCKED_AFTER_PENDING', statusReason: 'Vem depois de um item em conflito.' }
+            : { status: done('APPLY') }),
+          diffFromPrevious: { eventsAdded: [], eventsRemoved: [], methodsAdded: [], methodsRemoved: [] },
+        },
+  ]
+  const willApply = items.some((i) => i.status === 'APPLY')
+  return {
+    contractAddress: address,
+    historySource: source as AbiHistoryPlan['historySource'],
+    ingestedUntilBlock: 620,
+    truncated: false,
+    // A flag entra no fingerprint (o plano com a flag é outro plano); legacyVersionsToReplace, não.
+    fingerprint: `mock-${source}-${applied ? 'applied' : 'fresh'}${replaceLegacy ? '-replace' : ''}`,
+    warnings: pendingVariant ? ['Dado do Blockscout isolado: o histórico pode estar incompleto.'] : [],
+    items,
+    legacyVersionsToReplace:
+      replaceLegacy && willApply ? legacy.map((a) => ({ abiId: a.id, validFromBlock: a.validFromBlock })) : [],
+  }
+}
 
 const CONTROL_PANEL = 'http://localhost:8899'
 
@@ -146,6 +236,49 @@ export const handlers = [
         })
     }
     return HttpResponse.json(abi, { status: 201 })
+  }),
+
+  http.get('*/v1/contracts/:address/abi/history-plan', async ({ params, request }) => {
+    await delay(150)
+    const addr = String(params.address).toLowerCase()
+    if (!findContract(addr)) return notFound('CONTRACT_NOT_FOUND')
+    const source = new URL(request.url).searchParams.get('historySource') ?? 'AUTO'
+    const replaceLegacy = new URL(request.url).searchParams.get('replaceBlockscoutLegacy') === 'true'
+    return HttpResponse.json(buildHistoryPlan(addr, source, historyImported.has(addr), replaceLegacy))
+  }),
+
+  http.post('*/v1/contracts/:address/abi/history-import', async ({ params, request }) => {
+    await delay(150)
+    const addr = String(params.address).toLowerCase()
+    const c = findContract(addr)
+    if (!c) return notFound('CONTRACT_NOT_FOUND')
+    const body = ((await request.json().catch(() => ({}))) ?? {}) as AbiHistoryImportPayload
+    const source = body.historySource ?? 'AUTO'
+    const replaceLegacy = body.replaceBlockscoutLegacy === true
+    const current = buildHistoryPlan(addr, source, historyImported.has(addr), replaceLegacy)
+    if (body.expectedFingerprint && body.expectedFingerprint !== current.fingerprint) {
+      return HttpResponse.json(
+        { code: 'ABI_HISTORY_PLAN_CHANGED', message: 'O plano mudou desde o dry-run.', timestamp: new Date().toISOString() },
+        { status: 409 },
+      )
+    }
+    const toApply = current.items.filter((i) => i.status === 'APPLY')
+    if (toApply.length > 0 && replaceLegacy) {
+      const removed = new Set((current.legacyVersionsToReplace ?? []).map((l) => l.abiId))
+      db.abis = db.abis.filter((a) => !removed.has(a.id))
+    }
+    const items = current.items.map((i) => {
+      if (i.status !== 'APPLY') return i
+      const abi: ContractAbi = {
+        id: helpers.uid(), contractAddress: addr, network: c.network, source: 'BLOCKSCOUT',
+        storageType: body.storage ?? 'DATABASE', validFromBlock: i.validFromBlock, validToBlock: i.validToBlock,
+        implementationAddress: i.implementationAddress, createdAt: new Date().toISOString(),
+      }
+      db.abis.push(abi)
+      return { ...i, abiId: abi.id }
+    })
+    if (toApply.length > 0) historyImported.add(addr)
+    return HttpResponse.json({ ...current, items, appliedCount: toApply.length, redecodeStarted: toApply.length > 0 })
   }),
 
   http.get('*/v1/contracts/:address/abi/suggestions', async ({ params }) => {

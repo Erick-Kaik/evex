@@ -55,6 +55,10 @@ class ContractAbiEntity(
     var validToBlock: Long? = null,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant,
+    // DEC-105: coluna nullable criada via ddl-auto (sem Flyway) — implementação de proxy da qual a
+    // versão foi composta.
+    @Column(name = "implementation_address", length = 42)
+    val implementationAddress: String? = null,
     @Transient
     private val new: Boolean = false,
 ) : Persistable<UUID> {

@@ -1721,3 +1721,349 @@ A aba já era condicional a `VITE_LOCALENV_CONTROL_URL` setada + health check do
 ### Consequências
 
 Nenhuma migração de dado ou mudança de contrato de API — mudança só de frontend + doc. Ambiente local derrubado (`down.sh`) ao final da sessão, como de costume em sessões de validação live.
+
+---
+
+## DEC-102 — `bundleEvexApi` quebrando fora do IntelliJ: `resolveNpx()` pegava Node 12 do `apt`, e o shebang do `npx` do nvm reexecutava o mesmo bug um nível abaixo
+
+Data: 2026-09-17
+
+Módulo: backend (`build.gradle.kts`)
+
+Autor: sessão principal
+
+### Contexto
+
+Usuário reportou `Task :bundleEvexApi FAILED` com `SyntaxError: Unexpected token '.'` no `nodeModule.enableCompileCache?.();` do `@redocly/cli`. `resolveNpx()` (ver DEC-017, que já documenta a razão de existir: nvm só é carregado em `~/.bashrc`, invisível a processos não-interativos como o Gradle daemon disparado pela IDE) checava primeiro o `PATH` do processo e só caía no fallback lendo `~/.nvm/versions/node/*/bin` se nada fosse encontrado no `PATH`. Isolado o problema: o Ubuntu deste ambiente tem um `nodejs` 12.22.9 instalado via `apt` (`/usr/bin/npx`/`/usr/bin/node`, dependência automática de outros pacotes do sistema, não algo instalado de propósito). Em processo não-interativo, o `PATH` via `/usr/bin` mas não os diretórios do nvm — `resolveNpx()` achava esse `npx` antigo primeiro e nunca chegava ao fallback certo (3 versões via nvm: v18.20.4/v20.20.0/v22.22.2, todas capazes de rodar o `cli.js` sem erro). Node 12 não entende a sintaxe de optional call (`?.()`) usada pelo `@redocly/cli` atual, daí o `SyntaxError`.
+
+Corrigido o primeiro sintoma invertendo a prioridade (nvm primeiro, `PATH` só como fallback) — mas isso revelou um **2º sintoma do mesmo problema, um nível abaixo**: `Cannot find module 'node:path'` ao rodar `npm/lib/cli.js` mesmo já apontando pro `npx` certo (v22.22.2). Causa: o script `npx` do nvm tem shebang `#!/usr/bin/env node` — `env node` resolve o interpretador de novo pelo `PATH` do processo **filho** que o `Exec` do Gradle cria, e esse `PATH` filho continuava sem o `bin/` do nvm (mesma ausência do processo pai). Resultado: mesmo escolhendo o arquivo `npx` certo, o "node" que de fato executava o `npx-cli.js` continuava sendo o `/usr/bin/node` (v12) resolvido pelo shebang — reproduzindo o `SyntaxError` original um passo adiante, na forma de um `require('node:path')` que o Node 12 não reconhece (esquema `node:` só suportado a partir do Node 14.18/16).
+
+### Decisão
+
+`resolveNpx()` passou a devolver o `File` (não só o `String` do caminho) pra dar acesso ao diretório onde o `npx` resolvido vive. A task `bundleEvexApi` agora prepende esse diretório ao `PATH` do processo filho do `Exec` (`environment("PATH", ...)`) antes de montar o `commandLine` — garantindo que o `env node` do shebang resolva pra a mesma instalação de Node cujo `npx` foi escolhido, em vez de cair de volta no `/usr/bin/node` do sistema.
+
+Alternativas descartadas: (a) rodar `node <caminho-do-npx-script>` em vez de executar o script diretamente — funciona, mas amarra a implementação ao formato interno do `npx` (script JS puro, não é garantido por todas as versões/plataformas do nvm) e é mais frágil que só ajustar `PATH`; (b) resolver e chamar `node`/`npm` diretamente sem passar por `npx` — mudança maior de escopo, descartada por não ser o problema relatado.
+
+### Consequências
+
+Fix genérico (qualquer script Node com shebang `env node` chamado via caminho absoluto por este `resolveNpx()`, não só o `npx` do Redocly, se beneficia do `PATH` corrigido). Não requer nenhuma mudança de ambiente do usuário (não precisa desinstalar o `nodejs` do `apt`, nem alterar `~/.bashrc`). Validado rodando `bundleEvexApi` com `PATH` restrito a `/usr/bin:/bin` (simulando o cenário não-interativo sem nvm) e depois pela IDE do usuário — build verde nos dois casos.
+
+---
+
+## DEC-103 — Padrão de logs no caminho de ingestão (busca na rede → janela/tick → persistência)
+
+Data: 2026-09-17
+
+Módulo: backend (`adapters/outbound/blockchain`)
+
+Autor: sessão principal
+
+### Contexto
+
+Pedido do usuário: conseguir ver o que está chegando da rede sem precisar debugar. Antes desta tarefa, `Web3jBlockchainClient` (quem de fato chama `eth_getLogs`) não tinha nenhum logger; `PollTickService.tick()` só logava em caso de erro (nunca o caminho feliz — janela calculada, nada pendente, auto-shrink); `IngestionBatchProcessor.ingestRange` já logava, mas em `DEBUG` incondicional (silencioso no nível padrão `INFO` de `application.yml`, mesmo quando eventos novos de fato chegavam).
+
+### Decisão
+
+Padrão adotado (consistente com o estilo já usado no resto do backend — SLF4J via `LoggerFactory.getLogger(Classe::class.java)`, mensagens parametrizadas `{}`, texto em português): **DEBUG para ruído de rotina** (tick sem nada pendente, request `eth_getLogs` disparado, janela sem log novo — tudo que acontece a cada tick mesmo com a rede ociosa) e **INFO/WARN só quando há algo que valha a pena ver no nível padrão** (logs efetivamente recebidos da rede, eventos novos persistidos, range recusado pelo nó disparando auto-shrink, falha de RPC). Aplicado em 3 pontos:
+
+- `Web3jBlockchainClient.getLogs`: `DEBUG` antes do request; depois, `INFO` com a contagem se `logs.isNotEmpty()`, `DEBUG` "nenhum log novo" caso contrário; `WARN`/`ERROR` nos 2 ramos de erro do `eth_getLogs` (range recusado vs. falha genérica), que antes só lançavam exceção sem logar nada neste ponto.
+- `PollTickService.tick()`/`processRange`: `DEBUG` pra "nada confirmado pendente" e "janela calculada"; `WARN` quando o auto-shrink divide um range recusado pelo nó (evento que antes só aparecia em `DEBUG` do processor de destino, sem contexto de que veio de um shrink).
+- `IngestionBatchProcessor.ingestRange`: a mensagem final virou condicional — `INFO` com contagem de eventos novos (incluindo quantos decodificaram com ABI vs. `decoded=false`) quando `toSave.isNotEmpty()`, `DEBUG` (mensagem antiga, mais enxuta) quando a janela não trouxe novidade.
+
+Alternativa descartada: logar tudo em `INFO` incondicionalmente — rejeitada porque o poll roda a cada `poll-interval-ms` (default 5s) e a rede fica ociosa a maior parte do tempo num ambiente de PoC/dev; um log a cada 5s sem nenhuma novidade real seria puro ruído. O corte escolhido (silêncio em `INFO` enquanto não há nada de fato novo; uma linha clara quando há) é o que atende literalmente o pedido — "ver o que está chegando", não "confirmar que o poller está vivo".
+
+Escopo desta tarefa foi deliberadamente **só o caminho de ingestão** (é onde o usuário sentiu a dor concreta — "principalmente na parte de pegando eventos da rede"), não uma varredura de todo o backend; o restante do sistema (redecode, backfill, webhook, saldo) já tem logger próprio com o mesmo estilo (`LoggerFactory` + `{}` parametrizado + português), suficiente como referência caso outro módulo precise do mesmo tratamento depois.
+
+### Consequências
+
+Nenhuma mudança de comportamento funcional, só logging — `./gradlew compileKotlin compileTestKotlin` limpo e os testes das 3 classes tocadas (`Web3jBlockchainClientTest`, `PollTickServiceTest`, `IngestionBatchProcessorTest`) verdes sem alteração (nenhum teste depende de texto de log). Nível de log continua controlado por `EVEX_LOG_LEVEL` (`application.yml`, default `INFO`) — quem precisar do detalhe de todo tick (mesmo ocioso) ainda pode setar `DEBUG`, mas não precisa mais disso só para ver eventos chegando.
+
+---
+
+## DEC-104 — Discovery do Blockscout indica proxy/implementação (`kind`, `proxyAddresses`, `implementationAddress`, `lastUpgradeBlock`, `warnings`) a partir de eventos `Upgraded` já ingeridos (fase 1)
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery`, `application/discovery`, `adapters/outbound/persistence`, contrato OpenAPI do discovery). Frontend adiado (ver "Pendências").
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (consulta/persistência) + `kotlin-backend-dev` (contrato/service/mapper), consolidado pela sessão principal.
+
+### Contexto
+
+`GET /v1/discovery/blockscout/contracts` devolvia só `{address, name}`. O Blockscout lista a **implementação** de um proxy UUPS (é ela que tem o fonte verificado), então o usuário cadastrava o endereço errado: os eventos são emitidos pelo **proxy** e o Evex atribui logs pelo endereço emissor (DEC-001). O `ERC1967Proxy` emite `Upgraded(address indexed implementation)` no construtor e a cada upgrade, e o Evex já guarda `rawTopics` de todo log ingerido — dá para inferir a relação proxy↔implementação sem RPC novo.
+
+### Decisão
+
+Cada item do discovery ganha campos **opcionais e aditivos** (`required` continua só `address`): `kind` (`PROXY` | `IMPLEMENTATION` | `STANDALONE`), `proxyAddresses`, `implementationAddress` (nullable), `lastUpgradeBlock` (int64, nullable) e `warnings`. Fonte da fase 1: **somente** eventos `Upgraded` já ingeridos; nenhuma chamada nova de RPC. Não bloqueia cadastro nem altera `POST /v1/contracts`.
+
+- **Porta nova `ProxyUpgradeLookupPort`** (`domain/discovery`), em vez de estender `BlockchainEventPort` (já com 9 métodos de 4 casos de uso e que devolve `BlockchainEvent`; aqui é uma projeção agregada específica do discovery). Dois métodos em lote: `findUpgradedLogsInvolving(addresses)` (endereço como emissor → PROXY, ou como implementação apontada → IMPLEMENTATION) e `findLatestUpgradedByProxy(proxies)` (último `Upgraded` de cada proxy, para saber a implementação **vigente**: proxy que migrou de X para Y não conta como proxy de X). **No máximo 2 queries por requisição**, independente do tamanho da lista (sem N+1); o 2º passo é pulado se o 1º não achou nada.
+- **Regra no domain puro:** `ProxyClassifier` (mesmo molde do `UupsDetector`, DEC-099), `UpgradedEvent` (`const val TOPIC0` literal + `topicFor` + `addressFromTopic`), `ContractKind`, `UpgradedLog`, `DiscoveredContract`. O `TOPIC0` é literal (domain sem Web3j) e um teste em `src/test` o confere contra `EventEncoder.encode(Event("Upgraded", [indexed Address]))`.
+- **Precedência:** PROXY (é emissor de algum `Upgraded`; `implementationAddress`/`lastUpgradeBlock` vêm do último log) > IMPLEMENTATION (algum proxy **vigente** aponta para ela) > STANDALONE.
+- **Honestidade sobre completude:** o cursor global (`IngestionCursorPort.current()`) não prova que o deploy do proxy foi ingerido (o Blockscout não informa o bloco de deploy). Por isso STANDALONE **nunca afirma "não é proxy"**: significa "nenhum proxy observado nos eventos ingeridos". Cursor atrás do bloco do `Upgraded` → aviso `Ingestão incompleta: ingestão só até o bloco N; o estado de proxy pode estar desatualizado.`; cursor `-1` → "Ingestão ainda não iniciou… não foi possível verificar". STANDALONE com cursor ≥ 0 não gera warning (evitar ruído em toda a lista); a limitação fica na description de `kind`.
+- **Normalização:** `address` sai exatamente como o Blockscout enviou (checksum); `proxyAddresses`/`implementationAddress` em lowercase (convenção do repo). `addressFromTopic` exige `0x` + 64 hex com 24 zeros à esquerda; senão `null`.
+- **Camada de entrada:** `BlockscoutDiscoveryService` orquestra (Blockscout → lookup em lote → cursor → classifier por item); `DiscoveryApiServiceImpl` continua fina, só mapeia. Consumidor deve tratar valor desconhecido de `kind` como `STANDALONE` (enum extensível por evolução do contrato). `lastUpgradeBlock` **inclui** o `Upgraded` emitido no deploy do proxy (documentado no yaml).
+
+### Performance (item 1 do pedido — medido)
+
+`blockchain_event` só tinha índices em `contract_address`/`block_number` e unique `(tx_hash, log_index)`; `topic0` é varchar sem índice e `raw_topics` é JSONB mapeado como `String` → consulta nativa com `raw_topics->>1`. Sem índice, cada GET faria seq scan na tabela da rede inteira. **Migration Flyway pontual `V6__blockchain_event_upgraded_partial_indexes.sql`** (padrão V2–V5, `CREATE INDEX IF NOT EXISTS`, via `PostSchemaFlywayMigrator`; índice parcial/de expressão não cabe em `@Index`): dois índices parciais com `WHERE topic0 = '<literal>'` — emissor `(contract_address, block_number DESC, log_index DESC)` e implementação `(lower(raw_topics->>1), block_number DESC, log_index DESC)`. `TOPIC0` é **interpolado como literal** na `@Query` (com bind, o plano genérico pode ignorar o índice parcial) e a expressão da query é idêntica à do índice. `EXPLAIN` com 30.000 logs não-`Upgraded` + 1 `Upgraded` (Postgres 16, após `ANALYZE`): **nenhum Seq Scan**; passo 2 usa `idx_blockchain_event_upgraded_emitter`; passo 1 faz Index Scan no índice parcial inteiro com filtro OR (não montou BitmapOr) — custo cresce com o nº total de `Upgraded` da rede, não com o tamanho de `blockchain_event`, suficiente porque `Upgraded` é raro. Custo na ingestão ≈ zero. O índice de implementação é praticamente redundante nessa escala; mantido por previsão de muitos proxies (candidato a remoção se se quiser simplicidade). O literal do topic0 se repete na migration (SQL não interpola); o teste de `EXPLAIN` cobre indiretamente: só usa o índice se os literais baterem.
+
+### Decisões operacionais
+
+- Queries nativas devolvem `List<Array<Any?>>` (não projection) para evitar problema de caixa nos aliases do Postgres; o adapter parseia o topic1 com `UpgradedEvent.addressFromTopic` e descarta linhas cujo topic1 não é endereço.
+- O adapter particiona a entrada em blocos de 10.000 endereços (limite de 32.767 parâmetros do Postgres) e deduplica.
+- `ProxyClassifier.classify` recebe as listas completas dos 2 passos + cursor e filtra por item.
+
+### Alternativas rejeitadas
+
+- Estender `BlockchainEventPort` (menor esforço, mas mistura projeção agregada de discovery com a porta de eventos).
+- Uma query por item da lista (N+1).
+- Ler o slot EIP-1967 via RPC (fase 2) já na fase 1 — fora do escopo pedido; ver avaliação abaixo.
+- Inferir por ABI/`UupsDetector` (DEC-099): compara seletor de função do ABI cadastrado, não relaciona endereços.
+- Constante `TOPIC0` calculada via Web3j no domain (violaria domain sem framework/lib de rede); literal + teste de conferência.
+- `kind` como string extensível (como `status`/`upgradeSource` da DEC-105) — **rejeitado por decisão do usuário (2026-10-08, revisão do `reviewer`, N3): `kind` permanece enum fechado (`PROXY|IMPLEMENTATION|STANDALONE`) no yaml**. Consequência aceita: adicionar um valor no futuro é mudança que exige atualizar os clientes gerados com enum estrito; a convenção "desconhecido/ausente = STANDALONE" vale só para o frontend atual.
+- Bloquear o cadastro quando o item é IMPLEMENTATION — o produto só avisa.
+- Warning em todo STANDALONE — ruído.
+
+### Riscos conhecidos
+
+Falso STANDALONE quando o poller não cobriu o deploy do proxy (mitigado só por texto/cursor); só `Upgraded(address)` é detectado (Beacon, Diamond e proxies custom sem esse evento ficam de fora); colisão com contrato não-proxy que emita o mesmo evento; `lastUpgradeBlock` inclui o `Upgraded` do deploy; sem cache na fase 1.
+
+### Avaliação da fase 2 (não implementada — aguarda confirmação)
+
+`eth_getStorageAt` no slot EIP-1967 (`0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`) em `BlockchainPort` (família de `hasCode`/`call`). Esforço baixo (~meio dia). Só `latest` (histórico exige archive). Sob demanda e **apenas para itens que a fase 1 deixou STANDALONE**, com cache curto e/ou batch JSON-RPC (`newBatch()` do Web3j), degradando para `null` se o nó recusar (try/catch próprio — `hasCode` hoje não faz). Resolve o lado **PROXY** (confirma proxy e implementação vigente mesmo sem `Upgraded` ingerido), mas **não** o lado IMPLEMENTATION (o storage só responde proxy→impl). Riscos: allowlist de métodos RPC / proxy autenticado no Besu real (não testado), proxies não-EIP-1967 ficam STANDALONE. Recomendação: vale como complemento, só se o falso STANDALONE aparecer na prática.
+
+### Testes
+
+`UpgradedEventTest` (5), `ProxyClassifierTest` (10), `JpaProxyUpgradeLookupAdapterTest` (7, Testcontainers + `EXPLAIN`), `BlockscoutDiscoveryServiceTest` (9, MockK: 1 proxy, 2 proxies caso ClassANBIMA, STANDALONE, item PROXY, poller atrás do `Upgraded`, cursor -1, 61 itens com 1 chamada por porta, Blockscout vazio e fora do ar), `DiscoveryApiTest` (HTTP; mantém `{address,name}` + campos novos).
+
+### Pendências
+
+Frontend (consumir `kind`/`warnings`, trocar o endereço pré-preenchido para o proxy no "Importar do Blockscout", modo mock) — adiado para uma única passada junto da DEC-105, a pedido do usuário. Validação ao vivo no QA depois que o poller alcançar os blocos dos 4 upgrades UUPS. Revisão final do `reviewer` (junto com a DEC-105).
+
+---
+
+## DEC-105 — Importação do histórico de versões de ABI de proxy UUPS a partir do Blockscout (`GET .../abi/history-plan` dry-run + `POST .../abi/history-import`) e correção da origem BLOCKSCOUT para proxy
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/abi`, `domain/discovery`, `application/abi`, `adapters/outbound/{discovery,persistence,abi}`, contrato OpenAPI). Frontend adiado para a etapa D (passada única junto da DEC-104).
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (fatia 1: infra) + `kotlin-backend-dev` (fatia 2: planner/serviço/contrato), consolidado pela sessão principal. Decisões D1–D8 confirmadas pelo usuário.
+
+### Contexto e evidência (Blockscout do QA, medido read-only em 4 proxies EIP-1967)
+
+- `GET /api/v2/smart-contracts/{proxy}` devolve a ABI do `ERC1967Proxy` (só `Upgraded`, zero funções da lógica) + só a implementação **atual** em `implementations`. Cadastrar via `AbiSource.BLOCKSCOUT` gravava, portanto, a **ABI errada**.
+- Implementação não verificada responde **HTTP 200** sem `abi` (só bytecode), não 404.
+- O histórico completo de upgrades sai de `/api?module=logs&action=getLogs&topic0=<Upgraded>` (compatível Etherscan), sem depender do poller do Evex. `/api/v2/addresses/{proxy}/logs` pagina em 50 e não filtra por topic — descartado.
+- Das 11 implementações dos 4 proxies, **só as 4 originais estão verificadas**; as 7 pós-upgrade não. Efeito prático no QA hoje: o import aplica a v1 e o restante vira `PENDING_NO_VERIFIED_ABI` até serem verificadas no Blockscout (ou cadastradas manualmente, guiado pelo `validFromBlock` do plano).
+- Havia mais upgrades que os 4 conhecidos (proxies com 3 `Upgraded`).
+
+### Decisão (D1–D8)
+
+- **D1 — Fonte do histórico `historySource=AUTO|INGESTED_ONLY|BLOCKSCOUT_ONLY`:** eventos ingeridos (`ProxyUpgradeLookupPort.findUpgradeHistory`, DEC-104) como primária + `getLogs` do Blockscout como complemento. Reconciliação por `(txHash, logIndex)` (ou `(blockNumber, implementationAddress)` sem logIndex); divergência → prevalece o ingerido + warning; Blockscout fora → `AUTO` degrada para só ingeridos + warning explícito (o `historySource` da resposta é o **efetivo**); `BLOCKSCOUT_ONLY` com Blockscout fora → 503. Cada item informa `upgradeSource` (`INGESTED|BLOCKSCOUT|BOTH`); cabeçalho informa `ingestedUntilBlock` (cursor) e `truncated` (`getLogs` ≥ ~1000).
+- **D2 — `POST /abi` com `source=BLOCKSCOUT` para proxy** (`proxyType` ≠ nulo/`unknown` e exatamente 1 implementação): grava a ABI da **implementação composta** com os eventos/erros do proxy ausentes nela (`ProxyAbiComposer`, para o próprio `Upgraded` continuar decodificando); implementação sem ABI verificada → **422** `BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND` (sem fallback silencioso para a ABI do proxy — esse era o bug). Não-proxy e `implementations.size != 1` (ex.: diamond) mantêm o comportamento anterior. **Mudança de comportamento intencional (correção de bug), não estritamente aditiva** — contrato HTTP (request/response) inalterado.
+- **D3 — `PENDING` no meio:** só o prefixo é aplicado; itens que seriam `APPLY`/`PENDING`/`CONFLICT` depois de um `PENDING`/`CONFLICT` viram `BLOCKED_AFTER_PENDING` (importar v3 antes de v2 fecharia a faixa de v1 e impediria cadastrar v2 manualmente, pois `register` exige `validFromBlock` crescente). Itens `SKIP_*` posteriores continuam `SKIP`. Lacunas (`allowGaps`) ficam para fase 2.
+- **D4 — Versão legada (ABI errada do proxy, `source=BLOCKSCOUT` sem `implementation_address`):** `CONFLICT_MANUAL` por padrão; flag opt-in `replaceBlockscoutLegacy` no `POST` remove da timeline do planner e apaga (`ContractAbiPort.deleteLegacyBlockscoutVersions`, na mesma transação do lote) **apenas** versões `BLOCKSCOUT` sem implementação — nunca `UPLOAD_*`/`AUTO_DETECTED`. Se nenhum item for `APPLY`, nada é apagado.
+- **D5 — ABIs idênticas em sequência:** mantém **uma linha por upgrade** (não mescla); sinalizado em `identicalToPrevious`. Mesclar quebraria o 1:1 upgrade↔linha que sustenta a idempotência e perderia a rastreabilidade de qual implementação vigorou quando.
+- **D6 — 1ª versão com `validFromBlock = 0`**, demais = bloco do `Upgraded`; `validTo = próximo.from − 1`, último aberto. Warning só quando o histórico pode estar incompleto (truncado, cursor `-1` ou Blockscout fora). Campo extra aditivo `upgradeBlockNumber` preserva o bloco real do 1º upgrade (o `validFromBlock` dele é 0).
+- **D7 — Idempotência por `implementation_address varchar(42) NULL`** em `contract_abis` via `ddl-auto` (sem Flyway, precedente DEC-097) + `implementationAddress` opcional no DTO `ContractAbi`. Marcador de origem reaproveita `AbiSource.BLOCKSCOUT` (sem novo valor de enum → contrato do `ContractAbi.source` e TS gerado intactos). Mesmo `from` + mesma implementação → `SKIP_ALREADY_IMPORTED`; mesmo `from` + conteúdo idêntico → `SKIP_IDENTICAL`; mesmo `from` + conteúdo diferente (manual) → `CONFLICT_MANUAL`; **nunca sobrescreve** versão manual.
+- **D8 — Dois endpoints** (`GET history-plan` seguro/idempotente + `POST history-import`, em 2 arquivos de path porque o `base.yaml` referencia um arquivo por path). O servidor **sempre recalcula** o plano; `expectedFingerprint` opcional (sha256 de `from|impl|status` por item) divergente → **409** `ABI_HISTORY_PLAN_CHANGED` (`AbiHistoryPlanMismatchException`) sem gravar nada. `status` e `upgradeSource` são **strings extensíveis** no contrato (consumidor trata valor desconhecido como não aplicável).
+
+### Armadilha do redecode — como foi resolvida
+
+`register()` não era transacional (cada `save` uma transação) e chamava `redecodeOrchestrator.tryStart` a cada versão (ignorado se já rodando; o runner pode parar antes de ver a última versão no cache). Novo `AbiRegistrationService.registerAll(address, List<AbiVersionDraft>, source, storage, replaceBlockscoutLegacy)`: resolve/parseia **todas** as ABIs antes de qualquer I/O; valida ordem estritamente crescente; grava via **bean separado** `AbiVersionWriter` (`@Transactional`, evita self-invocation) fechando a versão aberta e inserindo as N em **um commit só**; atualiza o `AbiCache` **uma vez, depois do commit**; dispara **um** `tryStart` e devolve `redecodeStarted` (`false` ⇒ usuário dispara `POST /v1/redecode`). `register` simples passa a delegar com lista de 1 sem mudar o comportamento observável. Blocos ainda não ingeridos são decodificados na própria ingestão pelo `AbiCache` por faixa (nada extra); o redecode final cobre o que já está no banco.
+
+### Onde mora
+
+`domain/abi`: `AbiDiff`, `AbiHistoryPlanner` (+ tipos; status como códigos string), `AbiHistoryPlanMismatchException`, `BlockscoutImplementationAbiNotFoundException` — **sem** Spring/JPA/Web3j/Jackson. `ProxyAbiComposer` usa Jackson → vive em `adapters/outbound/abi` (junto do `AbiParser`), não no domain (decisão da sessão principal sobre desvio da fatia 1). `application/abi`: `AbiHistoryImportService`, `BlockscoutAbiResolver` (`resolveForRegistration`, `abiOf`, `compose`, `composeOrNull` — este último devolve `null` sem exceção para o planner marcar `PENDING`), `AbiVersionWriter`, `AbiVersionDraft`. `domain/discovery`: `BlockscoutPort.getContract/getUpgradeHistory`, `UpgradeRecord`; `ProxyUpgradeLookupPort.findUpgradeHistory` (o índice parcial da V6, DEC-104, já serve). `ContractsApiServiceImpl`: 2 métodos finos.
+
+### Alternativas rejeitadas
+
+Só `getLogs` do Blockscout (ignora a ingestão do Evex); só eventos ingeridos (cursor atrás/ingestão iniciada após o deploy); `/addresses/{proxy}/logs` (paginado, sem filtro de topic); endpoint único com flag `dryRun` (mutação disfarçada de leitura); mesclar ABIs idênticas; novo valor em `AbiSource`; importar pulando `PENDING` (impede o cadastro manual posterior); fallback silencioso para a ABI do proxy; um redecode por versão.
+
+### Limitações e riscos conhecidos
+
+- **`AbiDiff`/`SKIP_IDENTICAL` não expandem tuplas** (`ParsedAbiEntry` só guarda `type` bruto `"tuple"`): versões que diferem só em componentes de tupla aparecem como idênticas. Corrigir exigiria mudar `AbiParser` (afeta o catálogo).
+- **Órfãos em storage `LOCAL`:** o conteúdo é gravado fora da transação; um rollback do lote pode deixar arquivo órfão (sem conflito de integridade; só lixo).
+- **Precisão por bloco:** num upgrade no meio de um bloco, logs anteriores na mesma tx usam a ABI nova (o cache/`RedecodeFilter` não têm `logIndex`). Dois upgrades no mesmo bloco: só o último vale, com warning.
+- **Peso do Blockscout** (~1 MB por contrato, no dry-run e de novo no apply); falha ao buscar ABI propaga 503 (não vira `PENDING`); só a falha no histórico de logs degrada em `AUTO`.
+- **Dívida hexagonal (DEC-076) — ampliada, errata da revisão (N1):** `AbiRegistrationService` já importava `AbiParser` de `adapters/outbound/abi`; o novo `BlockscoutAbiResolver` (application) importa também `ProxyAbiComposer` do mesmo pacote — **dois pontos agora, não um** (a frase original "não piorou" estava errada). Sugestão registrada: porta fina `AbiComposerPort` em `domain/abi`.
+- **Valor imediato no QA limitado** pela falta de verificação das implementações pós-upgrade no Blockscout (ver Contexto). **Implementações antigas sem ABI verificada** (cadastro manual pelo plano ou verificação no Blockscout): 7 implementações de upgrade nos 4 proxies (endereços informados fora do repositório).
+- Jackson omite campos nulos: `validToBlock`, `txHash`, `abiId`, `diffFromPrevious` podem estar ausentes (frontend trata ausência como `null`).
+
+### Testes
+
+`AbiDiffTest` (4), `ProxyAbiComposerTest` (4), `BlockscoutAbiResolverTest` (4), `BlockscoutClientTest` (12), `JpaProxyUpgradeLookupAdapterTest` (8), `JpaContractAbiAdapterTest` (9), `AbiRegistrationServiceTest` (22), `AbiRegistrationBatchIntegrationTest` (6, Testcontainers — prova rollback atômico, cache 1×, 1 `tryStart`), `AbiHistoryPlannerTest` (14), `AbiHistoryImportServiceTest` (12), `AbiHistoryApiTest` (5, Testcontainers: proxy com 3 upgrades, B e C de mesma ABI; dry-run com diff de 3 métodos; 409; import com faixas 0..299/300..499/500..aberta; `GET /v1/events` com cada evento decodificado só pela ABI da faixa certa; 2ª execução tudo `SKIP_ALREADY_IMPORTED`). Nota: o endpoint de versões é `GET /v1/contracts/{address}/abi` (não existe `/abi/versions`).
+
+### Pendências
+
+Frontend (etapa D, passada única com a DEC-104): ação "Importar histórico do Blockscout" no detalhe do contrato com dry-run + confirmação de apply; cliente TS regenerado; mock. Revisão final do `reviewer` (backend + frontend das duas DECs). Validação ao vivo no QA (dry-run real em um dos 4 UUPS) quando o ambiente permitir.
+
+### Errata pós-revisão do `reviewer` (2026-10-08)
+
+- **B1 (bloqueante, corrigido) — `replaceBlockscoutLegacy` (D4) inutilizável com fingerprint.** O `plan()` calculava sempre sem a flag: com versão legada o dry-run dava `CONFLICT_MANUAL` + `BLOCKED_AFTER_PENDING` (zero `APPLY`, apply desabilitado na UI) e, com a flag no `POST`, o plano recalculado mudava de status, o fingerprint divergia e voltava 409 sempre. Correção aditiva: `GET history-plan` ganhou o query param opcional `replaceBlockscoutLegacy` (default `false`); o dry-run com a flag mostra exatamente o plano que o `POST` com a mesma flag executa (mesmo fingerprint); o plano ganhou `legacyVersionsToReplace: [{abiId, validFromBlock}]` (fora do fingerprint; vazio sem a flag ou sem item `APPLY`, pois nada é apagado). O frontend passou a ter o opt-in no cabeçalho do dialog (entra na chave da query do plano), não mais só na confirmação. Testes novos cobrem o fluxo completo (plano sem flag → `CONFLICT_MANUAL`; com flag → `APPLY`; `POST` com fingerprint do plano sem flag → 409; com o do plano com flag → 200, legado apagado, versões novas gravadas).
+- **S4 (corrigido) — vazamento de URL:** `ResourceAccessException` do `RestClient` trazia a URL do ambiente no log e no corpo do 503. `BlockscoutUnavailableException` agora carrega só "Blockscout indisponível (<TipoDaExceção>)"; o log do serviço usa só o tipo da causa. Testes provam que a mensagem do 503 não contém a base-url.
+- **S5 (corrigido):** `POST /abi` documenta 409/422 (`BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND`)/503; os paths de histórico documentam 404/409/503 conforme aplicável.
+- **N2 (registrado, sem ação):** o aviso "ingestão incompleta" do `ProxyClassifier` (`cursor < upgradeBlock`) é quase inalcançável em produção, porque o cursor global avança junto com a ingestão; o caso real (poller atrás do deploy/upgrade) resulta em STANDALONE sem aviso (só cursor `-1` avisa). Declarado em `kind`; só a fase 2 (slot EIP-1967) resolve de fato.
+- **N3 (decisão do usuário):** `kind` permanece enum fechado (ver alternativas rejeitadas da DEC-104).
+- **Limitação de teste:** a preservação de `UPLOAD_*` pelo delete de legado é provada no `JpaContractAbiAdapterTest` (fatia 1), não no teste de API (o planner trata uma versão aberta posterior como `CONFLICT_MANUAL`).
+
+
+---
+
+## DEC-106 — `listVerifiedContracts` do Blockscout passa a paginar via `next_page_params` (o discovery só via a 1ª página)
+
+Data: 2026-10-08
+
+Módulo: backend (`adapters/outbound/discovery/BlockscoutClient`)
+
+Autor: `blockchain-integration`, consolidado pela sessão principal. Achado reportado pelo usuário ao chamar o discovery no QA.
+
+### Contexto
+
+`GET /v1/discovery/blockscout/contracts` devolvia só 50 itens, todos `STANDALONE`, sem os contratos novos nem os proxies. Medido no Blockscout do QA (read-only): `GET /api/v2/smart-contracts` devolve 50 itens por página com `next_page_params` (ex.: `smart_contract_id`, `items_count`), e o QA tem **74** contratos verificados em **2 páginas**; a 2ª página contém 9 `ERC1967Proxy`. O cliente fazia uma única chamada e ignorava `next_page_params` (defeito anterior à DEC-104, que só ficou evidente agora porque os proxies deixaram de ser opcionais para o produto).
+
+### Decisão
+
+Paginar seguindo `next_page_params`: todos os pares não nulos viram query params da próxima requisição (montados via `uriBuilder` + variáveis de template do `RestClient`, sem concatenar string), até o campo vir ausente/nulo/vazio. Proteções: teto `MAX_DISCOVERY_PAGES = 100` (atingido → `WARN` sem dado sensível e retorna o acumulado, sem lançar); detecção de laço (params já vistos → `WARN` e para); **falha em qualquer página → `BlockscoutUnavailableException`** (nunca lista parcial silenciosa), com só o path e o tipo da exceção (regra do S4: sem base-url); dedupe por endereço em minúsculas preservando a 1ª ocorrência e a ordem. Contrato `List<BlockscoutContractSummary>` e OpenAPI inalterados.
+
+### Alternativas rejeitadas
+
+Aumentar `page size` por parâmetro (o Blockscout v2 não expõe um limite configurável de forma portável); devolver lista parcial quando uma página falha (esconderia contratos justamente quando o usuário precisa deles); paginação infinita sem teto (risco em instância mal-comportada).
+
+### Efeito conhecido que continua valendo (N2/DEC-104)
+
+Com a lista completa, o `kind` só vira `PROXY`/`IMPLEMENTATION` quando os eventos `Upgraded` já foram ingeridos pelo poller; com o cursor ≥ 0 e o poller atrás, o item sai `STANDALONE` sem aviso. Complemento possível (não implementado, decisão do usuário): usar o `getLogs` do Blockscout também no discovery, ao custo de 1 chamada por item candidato (fase 2).
+
+### Testes
+
+`BlockscoutClientTest` +6: 2 páginas com params repassados exatamente; 3 páginas em ordem; laço de params; teto de 100 páginas sem lançar; falha 500 na página 2 → exceção sem URL; dedupe case-insensitive. Suíte do backend: 691/691.
+
+---
+
+## DEC-107 — Discovery classifica proxy/implementação também pelos logs `Upgraded` do Blockscout (1 chamada `getLogs` sem endereço), reconciliados com os eventos ingeridos
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery`, `application/discovery`, `adapters/outbound/discovery`, `config`). Sem mudança de contrato OpenAPI nem de frontend.
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (fatia 1: adapter/infra) + `kotlin-backend-dev` (fatia 2: domain/service), consolidado pela sessão principal. Decisões 1–8 do desenho confirmadas pelo usuário.
+
+### Contexto
+
+A DEC-104 classifica `kind` só com eventos `Upgraded` já ingeridos; com o poller atrás (ou ingestão iniciada após o deploy) os itens saem `STANDALONE` silenciosos (limitação N2). O usuário aprovou um complemento via `getLogs` do Blockscout. Medido no QA (read-only): `GET /api?module=logs&action=getLogs&topic0=<Upgraded>&fromBlock=0&toBlock=latest` **sem endereço** devolve todos os `Upgraded` da rede em **1 chamada** (214 logs, 193 proxies e 114 implementações distintos, ~1,1 s, ~100 KB), contra ~1 MB por contrato em `/api/v2/smart-contracts/{x}`. A API devolve em ordem **crescente** de bloco por padrão, `fromBlock` funciona como filtro, `sort=desc` não é respeitado e `page`/`offset` são **ignorados** (devolvem tudo) — por isso a paginação é por bloco.
+
+### Decisão
+
+- **Porta aditiva** `BlockscoutPort.getAllUpgradeLogs(): BlockscoutUpgradeHistory` (reusa o tipo da DEC-105); `BlockscoutUpgradeLog` ganha `proxyAddress: String? = null` (lowercase; só preenchido por esta chamada). Parser de log compartilhado com `getUpgradeHistory`. Sem `sort`/`page`/`offset`.
+- **Paginação por bloco:** página com ≥ 1000 resultados repete com `fromBlock` = maior bloco recebido (inclusivo), dedupe por `(txHash, logIndex)`; para com < 1000 (`truncated=false`); `truncated=true` se o bloco não avança (≥ 1000 num mesmo bloco) ou ao atingir `upgrade-logs-max-pages` (default 10). Falha em qualquer página → `BlockscoutUnavailableException` do **conjunto inteiro** (nunca parcial como se fosse completo).
+- **Cache** em memória **dentro do adapter** (porta pura): TTL `upgrade-logs-cache-ttl` (30 s; `0` desliga), só sucesso (completo/truncado), single-flight, `Clock` injetável, falha não cacheada; só `getAllUpgradeLogs` usa.
+- **Timeouts** no `RestClient` do Blockscout (todo o cliente): conexão 2 s, leitura **15 s** (não 10 s: `getContract` devolve ~1 MB). Antes não havia timeout algum (um Blockscout pendurado derrubava o discovery por tempo indeterminado).
+- **Domain puro:** `UpgradeReconciler` (extraído de `AbiHistoryImportService.reconcile`, que virou wrapper fino com o mesmo comportamento e textos — os testes da DEC-105 passaram sem alterar asserções), `UpgradeLogsCoverage {NOT_CONSULTED, COMPLETE, TRUNCATED, UNAVAILABLE}`, `UpgradedLog.source`, `DiscoveryUpgradeView.build` (mescla ingeridos + remotos; `latestByProxy` considera os remotos de todos os proxies envolvidos, de modo que "proxy migrou X→Y" funciona mesmo quando o upgrade novo só existe no Blockscout). `UpgradeSource` foi movido de `domain/abi` para `domain/discovery` (evita ciclo de pacote). **A regra do `ProxyClassifier` não mudou** (precedência PROXY > IMPLEMENTATION > STANDALONE); só os textos de `warnings`.
+- **Comportamento de falha:** `listVerifiedContracts` falha → 503 como antes (o remoto nem é chamado). `getAllUpgradeLogs` falha → captura, `WARN` só com o tipo da causa (regra S4), `coverage=UNAVAILABLE`, classifica só com ingeridos (200); nunca estado misto. Flag `indexer.blockscout.upgrade-logs-enabled` (default `true`) desligada → `NOT_CONSULTED` = comportamento exato da DEC-104 e o remoto nunca é chamado.
+- **Custo por requisição:** ≤ 2 queries ao banco + 1 chamada ao Blockscout (via adapter, com cache), independente do nº de itens (teste com 61 itens).
+- **Config** (`indexer.blockscout.*`): `upgrade-logs-enabled`, `upgrade-logs-cache-ttl`, `upgrade-logs-max-pages`, `connect-timeout`, `read-timeout` (documentadas no `application.yml`).
+
+### Warnings (PT-BR) por cenário
+
+- PROXY/IMPLEMENTATION com evidência só `BLOCKSCOUT`: "Classificação baseada nos logs do Blockscout; este upgrade (bloco N) ainda não consta nos eventos ingeridos pelo Evex (ingestão até o bloco M)." (com cursor −1: "(a ingestão ainda não iniciou)."; com cursor ≥ N: sem o parêntese). Evidência `BOTH`/`INGESTED`: sem aviso novo (vale o da DEC-104).
+- STANDALONE: `COMPLETE` → sem aviso (nem o de cursor −1: a verificação foi pelo Blockscout; continua **sem** afirmar "não é proxy" — Beacon/Diamond/proxy custom/Blockscout defasado); `TRUNCATED` → "Lista de upgrades do Blockscout truncada; a classificação pode estar incompleta."; `UNAVAILABLE` → "Complemento do Blockscout indisponível; classificação feita apenas com eventos ingeridos (pode estar incompleta)."
+- `TRUNCATED` acrescenta o aviso a **todos** os itens; `UNAVAILABLE` só aos `STANDALONE`.
+- IMPLEMENTATION que já migrou (sem proxy vigente), com `COMPLETE`/`TRUNCATED`: "…nos eventos ingeridos nem nos logs do Blockscout".
+
+### Efeito sobre a limitação N2 (DEC-104)
+
+O caso real (poller atrás do deploy/upgrade) deixa de sair `STANDALONE` silencioso: passa a sair `PROXY`/`IMPLEMENTATION` corretos com o aviso de fonte Blockscout. O `STANDALONE` silencioso só sobra com `NOT_CONSULTED` (flag off) ou `UNAVAILABLE` (que agora avisa).
+
+### Alternativas rejeitadas
+
+1 `getLogs` por candidato (N chamadas externas); `/api/v2/smart-contracts/{x}.implementations` por item (~1 MB cada, só proxy→impl atual); `eth_getStorageAt` no slot EIP-1967 (fase 2 da DEC-104: 1 RPC por item, só `latest`, só lado PROXY, depende de allowlist do Besu — segue como complemento futuro só se ainda aparecer falso `STANDALONE` em proxies sem evento `Upgraded`); `kindSource` no contrato (decisão do usuário: só warnings; se o frontend quiser selo, adiciona-se depois como string extensível); `page`/`offset`/`sort` (não respeitados pelo Blockscout do QA); cache distribuído/banco (exagero: uma instância por rede); substituir a fonte ingerida pelo Blockscout (viola "ingerido prevalece", DEC-105 D1).
+
+### Limitações e riscos
+
+- Defasagem de até o TTL (30 s) para um upgrade novo; colisão com contrato não-proxy que emita o mesmo evento (já aceito na DEC-104); Beacon/Diamond/proxy sem `Upgraded(address)` seguem `STANDALONE`.
+- Na `DiscoveryUpgradeView` o passo do banco devolve `UpgradedLog` sem `txHash`: o match com o remoto é por `(proxy, bloco, logIndex)` (ou `(proxy, bloco)` se o logIndex remoto é nulo); implementação divergente → prevalece o ingerido **sem aviso** (a `Divergence` com aviso só existe no fluxo de histórico).
+- **TD:** o construtor `@Autowired` do `BlockscoutClient` usa `@Value("#{true}") applyConfiguredTimeouts` para ligar os timeouts sem quebrar os testes `MockRestServiceServer` (que dependem dos defaults do construtor primário). Funciona, mas é hacky; corrigir direito pede reorganizar os construtores ou um bean de `RequestFactory` — registrado como débito. Os timeouts aplicados num `RestClient` real não têm teste (só os defaults das propriedades).
+- Cenários de teto de páginas e de página cheia sem avanço foram simulados com mocks, não validados contra um Blockscout real.
+
+### Testes
+
+Fatia 1: +10 em `BlockscoutClientTest` (parse do emissor, "No logs found", paginação por bloco com dedupe da fronteira, página cheia sem avanço, teto, 500 e falha na página 2 sem base-url, cache TTL/expiração/falha não cacheada/`ttl=0`, `proxyAddress` nulo em `getUpgradeHistory`, defaults das propriedades). Fatia 2: +24 (`UpgradeReconcilerTest`, `DiscoveryUpgradeViewTest`, casos novos em `ProxyClassifierTest`, `BlockscoutDiscoveryServiceTest`, `DiscoveryApiTest`). Suíte do backend: **725/725**.
+
+### Revisão do `reviewer` (2026-10-08) — aprovada com ressalvas, sem achado bloqueante (DEC-106 + DEC-107)
+
+Backend 725/725 reconfirmado do zero. Domain sem Spring/JPA/Web3j/Jackson, `DiscoveryApiServiceImpl` inalterada, sem ciclo de pacote, ≤ 2 queries + 1 chamada ao Blockscout, nenhum segredo/URL/endereço real, mensagens de erro/log sem base-url.
+
+- **N1 (corrigido):** o hack `@Value("#{true}")` funciona em produção (o Spring escolhe o construtor `@Autowired`; os timeouts são aplicados no bean real), mas o `HttpClient.newBuilder()` cru segue redirecionamentos como `NEVER` — um Blockscout atrás de redirect http→https ou de barra final viraria 503 em todos os endpoints do cliente (regressão sutil). Corrigido com `.followRedirects(HttpClient.Redirect.NORMAL)` em `BlockscoutClient`. **TD mantido:** trocar o hack por `ClientHttpRequestFactoryBuilder`/`HttpClientSettings` (que também herdaria `spring.http.client.*`, SSL bundle e proxy do Boot) e adicionar teste que prove que o bean de produção recebeu os timeouts.
+- **N2 (aceito, declarado):** o teto de 100 páginas em `listVerifiedContracts` devolve lista parcial com `WARN` (≈ 5.000 contratos; improvável). Contradiz "nunca parcial silencioso" aplicado às falhas; mantido por ser o teto de segurança contra instância mal-comportada.
+- **N3 (aceito, declarado):** divergência de implementação na mesma posição prevalece o ingerido **sem aviso** no discovery (o aviso de divergência só existe no fluxo de histórico, DEC-105).
+- **Sugestões abertas:** S1 — o cache segura o lock durante toda a I/O (pior caso: 10 páginas × ~17 s bloqueia outras requisições de discovery em cache frio; considerar teto de páginas menor ou `Future` compartilhado com timeout); S2 — a flag `upgrade-logs-enabled` tem duas fontes (`BlockscoutProperties` e `@Value` no service; unificar injetando as properties); S3 — dedupe `(txHash, logIndex)` com `logIndex` nulo pode colapsar logs distintos da mesma tx (só com Blockscout sem `logIndex`); S4 — `AbiHistoryImportService` ainda loga `ex.message` ao ler ABI local (não envolve URL; inconsistência com a regra S4); N5 — o guia não cita a paginação da DEC-106.
+
+
+---
+
+## DEC-108 — Item `PROXY` do discovery ganha nome derivado da implementação ("<Nome> (Proxy)")
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery/ProxyDisplayName`, `ProxyClassifier`, `application/discovery/BlockscoutDiscoveryService`). Sem mudança de contrato OpenAPI nem de frontend.
+
+Autor: `kotlin-backend-dev`, consolidado pela sessão principal. Pedido do usuário após validar a DEC-107 no QA.
+
+### Contexto
+
+O Blockscout nomeia todo proxy verificado como `ERC1967Proxy`; no discovery os itens `kind=PROXY` ficavam indistinguíveis (9 itens com o mesmo nome). O usuário quer ver o contrato lógico, ex.: `ANBIMACoin (Proxy)`.
+
+### Decisão
+
+Para itens `PROXY`, `name` = `"<NomeDaImplementação> (Proxy)"`, onde o nome vem da implementação **mais recente do histórico daquele proxy que esteja na lista de verificados** (histórico ordenado por `(bloco, logIndex)` decrescente; match de endereço case-insensitive; `name` não vazio). Não basta a implementação **atual**: na prática ela costuma não estar verificada/listada (só as originais estão), mas uma anterior do mesmo proxy está (ex.: o proxy do `YieldCurveOracle` aponta para uma implementação não verificada, cujo histórico inclui a original verificada → `YieldCurveOracle (Proxy)`).
+
+- Função pura `ProxyDisplayName.derive(originalName, proxyHistory, listedNames)` no domain (sem Spring/JPA/Web3j/Jackson); `ProxyClassifier.classify` ganhou o parâmetro opcional `listedNames: Map<String, String?> = emptyMap()` e aplica a regra **só no ramo PROXY**. Classificação e warnings não mudaram; `IMPLEMENTATION`/`STANDALONE` intactos; `address` sai exatamente como veio do Blockscout.
+- **Mantém o `name` original** (sem inventar sufixo) quando nenhuma implementação do histórico está listada, o histórico é vazio, ou todos os nomes listados são nulos/em branco. Também mantém o original se o nome derivado termina com "Proxy" (case-insensitive; decisão do agente para cobrir implementação listada com nome genérico — não procura implementações mais antigas nesse caso). Idempotente: nome que já termina com "(Proxy)" não duplica o sufixo.
+- O `involving` do `DiscoveryUpgradeView` já traz o histórico completo de um proxy listado (ingeridos ∪ Blockscout): nenhuma consulta nova (≤ 2 queries ao banco + 1 chamada ao Blockscout).
+
+### Alternativas rejeitadas
+
+Campo novo no contrato (ex.: `displayName`) mantendo o `name` original — rejeitado por ora para não ampliar o contrato (o `name` do Blockscout para proxy é inútil); usar só a implementação atual (falha justamente nos casos reais, com a atual não verificada); consultar o Blockscout por proxy para obter o nome (≈ 1 MB por contrato).
+
+### Consequência conhecida
+
+Quem cadastra um contrato a partir do item PROXY recebe o nome derivado pré-preenchido (`ANBIMACoin (Proxy)`), que passa a ser o nome do contrato monitorado. Os ~45 proxies da `ClassANBIMA` não são itens próprios da lista (o Blockscout só lista os verificados individualmente): aparecem em `proxyAddresses` do item `IMPLEMENTATION`.
+
+### Testes
+
+`ProxyDisplayNameTest` (10), +1 em `BlockscoutDiscoveryServiceTest`, +1 em `DiscoveryApiTest`. Backend 737/737. Frontend não tocado (o item PROXY do mock já tem nome próprio, `TokenProxy`).
+
+---
+
+## DEC-109 — `POST /v1/contracts/{address}/abi` com `source=BLOCKSCOUT` e sem `validFromBlock` usa o bloco de criação do contrato (não mais sempre 0)
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery/BlockscoutPort`, `adapters/outbound/discovery/BlockscoutClient`, `application/abi/AbiRegistrationService`, `adapters/inbound/api/ContractsApiServiceImpl`, `register-abi-payload.yaml`) + 1 ajuste de texto no frontend.
+
+Autor: `blockchain-integration`, consolidado pela sessão principal. Pedido do usuário ao testar o cadastro de ABI por Blockscout (a faixa vinha sempre de 0).
+
+### Contexto
+
+O cadastro ignorava a origem do dado: `ContractsApiServiceImpl` aplicava `validFromBlock ?: 0L` para qualquer `source` — uma **regra de negócio dentro da camada que deve ser só de mapeamento**. O Blockscout expõe o bloco de criação em 2 chamadas leves (medido no QA, read-only): `GET /api/v2/addresses/{address}` → `creation_transaction_hash`; `GET /api/v2/transactions/{hash}` → `block_number` (ou `block`). `/api/v2/smart-contracts/{address}` não traz bloco.
+
+### Decisão
+
+- `BlockscoutPort.getCreationBlock(address): Long?` (aditivo): `null` = sem dado (404, sem hash de criação, tx sem bloco); falha de rede/5xx → `BlockscoutUnavailableException` (só path + tipo da exceção, sem base-url — regra S4).
+- `AbiRegistrationService.register(..., validFromBlock: Long? = null)`: **informado → vale exatamente o valor** (inclusive 0; nunca sobrescreve escolha explícita e o Blockscout nem é consultado); nulo e `BLOCKSCOUT` → `getCreationBlock(address) ?: 0L` (se lançar `BlockscoutUnavailableException`: cai em 0 com `WARN` só com o tipo da causa — o cadastro da ABI **não** falha por causa disso); nulo e outras origens (`UPLOAD_*`) → 0 como antes, sem consultar o Blockscout. A consulta do bloco ocorre depois de resolver a ABI (a falha por Blockscout não configurado continua igual). A regra de ordem contra a versão aberta não mudou: se o valor resolvido for ≤ ao da versão aberta, o mesmo `AbiVersionOrderException` de antes.
+- `ContractsApiServiceImpl` voltou a ser fina (passa o `validFromBlock` nullable adiante, sem `?: 0L`).
+- **Mudança de contrato (só semântica, aditiva na prática):** `register-abi-payload.yaml` tinha `default: 0` no `validFromBlock`, que o generator transformava em `var validFromBlock: Long? = 0L` — omitir o campo virava 0 já na desserialização e o `null` nunca chegaria ao service. Removido **só o `default: 0`**; tipo e `required` inalterados; descrição atualizada ("Se omitido: origem BLOCKSCOUT usa o bloco de criação do contrato no Blockscout (0 se indisponível); demais origens usam 0"). Clientes antigos que omitem o campo continuam funcionando (para as origens não-Blockscout o resultado é o mesmo 0).
+- Frontend: o formulário já enviava `undefined` quando o campo fica vazio (a feature funciona pela UI); só o rótulo "(opcional, default 0)" ficou impreciso e virou "(opcional)" + `helperText` explicando o comportamento por origem.
+
+### Limite conhecido
+
+Para **proxy**, o bloco é o de criação do **próprio proxy** (o endereço cadastrado): é o início correto da faixa, mas uma única versão com a ABI da implementação atual continua sendo uma **aproximação** (eventos de implementações anteriores foram emitidos com outras ABIs). Para faixas por upgrade o caminho correto é o import de histórico (DEC-105). Documentado no KDoc e no guia.
+
+### Alternativas rejeitadas
+
+Manter o `?: 0L` no ApiServiceImpl e só ajustar o valor lá (regra de negócio na camada fina); falhar o cadastro se o Blockscout não responder (a ABI já foi resolvida; o bloco é refinamento, 0 é seguro: nenhum log existe antes da criação); usar o bloco do último `Upgraded` para proxy (deixaria sem ABI os eventos anteriores).
+
+### Testes
+
+`BlockscoutClientTest` +6, `AbiRegistrationServiceTest` +6, `ContractAbiCreationBlockApiTest` +3 (POST BLOCKSCOUT sem `validFromBlock` devolve o bloco de criação mockado; `0` explícito respeitado e `getCreationBlock` não chamado; `UPLOAD_TEXT` sem valor fica em 0). Backend 752/752; frontend `src/features/contracts` 45/45, `tsc -b` e lint limpos.

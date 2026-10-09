@@ -1,0 +1,72 @@
+type: object
+description: >-
+  Um upgrade de proxy na linha do tempo de versões de ABI (DEC-105). Uma linha por upgrade, mesmo
+  quando a ABI é idêntica à anterior (`identicalToPrevious`).
+required:
+  - sequence
+  - validFromBlock
+  - implementationAddress
+  - upgradeSource
+  - abiAvailable
+  - status
+  - identicalToPrevious
+properties:
+  sequence:
+    type: integer
+    format: int32
+    description: Posição (1-based) na linha do tempo, em ordem crescente de bloco.
+  validFromBlock:
+    type: integer
+    format: int64
+    description: >-
+      Primeiro bloco em que a versão vale. Primeira versão = 0 (convenção: nenhum log do proxy existe
+      antes do deploy); demais = bloco do `Upgraded`. Em itens `PENDING_NO_VERIFIED_ABI`, serve de
+      sugestão de `validFromBlock` para o cadastro manual.
+  validToBlock:
+    type: integer
+    format: int64
+    nullable: true
+    description: "Último bloco da faixa (= `validFromBlock` do próximo - 1); `null` no último item (aberto)."
+  upgradeBlockNumber:
+    type: integer
+    format: int64
+    nullable: true
+    description: Bloco real do evento `Upgraded` (difere de `validFromBlock` apenas no 1º item).
+  implementationAddress:
+    type: string
+    description: Endereço da implementação apontada pelo `Upgraded` (lowercase).
+  txHash:
+    type: string
+    nullable: true
+    description: Hash da transação do upgrade, quando conhecido.
+  upgradeSource:
+    type: string
+    description: "Origem do upgrade: `INGESTED`, `BLOCKSCOUT` ou `BOTH` (string extensível)."
+    example: BOTH
+  abiAvailable:
+    type: boolean
+    description: Se há ABI verificada da implementação no Blockscout.
+  status:
+    type: string
+    description: >-
+      Código do que acontece com o item. Valores atuais: `APPLY`, `SKIP_ALREADY_IMPORTED`,
+      `SKIP_IDENTICAL`, `CONFLICT_MANUAL`, `PENDING_NO_VERIFIED_ABI`, `BLOCKED_AFTER_PENDING`. É uma
+      string extensível: o consumidor deve tratar um valor desconhecido como "não aplicável".
+    example: APPLY
+  statusReason:
+    type: string
+    nullable: true
+    description: Explicação legível do status.
+  identicalToPrevious:
+    type: boolean
+    description: "`true` quando a ABI é idêntica à do item anterior (nenhum evento/método adicionado ou removido)."
+  diffFromPrevious:
+    nullable: true
+    description: Diferença para o item anterior; `null` no 1º item ou quando alguma das ABIs não está disponível.
+    allOf:
+      - $ref: "abi-history-diff.yaml"
+  abiId:
+    type: string
+    format: uuid
+    nullable: true
+    description: Id da versão de ABI criada (só no resultado de um import, em itens aplicados).

@@ -112,22 +112,56 @@ class JpaContractAbiAdapterTest : AbstractIntegrationTest() {
         assertThat(fromLocal.storageLocation.storagePath).isEqualTo("/data/abis/x.json")
     }
 
+    @Test
+    fun `implementationAddress round-trips and defaults to null`() {
+        val address = "0x555555555555555555555555555555555555555e"
+        val impl = "0x00000000000000000000000000000000000000a1"
+        adapter.save(newAbi(address, 0, validToBlock = 9))
+        adapter.save(newAbi(address, 10, implementationAddress = impl))
+
+        val found = adapter.findAllByContractAddress(address)
+
+        assertThat(found.map { it.implementationAddress }).containsExactly(null, impl)
+    }
+
+    @Test
+    fun `deleteLegacyBlockscoutVersions removes only BLOCKSCOUT versions without implementation_address`() {
+        val address = "0x666666666666666666666666666666666666666f"
+        val other = "0x777777777777777777777777777777777777777a"
+        val impl = "0x00000000000000000000000000000000000000a1"
+        adapter.save(newAbi(address, 0, validToBlock = 9, source = AbiSource.BLOCKSCOUT)) // legado: some
+        adapter.save(newAbi(address, 10, validToBlock = 19, source = AbiSource.UPLOAD_TEXT))
+        adapter.save(newAbi(address, 20, validToBlock = 29, source = AbiSource.UPLOAD_FILE))
+        adapter.save(newAbi(address, 30, validToBlock = 39, source = AbiSource.AUTO_DETECTED))
+        adapter.save(newAbi(address, 40, source = AbiSource.BLOCKSCOUT, implementationAddress = impl))
+        adapter.save(newAbi(other, 0, source = AbiSource.BLOCKSCOUT)) // outro endereço
+
+        val removed = adapter.deleteLegacyBlockscoutVersions(address)
+
+        assertThat(removed).isEqualTo(1)
+        assertThat(adapter.findAllByContractAddress(address).map { it.validFromBlock }).containsExactly(10L, 20L, 30L, 40L)
+        assertThat(adapter.findAllByContractAddress(other)).hasSize(1)
+    }
+
     private fun newAbi(
         address: String,
         validFromBlock: Long,
         validToBlock: Long? = null,
+        source: AbiSource = AbiSource.UPLOAD_TEXT,
+        implementationAddress: String? = null,
         storageType: AbiStorageType = AbiStorageType.DATABASE,
         location: StorageLocation = StorageLocation(abiContent = "[]", storagePath = null),
     ) = ContractAbi(
         id = UUID.randomUUID(),
         contractAddress = address,
         network = Network.TESTNET,
-        source = AbiSource.UPLOAD_TEXT,
+        source = source,
         storageType = storageType,
         storageLocation = location,
         validFromBlock = validFromBlock,
         validToBlock = validToBlock,
         // truncado pra segundos: coluna `timestamp` do Postgres não preserva nanossegundos de Instant.now()
         createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS),
+        implementationAddress = implementationAddress,
     )
 }

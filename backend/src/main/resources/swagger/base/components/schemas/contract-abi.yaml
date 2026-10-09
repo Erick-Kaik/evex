@@ -32,6 +32,12 @@ properties:
     format: int64
     nullable: true
     description: "Último bloco (inclusive) em que esta versão é válida; `null` = ainda vigente."
+  implementationAddress:
+    type: string
+    nullable: true
+    description: >-
+      Implementação de proxy da qual esta versão foi composta (importação de histórico, DEC-105);
+      `null` nas demais versões.
   createdAt:
     type: string
     format: date-time

@@ -1,0 +1,12 @@
+type: object
+description: Versão legada de ABI (`BLOCKSCOUT` sem implementação) que será apagada por `replaceBlockscoutLegacy=true`.
+required:
+  - abiId
+  - validFromBlock
+properties:
+  abiId:
+    type: string
+    format: uuid
+  validFromBlock:
+    type: integer
+    format: int64

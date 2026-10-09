@@ -24,4 +24,10 @@ data class ContractAbi(
     val validFromBlock: Long,
     val validToBlock: Long?,
     val createdAt: Instant,
+    /**
+     * Implementação de proxy da qual esta versão foi composta (DEC-105); `null` para versões que não
+     * vêm da importação de histórico de proxy. Com `source=BLOCKSCOUT`, não nulo marca a versão como
+     * "importada pelo histórico" (idempotência).
+     */
+    val implementationAddress: String? = null,
 )

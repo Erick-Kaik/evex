@@ -36,6 +36,7 @@ campo `network` (`MAINNET` | `TESTNET`).
 - [9. Acompanhar jobs assíncronos ao vivo (SSE)](#9-acompanhar-jobs-assíncronos-ao-vivo-sse)
 - [10. Aba "Demonstração" — disparar scripts sem terminal](#10-aba-demonstração--disparar-scripts-sem-terminal)
 - [11. Contrato proxy upgradável (ABI versionada por faixa de blocos)](#11-contrato-proxy-upgradável-abi-versionada-por-faixa-de-blocos)
+- [11.1. Importar histórico de versões de ABI (proxy UUPS)](#111-importar-histórico-de-versões-de-abi-proxy-uuups)
 - [12. Consultar saldo numa data / histórico](#12-consultar-saldo-numa-data--histórico)
 - [13. Eventos enriquecidos no payload de webhook](#13-eventos-enriquecidos-no-payload-de-webhook)
 - [Referência rápida](#referência-rápida)
@@ -178,10 +179,42 @@ lá em vez de digitar.
 1. **Contratos → "Novo contrato"**. Na coluna **"Importar do Blockscout"** aparecem os contratos
    verificados (no local-env: `TestERC20`, `TestEventEmitter`).
 2. Clique num item → **Endereço** e **Nome** do formulário são preenchidos automaticamente.
+   Cada item mostra um selo **Proxy**/**Implementação** e os avisos do backend. Ao clicar numa
+   **Implementação** com um único proxy, o formulário recebe o endereço do **proxy** (com um aviso na
+   coluna); com 2+ proxies, você escolhe qual proxy cadastrar. O cadastro nunca é bloqueado.
 3. Escolha a **Rede** → **"Cadastrar"** → vai para o detalhe.
 4. Na seção **ABI → "Cadastrar nova versão" → origem "Buscar no Blockscout" → "Cadastrar versão de
    ABI"**. O Evex busca a ABI direto do Blockscout.
 5. A tabela de versões ganha uma linha com **origem `BLOCKSCOUT`**.
+
+Se o bloco inicial (`validFromBlock`) não for informado, o Evex usa automaticamente o **bloco de criação do contrato** obtido no Blockscout (ou 0, se o Blockscout não tiver esse dado). Um valor informado explicitamente, inclusive 0, é sempre respeitado; para faixas de ABI por upgrade de proxy, use a importação de histórico.
+
+Itens `kind = PROXY` aparecem com o nome da implementação mais recente do proxy presente na lista de
+verificados seguido de "(Proxy)" (ex.: `TokenCoin (Proxy)`), em vez do genérico `ERC1967Proxy` do Blockscout;
+sem implementação derivável na lista, o nome original é mantido.
+
+**Proxy upgradável (DEC-104):** cada item do discovery traz também `kind`, `proxyAddresses`,
+`implementationAddress`, `lastUpgradeBlock` e `warnings`, calculados a partir dos eventos
+`Upgraded(address)` **já ingeridos** (sem consulta extra à rede):
+
+- `kind = PROXY`: o endereço emitiu `Upgraded`; `implementationAddress` é a implementação do último
+  `Upgraded` observado e `lastUpgradeBlock` o bloco dele (inclui o `Upgraded` emitido no deploy do proxy).
+  Este é o endereço certo para cadastrar.
+- `kind = IMPLEMENTATION`: algum proxy aponta para o endereço; `proxyAddresses` lista os proxies
+  vigentes (pode haver vários, ex.: um proxy por classe). Cadastre o proxy, não a implementação — os
+  eventos são emitidos pelo proxy.
+- `kind = STANDALONE`: **nenhum** `Upgraded` observado nos eventos ingeridos. Não prova que o contrato
+  não é proxy/implementação: depende da cobertura da ingestão (`warnings` avisa quando a ingestão ainda
+  não iniciou ou está atrás do bloco do `Upgraded`). Só `Upgraded(address)` é detectado (não Beacon/Diamond).
+
+Os avisos são informativos e nunca bloqueiam o cadastro.
+
+**Complemento pelos logs do Blockscout (DEC-107):** além dos eventos ingeridos, a classificação consulta
+os logs `Upgraded` da rede inteira no Blockscout, então um proxy/implementação já aparece corretamente
+mesmo que a ingestão ainda não tenha chegado ao bloco do upgrade. Quando a evidência vem só do
+Blockscout, o `warnings` diz isso e informa até onde a ingestão foi; se a lista do Blockscout vier
+truncada ou o Blockscout falhar nessa consulta, a classificação segue só com os eventos ingeridos e um
+aviso. Desligue com `indexer.blockscout.upgrade-logs-enabled=false` (volta ao comportamento só-ingeridos).
 
 **Variação:** sem Blockscout no ar, a mesma coluna mostra *"Discovery via Blockscout não está
 disponível"* (não é erro — o cadastro manual continua funcionando).
@@ -520,6 +553,66 @@ ABI_VERSION_ORDER_INVALID`.
 
 ---
 
+## 11.1. Importar histórico de versões de ABI (proxy UUPS)
+
+**Cenário:** o proxy já passou por vários upgrades e você quer uma versão de ABI por upgrade, sem
+cadastrar uma a uma (DEC-105). O Evex monta a linha do tempo de `Upgraded(address)` a partir dos
+eventos **ingeridos** e dos logs do Blockscout, busca a ABI verificada de cada implementação (composta
+com os eventos do proxy, para não perder o próprio `Upgraded`) e cadastra tudo de uma vez.
+
+**Pela UI:** no detalhe do contrato, seção **ABI → "Importar histórico de versões do Blockscout"**:
+escolha a fonte, revise o plano (tabela com diff expansível) e clique **"Aplicar importação"** →
+confirmar. O opt-in **"Substituir versões legadas importadas do Blockscout"** (`replaceBlockscoutLegacy`)
+fica no cabeçalho do diálogo, junto da fonte: ao marcá-lo o dry-run é refeito e já mostra o plano com a
+substituição e um alerta com o que será apagado (só versões importadas do Blockscout com a ABI do proxy,
+nunca uploads manuais).
+
+**Passo a passo (API):**
+
+1. **Dry-run** (não grava nada): `GET /v1/contracts/{address}/abi/history-plan?historySource=AUTO`.
+   `historySource` aceita `AUTO` (união ingeridos + Blockscout, default), `INGESTED_ONLY` e
+   `BLOCKSCOUT_ONLY`. A resposta traz uma linha por upgrade (`validFromBlock`/`validToBlock`,
+   `implementationAddress`, `txHash`, `upgradeSource`, `diffFromPrevious` com eventos/métodos
+   adicionados e removidos, `identicalToPrevious`), `warnings` e um `fingerprint`.
+2. **Aplicar:** `POST /v1/contracts/{address}/abi/history-import` com corpo opcional
+   `{"historySource": "AUTO", "expectedFingerprint": "<fingerprint do dry-run>", "replaceBlockscoutLegacy": false}`.
+   O servidor sempre recalcula o plano e cadastra só os itens `APPLY`, em ordem crescente, numa única
+   transação, e dispara **um** redecode ao final (`redecodeStarted`; se vier `false`, já havia um redecode
+   em curso: dispare `POST /v1/redecode`). Se o plano mudou desde o dry-run, devolve `409
+   ABI_HISTORY_PLAN_CHANGED` sem aplicar nada.
+3. Reexecutar é seguro: o que já foi importado volta como `SKIP_ALREADY_IMPORTED`.
+
+**Status dos itens** (string extensível; trate um valor desconhecido como "não aplicável"):
+
+| Status | Significado |
+|---|---|
+| `APPLY` | Será cadastrado. |
+| `SKIP_ALREADY_IMPORTED` | Já existe versão neste bloco (importada antes ou cadastrada manualmente). |
+| `SKIP_IDENTICAL` | Já existe versão neste bloco com conteúdo idêntico. |
+| `CONFLICT_MANUAL` | Existe versão diferente neste bloco, ou o bloco não é posterior à versão aberta. Nada é sobrescrito. |
+| `PENDING_NO_VERIFIED_ABI` | A implementação não tem ABI verificada no Blockscout. |
+| `BLOCKED_AFTER_PENDING` | Vem depois de um item pendente/em conflito: o import aplica só o prefixo, sem deixar buraco na linha do tempo. |
+
+**Limitação importante:** só aparece ABI para implementações **verificadas** no Blockscout. Se a
+implementação de um upgrade não foi verificada, o item fica `PENDING_NO_VERIFIED_ABI` (o
+`validFromBlock` dele é a sugestão de bloco) e os seguintes `BLOCKED_AFTER_PENDING`. Resolva
+cadastrando manualmente essa versão em `POST /v1/contracts/{address}/abi` (`UPLOAD_TEXT`, com o bloco
+sugerido) ou verificando a implementação no Blockscout, e rode o dry-run de novo: os itens seguintes
+passam a `APPLY`.
+
+**Notas:**
+
+- A 1ª versão sempre começa no bloco 0 (nenhum log do proxy existe antes do deploy); o `warnings` avisa
+  quando o histórico pode estar incompleto (truncado, Blockscout fora do ar, cursor de indexação atrás).
+- Se o Blockscout estiver fora do ar em `AUTO`, o plano usa só os upgrades ingeridos e avisa.
+- Versão cadastrada antes da DEC-105 com a ABI do proxy (`source=BLOCKSCOUT`, sem implementação) aparece
+  como `CONFLICT_MANUAL`. `replaceBlockscoutLegacy=true` apaga **só** essas versões legadas (nunca
+  `UPLOAD_*`) e importa o histórico, na mesma transação.
+- No bloco exato de um upgrade, logs anteriores à transação de upgrade nesse mesmo bloco usam a ABI nova
+  (a decodificação é por bloco, não por `logIndex`).
+
+---
+
 ## 12. Consultar saldo numa data / histórico
 
 Na tela **Saldos → "Consultar saldos"**, o rádio **"Saldo numa data"** consulta o saldo projetado
@@ -654,6 +747,8 @@ GET/PATCH  /v1/contracts/{address}
 PATCH      /v1/contracts/{address}/status
 GET/POST   /v1/contracts/{address}/abi
 GET        /v1/contracts/{address}/abi/suggestions
+GET        /v1/contracts/{address}/abi/history-plan   # dry-run do histórico de ABIs de proxy (DEC-105)
+POST       /v1/contracts/{address}/abi/history-import # aplica o plano (1 redecode)
 GET        /v1/contracts/{address}/events           # catálogo p/ os forms guiados
 GET        /v1/discovery/blockscout/contracts       # discovery
 

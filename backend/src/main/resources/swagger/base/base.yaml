@@ -42,6 +42,10 @@ paths:
     $ref: "../paths/contract-abi.yaml"
   /v1/contracts/{address}/abi/suggestions:
     $ref: "../paths/contract-abi-suggestions.yaml"
+  /v1/contracts/{address}/abi/history-plan:
+    $ref: "../paths/contract-abi-history-plan.yaml"
+  /v1/contracts/{address}/abi/history-import:
+    $ref: "../paths/contract-abi-history-import.yaml"
   /v1/contracts/{address}/events:
     $ref: "../paths/contract-events.yaml"
   /v1/contracts/{address}/methods:

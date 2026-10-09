@@ -1,9 +1,11 @@
 package br.com.bbchain.evex.indexer.adapters.inbound.api
 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ApiError
+import br.com.bbchain.evex.indexer.domain.abi.AbiHistoryPlanMismatchException
 import br.com.bbchain.evex.indexer.domain.abi.AbiVersionConflictException
 import br.com.bbchain.evex.indexer.domain.abi.AbiVersionOrderException
 import br.com.bbchain.evex.indexer.domain.abi.BlockscoutAbiNotFoundException
+import br.com.bbchain.evex.indexer.domain.abi.BlockscoutImplementationAbiNotFoundException
 import br.com.bbchain.evex.indexer.domain.abi.InvalidAbiContentException
 import br.com.bbchain.evex.indexer.domain.abi.NoFullInterfaceMatchException
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigNotFoundException
@@ -98,11 +100,29 @@ class ApiExceptionHandler {
             ApiError(code = "ABI_VERSION_CONFLICT", message = ex.message ?: "Conflito de versão de ABI", timestamp = OffsetDateTime.now()),
         )
 
+    /** `POST /v1/contracts/{address}/abi/history-import` com `expectedFingerprint` diferente do plano recalculado (DEC-105). */
+    @ExceptionHandler(AbiHistoryPlanMismatchException::class)
+    fun handleAbiHistoryPlanMismatch(ex: AbiHistoryPlanMismatchException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ApiError(code = "ABI_HISTORY_PLAN_CHANGED", message = ex.message ?: "O plano de importação mudou", timestamp = OffsetDateTime.now()),
+        )
+
     /** `POST /v1/contracts/{address}/abi` com `source=BLOCKSCOUT` sem ABI verificada pro endereço no Blockscout. */
     @ExceptionHandler(BlockscoutAbiNotFoundException::class)
     fun handleBlockscoutAbiNotFound(ex: BlockscoutAbiNotFoundException): ResponseEntity<ApiError> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(
             ApiError(code = "BLOCKSCOUT_ABI_NOT_FOUND", message = ex.message ?: "ABI não encontrada no Blockscout", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `POST /v1/contracts/{address}/abi` com `source=BLOCKSCOUT` de proxy cuja implementação não tem ABI verificada (DEC-105). */
+    @ExceptionHandler(BlockscoutImplementationAbiNotFoundException::class)
+    fun handleBlockscoutImplementationAbiNotFound(ex: BlockscoutImplementationAbiNotFoundException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ApiError(
+                code = "BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND",
+                message = ex.message ?: "Implementação do proxy sem ABI verificada no Blockscout",
+                timestamp = OffsetDateTime.now(),
+            ),
         )
 
     /** `POST /v1/contracts/{address}/abi` com `source=AUTO_DETECTED` sem nenhum match de nível FULL. */

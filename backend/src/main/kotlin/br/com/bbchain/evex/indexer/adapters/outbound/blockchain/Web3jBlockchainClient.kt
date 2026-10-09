@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.type.TypeReference as JacksonTypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.math.BigInteger
 import java.time.Instant
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.web3j.abi.FunctionEncoder
 import org.web3j.abi.FunctionReturnDecoder
@@ -49,6 +50,7 @@ class Web3jBlockchainClient(
     private val properties: BlockchainProperties,
     private val keycloakTokenProvider: KeycloakTokenProvider,
 ) : BlockchainPort {
+    private val logger = LoggerFactory.getLogger(Web3jBlockchainClient::class.java)
 
     // Referência à própria `HttpService` (não só ao `Web3j` derivado dela) — necessária pro complemento
     // Keycloak (E27/DEC-095): `HttpService.headers` é um `HashMap` mutável, lido de novo por
@@ -85,6 +87,7 @@ class Web3jBlockchainClient(
 
     override fun getLogs(fromBlock: Long, toBlock: Long): List<BlockchainLog> {
         refreshAuthHeader()
+        logger.debug("eth_getLogs solicitado: blocos [{}..{}]", fromBlock, toBlock)
         // `address = null`: EthFilter/Filter é `@JsonInclude(NON_NULL)`, então o campo é omitido do
         // corpo JSON-RPC — o nó interpreta ausência de `address` como "qualquer endereço", diferente
         // de uma lista vazia (que alguns clientes podem tratar como "nenhum endereço"). DEC-001/DEC-002:
@@ -98,13 +101,25 @@ class Web3jBlockchainClient(
         if (response.hasError()) {
             val error = response.error
             if (isRangeError(error)) {
+                logger.warn(
+                    "eth_getLogs recusado por range em [{}..{}] (code={}): {}",
+                    fromBlock,
+                    toBlock,
+                    error.code,
+                    error.message,
+                )
                 throw RpcRangeException("eth_getLogs recusado por range (code=${error.code}): ${error.message}")
             }
+            logger.error("eth_getLogs falhou em [{}..{}] (code={}): {}", fromBlock, toBlock, error.code, error.message)
             throw IllegalStateException("eth_getLogs falhou (code=${error.code}): ${error.message}")
         }
-        return response.logs
-            .map { it.get() as Log }
-            .map { it.toBlockchainLog() }
+        val logs = response.logs.map { it.get() as Log }
+        if (logs.isNotEmpty()) {
+            logger.info("eth_getLogs [{}..{}]: {} log(s) recebido(s) da rede", fromBlock, toBlock, logs.size)
+        } else {
+            logger.debug("eth_getLogs [{}..{}]: nenhum log novo", fromBlock, toBlock)
+        }
+        return logs.map { it.toBlockchainLog() }
     }
 
     override fun getBlockTimestamp(blockNumber: Long): Instant {

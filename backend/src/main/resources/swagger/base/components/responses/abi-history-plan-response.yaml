@@ -1,0 +1,5 @@
+description: Plano ou resultado da importação do histórico de versões de ABI.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/abi-history-plan.yaml"

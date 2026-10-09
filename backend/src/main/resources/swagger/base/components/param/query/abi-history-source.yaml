@@ -1,0 +1,6 @@
+name: historySource
+in: query
+required: false
+description: Fonte do histórico de upgrades do proxy. Default `AUTO`.
+schema:
+  $ref: "../../enum/abi-history-source.yaml"

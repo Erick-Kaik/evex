@@ -170,7 +170,8 @@ export function AbiRegisterDialog({ address, open, onClose }: AbiRegisterDialogP
           )}
 
           <TextField
-            label="Bloco inicial de validade (opcional, default 0)"
+            label="Bloco inicial de validade (opcional)"
+            helperText="Em branco: origem Blockscout usa o bloco de criação do contrato; as demais origens usam 0."
             type="number"
             slotProps={{ htmlInput: { min: 0 } }}
             sx={{ maxWidth: 260 }}

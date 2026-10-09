@@ -3,6 +3,11 @@ post:
     - Contracts
   operationId: registerContractAbi
   summary: Cadastra uma nova versão de ABI para um contrato monitorado
+  description: >-
+    Erros: 400 (ABI inválida/ordem de versões), 404 (contrato ou ABI do Blockscout não encontrados),
+    409 (conflito de versão), 422 `BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND` (`source=BLOCKSCOUT` com
+    `implementationAddress` sem ABI verificada no Blockscout), 503 `BLOCKSCOUT_UNAVAILABLE`
+    (`source=BLOCKSCOUT` com Blockscout indisponível ou não configurado).
   parameters:
     - $ref: "../base/components/param/path/contract-address.yaml"
   requestBody:
@@ -13,6 +18,12 @@ post:
     "400":
       $ref: "../base/components/responses/error-response.yaml"
     "404":
+      $ref: "../base/components/responses/error-response.yaml"
+    "409":
+      $ref: "../base/components/responses/error-response.yaml"
+    "422":
+      $ref: "../base/components/responses/error-response.yaml"
+    "503":
       $ref: "../base/components/responses/error-response.yaml"
 get:
   tags:

@@ -33,7 +33,17 @@ class PollTickService(
             val latest = blockchain.currentBlockNumber()
             val lastProcessed = cursor.current()
             val window = PollWindow.next(lastProcessed, latest, properties.confirmations, properties.batchSize)
-                ?: return // em dia, nada confirmado pendente
+            if (window == null) {
+                logger.debug("Tick de ingestão: nada confirmado pendente (cursor={}, latest={})", lastProcessed, latest)
+                return
+            }
+            logger.debug(
+                "Tick de ingestão: janela [{}..{}] calculada (cursor={}, latest={})",
+                window.first,
+                window.last,
+                lastProcessed,
+                latest,
+            )
             processRange(window.first, window.last)
         } catch (ex: Exception) {
             // Qualquer exceção (inclusive RpcRangeException que não coube encolher mais, ou erro de
@@ -57,6 +67,7 @@ class PollTickService(
                 throw ex // não dá pra encolher mais, sobe o erro
             }
             val mid = from + (to - from) / 2
+            logger.warn("Range [{}..{}] recusado pelo nó, dividindo em [{}..{}] e [{}..{}]", from, to, from, mid, mid + 1, to)
             processRange(from, mid)
             processRange(mid + 1, to)
             return

@@ -1,0 +1,55 @@
+type: object
+description: >-
+  Plano (dry-run) ou resultado (apply) da importação do histórico de versões de ABI de um proxy
+  (DEC-105). O servidor sempre recalcula o plano; `fingerprint` permite ao cliente detectar que o
+  plano mudou entre o dry-run e o apply.
+required:
+  - contractAddress
+  - historySource
+  - ingestedUntilBlock
+  - truncated
+  - fingerprint
+  - warnings
+  - items
+properties:
+  contractAddress:
+    type: string
+  historySource:
+    $ref: "../enum/abi-history-source.yaml"
+  ingestedUntilBlock:
+    type: integer
+    format: int64
+    description: Cursor global de indexação (-1 = nada ingerido ainda).
+  truncated:
+    type: boolean
+    description: "`true` se o histórico do Blockscout atingiu o limite de resultados (pode estar incompleto)."
+  fingerprint:
+    type: string
+    description: sha256 de (validFromBlock, implementação, status) de cada item.
+  warnings:
+    type: array
+    items:
+      type: string
+  items:
+    type: array
+    items:
+      $ref: "abi-history-item.yaml"
+  appliedCount:
+    type: integer
+    format: int32
+    nullable: true
+    description: Quantas versões foram criadas (só em resposta de import).
+  redecodeStarted:
+    type: boolean
+    nullable: true
+    description: >-
+      Se o redecode único foi disparado ao final (só em resposta de import). `false` com versões
+      aplicadas = já havia um redecode em curso; dispare `POST /v1/redecode` depois.
+  legacyVersionsToReplace:
+    type: array
+    description: >-
+      Versões legadas que serão apagadas no apply. Preenchido só quando `replaceBlockscoutLegacy=true`
+      E há ao menos um item `APPLY` (sem `APPLY` nada é apagado); vazio caso contrário. Não entra no
+      `fingerprint`.
+    items:
+      $ref: "abi-history-legacy-version.yaml"

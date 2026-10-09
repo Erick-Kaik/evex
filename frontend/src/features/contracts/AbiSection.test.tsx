@@ -12,6 +12,8 @@ const { useContractAbiVersions, navigateMock } = vi.hoisted(() => ({
 
 vi.mock('./useContracts', () => ({
   useContractAbiVersions,
+  useAbiHistoryPlan: () => ({ data: undefined, isFetching: false, isError: false }),
+  useImportAbiHistory: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
   useRegisterAbi: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useInterfaceSuggestions: () => ({ mutate: vi.fn(), isIdle: true, isPending: false, isError: false }),
 }))

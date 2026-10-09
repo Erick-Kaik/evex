@@ -93,12 +93,24 @@ class IngestionBatchProcessor(
             webhookMatchingService.matchAndEnqueue(toSave)
         }
         cursor.advance(to)
-        logger.debug(
-            "Janela [{}..{}] ingerida: {} logs recebidos, {} eventos novos (resto já existia — idempotência).",
-            from,
-            to,
-            logs.size,
-            toSave.size,
-        )
+        if (toSave.isNotEmpty()) {
+            val decodedCount = toSave.count { it.decoded }
+            logger.info(
+                "Janela [{}..{}] ingerida: {} log(s) recebido(s), {} evento(s) novo(s) ({} decodificado(s), {} sem ABI/decoded=false).",
+                from,
+                to,
+                logs.size,
+                toSave.size,
+                decodedCount,
+                toSave.size - decodedCount,
+            )
+        } else {
+            logger.debug(
+                "Janela [{}..{}] ingerida: {} log(s) recebido(s), nenhum evento novo (resto já existia — idempotência).",
+                from,
+                to,
+                logs.size,
+            )
+        }
     }
 }

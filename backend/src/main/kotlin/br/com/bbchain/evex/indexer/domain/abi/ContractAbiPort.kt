@@ -15,4 +15,11 @@ interface ContractAbiPort {
 
     /** Todas as versões de todos os endereços — usado só no warm-up do cache em memória no boot. */
     fun findAll(): List<ContractAbi>
+
+    /**
+     * Apaga as versões "legadas" do [address]: `source = BLOCKSCOUT` com `implementation_address` nulo
+     * (cadastro antigo, ABI do proxy sem composição; DEC-105/D4). NUNCA apaga `UPLOAD_*`/`AUTO_DETECTED`
+     * nem versões com implementação. Retorna quantas linhas foram removidas.
+     */
+    fun deleteLegacyBlockscoutVersions(address: String): Int
 }

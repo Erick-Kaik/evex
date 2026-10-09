@@ -1,0 +1,9 @@
+type: string
+description: >-
+  Fonte do histórico de upgrades de um proxy (DEC-105): `AUTO` (união dos `Upgraded` ingeridos pelo
+  Evex com os logs do Blockscout), `INGESTED_ONLY` (só eventos ingeridos) ou `BLOCKSCOUT_ONLY` (só
+  logs do Blockscout).
+enum:
+  - AUTO
+  - INGESTED_ONLY
+  - BLOCKSCOUT_ONLY

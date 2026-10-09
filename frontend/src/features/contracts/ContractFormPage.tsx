@@ -2,20 +2,14 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import {
-  Alert,
   Box,
   Button,
   Card,
   CardContent,
   Checkbox,
   Chip,
-  Divider,
   FormControlLabel,
   Grid,
-  Link as MuiLink,
-  List,
-  ListItemButton,
-  ListItemText,
   Stack,
   Typography,
 } from '@mui/material'
@@ -33,6 +27,7 @@ import { StatusToggle } from '../../components/StatusToggle'
 import type { StatusOption } from '../../components/StatusToggle'
 import type { PageMode } from '../../components/pageMode'
 import { AbiSection } from './AbiSection'
+import { BlockscoutImportPanel } from './BlockscoutImportPanel'
 import { ContractBalancesSection } from './ContractBalancesSection'
 import { ContractLineageSection } from './ContractLineageSection'
 import {
@@ -40,7 +35,6 @@ import {
   useCreateContract,
   useUpdateContract,
   useUpdateContractStatus,
-  useVerifiedContracts,
 } from './useContracts'
 
 const STATUS_OPTIONS: StatusOption<ContractStatus>[] = [
@@ -81,7 +75,6 @@ export function ContractFormPage({ mode }: ContractFormPageProps) {
 function ContractCreateForm() {
   const navigate = useNavigate()
   const createContract = useCreateContract()
-  const verifiedContracts = useVerifiedContracts()
 
   const [address, setAddress] = useState('')
   const [name, setName] = useState('')
@@ -196,69 +189,12 @@ function ContractCreateForm() {
         </Grid>
 
         <Grid size={{ xs: 12, md: 5 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Importar do Blockscout (opcional)
-          </Typography>
-          <Divider sx={{ mb: 2 }} />
-
-          {verifiedContracts.isPending && (
-            <Typography variant="body2" color="text.secondary">
-              Consultando Blockscout...
-            </Typography>
-          )}
-
-          {verifiedContracts.isError && <ApiErrorAlert error={verifiedContracts.error} />}
-
-          {verifiedContracts.data?.unavailable && (
-            <Alert severity="warning">
-              Discovery via Blockscout não está disponível nesta instância (nenhum Blockscout
-              configurado, ou fora do ar). Preencha o formulário manualmente.
-            </Alert>
-          )}
-
-          {verifiedContracts.data &&
-            !verifiedContracts.data.unavailable &&
-            verifiedContracts.data.contracts.length === 0 && (
-              <Alert severity="info">
-                Nenhum contrato verificado encontrado no Blockscout. Isso é esperado: o discovery só
-                lista contratos <strong>verificados</strong> — não é um erro. Em ambiente local, rode{' '}
-                <MuiLink
-                  href="https://github.com"
-                  onClick={(event) => event.preventDefault()}
-                  sx={{ cursor: 'default', textDecoration: 'none' }}
-                >
-                  <Typography component="code" variant="body2" sx={{ fontFamily: 'monospace' }}>
-                    local-env/blockscout/verify-contracts.ts
-                  </Typography>
-                </MuiLink>{' '}
-                (via <code>npx tsx blockscout/verify-contracts.ts</code> de dentro de{' '}
-                <code>local-env/</code>) para verificar os contratos de teste antes de tentar de novo.
-              </Alert>
-            )}
-
-          {verifiedContracts.data && verifiedContracts.data.contracts.length > 0 && (
-            <List dense disablePadding>
-              {verifiedContracts.data.contracts.map((contract) => (
-                <ListItemButton
-                  key={contract.address}
-                  onClick={() => {
-                    setAddress(contract.address)
-                    setName(contract.name ?? contract.address)
-                  }}
-                  sx={{ border: 1, borderColor: 'divider', borderRadius: 1, mb: 1 }}
-                >
-                  <ListItemText
-                    primary={contract.name ?? contract.address}
-                    secondary={contract.address}
-                    slotProps={{
-                      primary: { sx: { fontWeight: 500 } },
-                      secondary: { sx: { fontFamily: 'monospace', fontSize: '0.75rem' } },
-                    }}
-                  />
-                </ListItemButton>
-              ))}
-            </List>
-          )}
+          <BlockscoutImportPanel
+            onPick={(pickedAddress, pickedName) => {
+              setAddress(pickedAddress)
+              setName(pickedName)
+            }}
+          />
         </Grid>
       </Grid>
     </Box>

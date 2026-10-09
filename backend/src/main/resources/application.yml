@@ -125,6 +125,17 @@ indexer:
     # BlockscoutClient lança BlockscoutUnavailableException (503) direto, sem tentar HTTP. Nenhuma
     # instância Blockscout de teste disponível ainda (mesma classe de pendência de E12/DEC-010).
     base-url: ${EVEX_BLOCKSCOUT_URL:}
+    # DEC-107 — logs `Upgraded` da rede inteira (uma consulta sem filtro de endereço) para detectar
+    # proxies/implementações. Liga/desliga o uso na camada de aplicação.
+    upgrade-logs-enabled: true
+    # TTL do cache em memória do resultado dessa consulta (Duration; 0 desliga o cache).
+    upgrade-logs-cache-ttl: 30s
+    # Teto de páginas (paginação por bloco, 1000 logs/página) antes de marcar o resultado como truncado.
+    upgrade-logs-max-pages: 10
+    # Timeouts do cliente HTTP do Blockscout (valem para TODOS os endpoints). Leitura de 15s (e não 10s)
+    # porque GET /smart-contracts/{address} devolve corpo de ~1 MB que pode demorar em rede lenta.
+    connect-timeout: 2s
+    read-timeout: 15s
   balance:
     # Cron do job noturno de consolidação de saldo (doc §4.4, BalanceSnapshotJob) — default meia-noite,
     # diário. Sem guarda de concorrência própria: o Spring não roda 2 execuções do mesmo método

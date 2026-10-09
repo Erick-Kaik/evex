@@ -39,6 +39,7 @@ Legenda: ✅ Concluído · 🟡 Em andamento · 🔲 A fazer · ⛔ Bloqueado
 | E27 | Infra de deploy no Cloud Run (backend + frontend), conectando numa rede Besu privada real da plataforma EBS — Dockerfiles, scripts de deploy quebrados em micro-funcionalidades, guia; complementos de auth RPC (PAT estático DEC-094, Keycloak dinâmico DEC-095) | infra (`deploy/`) + backend (`adapters/outbound/blockchain`) | sessão principal (infra, ad-hoc) + `blockchain-integration` (complementos de auth) | ✅ Concluído (infra); ⛔ **não executado/validado ao vivo** — usuário vai rodar em outra máquina. Complemento 2 (Keycloak/DEC-095) **✅ revisado pelo `reviewer` em 2026-09-11, aprovado sem achado bloqueante** — ver "Revisão (`reviewer`, 2026-09-11)" na seção E27 |
 | E28 | Detecção de proxy upgradável (UUPS/ERC-1822) por ABI — detector dedicado (`UupsDetector`, desviado de `InterfaceDetector`/E6 por casar seletor de função, não `topic0` de evento, DEC-099) contra o ABI vigente do contrato. Só **detecção/exibição** (`UpgradeabilityBanner` no Explorador de ABI, E24) — nenhuma ação de escrita entra no Evex (não assina/envia transação); "chamar o upgrade de fato" é escopo de um projeto separado (API dinâmica de escrita em contrato, em debate, ver `docs/decisions.md`) | backend+frontend | `blockchain-integration` + `frontend-dev` + `reviewer` | ✅ Concluído — backend (DEC-099) + frontend (DEC-100) + **revisão `reviewer` 2026-09-12 ✅ aprovada, sem achado bloqueante** (1 achado não-bloqueante: fixture de teste do backend rotulada como "ABI real" do `TestUpgradeableVaultV1`/`V2` inclui `upgradeTo(address)`, que não existe no ABI compilado real desses contratos — só `proxiableUUID()`/`upgradeToAndCall(address,bytes)` são reais). Ver "Revisão" na seção E28 |
 | E29 | Modelagem de "contrato redeployado" (não upgrade) — hoje `MonitoredContract.address` é chave natural imutável (E2) e `ContractAbi.contractAddress` sempre herda esse mesmo endereço fixo (E3/DEC-007), premissa pensada só pro caso de proxy upgradável (endereço nunca muda). Não existe hoje um jeito de expressar "isto é um redeploy de verdade — contrato novo, endereço novo, mas mesma linhagem lógica de produto" sem virar 2 `MonitoredContract` desconexos | backend + frontend | `hexagonal-architect` (análise) + `kotlin-backend-dev` (backend) + `frontend-dev` (frontend) + `reviewer` (revisão) | ✅ Concluída — `lineageId` aditivo (DEC-096/DEC-097/DEC-098), revisada pelo `reviewer` em 2026-09-12 sem achado bloqueante |
+| E31 | Discovery do Blockscout ciente de proxy/implementação (DEC-104) + importação do histórico de versões de ABI de UUPS (DEC-105, em análise) | backend (+ frontend numa única passada final) | `hexagonal-architect` + `blockchain-integration` + `kotlin-backend-dev` + `frontend-dev` + `reviewer` | ✅ Concluída — A (backend DEC-104), B (análise), C (backend DEC-105) e D (frontend das duas mudanças) feitas; **revisão `reviewer` 2026-10-08: reprovado na 1ª passada por 1 bloqueante (B1, `replaceBlockscoutLegacy` × fingerprint), corrigido; reconfirmação ✅ APROVADA sem achado bloqueante** (backend 685/685, frontend 135/135, `tsc -b`/lint/build limpos, todos reconfirmados do zero). Pendente fora do escopo: validação ao vivo no QA, fase 2 (slot EIP-1967). Ver seção E31 |
 
 
 A cada etapa concluída, rodar `reviewer` antes de marcar ✅.
@@ -2833,3 +2834,67 @@ faz sentido contra um RPC local.
 Nenhuma mudança de backend/contrato de API nesta etapa.
 
 **Encerramento**: ambiente local derrubado (`down.sh`) ao final da sessão, como de costume.
+
+---
+
+## Ajuste pontual — `bundleEvexApi` quebrando fora do IntelliJ (Node 12 do `apt`) + padrão de logs no caminho de ingestão (2026-09-17, sessão principal)
+
+**Status**: ✅ Concluído.
+
+**Fix 1 — `bundleEvexApi` falhando com `SyntaxError`/depois `Cannot find module 'node:path'`**: `resolveNpx()` (`backend/build.gradle.kts`) pegava o `npx` do Node 12 instalado via `apt` (`/usr/bin/npx`, dependência automática de outros pacotes do sistema) em vez do Node do nvm, porque checava o `PATH` do processo antes do fallback do nvm. Corrigido invertendo a prioridade — e, ao corrigir isso, apareceu um 2º sintoma do mesmo problema (o shebang `env node` do script `npx` do nvm resolvendo de novo pelo `PATH`, sem os diretórios do nvm) — corrigido prependendo o diretório do `npx` resolvido ao `PATH` do processo filho do `Exec`. Ver DEC-102 para o diagnóstico completo.
+
+**Fix 2 — pedido do usuário**: "montar um padrão de logs para todo o sistema, principalmente na parte de pegando eventos da rede, para poder ver o que está chegando sem ter que debugar". Adicionado logging em `Web3jBlockchainClient.getLogs` (sem nenhum logger antes), `PollTickService.tick()`/`processRange` (só logava em erro) e promovida a mensagem final de `IngestionBatchProcessor.ingestRange` pra `INFO` quando chega algo novo (antes era `DEBUG` incondicional, silenciosa no nível padrão). Padrão: `DEBUG` pra ruído de rotina (tick ocioso, request disparado), `INFO`/`WARN` só quando há algo que valha ver no nível padrão (logs recebidos, eventos novos, range recusado pelo nó). Ver DEC-103 para o detalhamento e o racional de não ter sido uma varredura do backend inteiro (escopo focado no caminho de ingestão, que é onde o usuário sentiu a dor).
+
+**Verificação**: `./gradlew compileKotlin compileTestKotlin` limpo; `./gradlew test --tests "*Web3jBlockchainClientTest*" --tests "*PollTickServiceTest*" --tests "*IngestionBatchProcessorTest*"` verde, sem nenhum teste dependente do texto dos logs alterados. `bundleEvexApi` confirmado verde tanto simulando `PATH` restrito (`/usr/bin:/bin`, sem nvm) quanto rodando pela IDE do usuário.
+
+---
+
+## E31 — Discovery ciente de proxy/implementação (DEC-104) e importação de histórico de ABI de UUPS (DEC-105) — 🟡 Em andamento
+
+Ordem fixada pelo usuário (2026-10-08): **A** backend DEC-104 → **B** análise (sem implementar; PARA e espera confirmação) → **C** backend DEC-105 → **D** uma única passada de frontend (`frontend-dev`) cobrindo as duas mudanças + uma única revisão final do `reviewer`. Nenhum frontend/mock é tocado antes da etapa D.
+
+### Etapa A — backend da DEC-104 ✅ (2026-10-08)
+
+- Branch `feat/discovery-proxy-implementation-awareness`. Desenho (`hexagonal-architect`), consulta/persistência (`blockchain-integration`), contrato/service/mapper (`kotlin-backend-dev`).
+- Entregue: `domain/discovery/*` (`ContractKind`, `UpgradedLog`, `ProxyUpgradeLookupPort`, `UpgradedEvent`, `ProxyClassifier`, `DiscoveredContract`), `JpaProxyUpgradeLookupAdapter`, migration `V6` (2 índices parciais), campos opcionais novos em `blockscout-contract.yaml`, `BlockscoutDiscoveryService` (≤ 2 queries em lote), `DiscoveryApiServiceImpl` fina, `docs/guia-de-uso.md` (seção Blockscout).
+- Testes: ver DEC-104. Fase 2 (slot EIP-1967 via `eth_getStorageAt`) **só avaliada**, não implementada.
+- Pendente: frontend (etapa D), validação ao vivo no QA, revisão do `reviewer`.
+
+
+### Etapa B — análise da DEC-105 (importação do histórico de ABI de UUPS) ✅ entregue, aguardando confirmação do usuário (2026-10-08)
+
+- Medido no Blockscout do QA (read-only, 4 proxies EIP-1967): `GET /api/v2/smart-contracts/{proxy}` devolve a ABI do `ERC1967Proxy` (só `Upgraded`) + só a implementação **atual**; implementação não verificada responde 200 sem `abi`; histórico completo de `Upgraded` sai de `/api?module=logs&action=getLogs&topic0=…` (já funciona sem o poller ter alcançado); **só as implementações originais estão verificadas** — as de upgrade não (7 de 11).
+- Desenho do `hexagonal-architect` (portas, 2 endpoints `GET history-plan`/`POST history-import`, `registerAll` transacional + 1 redecode, coluna `implementation_address`) e decisões D1–D8 em aberto: ver relatório da sessão. Nada implementado; sem DEC-105 ainda (próximo ID livre: DEC-105).
+
+### Etapa C — backend da DEC-105 ✅ (2026-10-08)
+
+- Fatia 1 (`blockchain-integration`): `BlockscoutPort.getContract/getUpgradeHistory`, `findUpgradeHistory`, `AbiDiff`, `ProxyAbiComposer` (em `adapters/outbound/abi`), coluna `implementation_address`, `deleteLegacyBlockscoutVersions`, `AbiRegistrationService.registerAll` + `AbiVersionWriter` (1 commit, cache 1×, 1 redecode), correção da origem BLOCKSCOUT para proxy (422 se implementação sem ABI), `BlockscoutAbiResolver`.
+- Fatia 2 (`kotlin-backend-dev`): `AbiHistoryPlanner`, `AbiHistoryImportService`, `GET /v1/contracts/{address}/abi/history-plan`, `POST /v1/contracts/{address}/abi/history-import`, `ContractsApiServiceImpl` fina, handler 409, `docs/guia-de-uso.md` §11.1.
+- Testes: ver DEC-105.
+
+### Etapa D — frontend das duas DECs + revisão final ✅ (2026-10-08)
+
+- `frontend-dev`, uma única passada: `BlockscoutImportPanel` (kind/warnings; 1 proxy preenche o proxy, 2+ exige escolha, nunca bloqueia), `AbiHistoryImportDialog` + `AbiHistoryPlanTable` (dry-run só com o dialog aberto, confirmação, `expectedFingerprint`, 409 refaz o plano, opt-in `replaceBlockscoutLegacy` no cabeçalho), hooks em `useContracts.ts`, mock (`db.ts`/`handlers.ts`), `docs/guia-de-uso.md` §2 e §11.1. Cliente TS regenerado (não versionado).
+- Revisão (`reviewer`): 1ª passada reprovou por **B1** (flag × fingerprint inutilizava o D4); corrigido no backend (query param opcional no `GET history-plan`, `legacyVersionsToReplace`) e no frontend; S2–S5 também corrigidos (S4: sem URL em log/erro). Reconfirmação aprovada. Registrado em errata na DEC-105; N1 (porta `AbiComposerPort`) e N2 (aviso de ingestão incompleta quase inalcançável; só a fase 2 resolve) ficam como sugestões.
+- Totais: backend 685/685, frontend 135/135 (`--maxWorkers=2`; com paralelismo padrão há o flake conhecido de `WebhookForm.test.tsx`, DEC-072/074).
+- **Pendências:** validação ao vivo no QA (dry-run real em um dos 4 UUPS; só as 4 implementações originais estão verificadas no Blockscout); e2e Playwright sem spec nova para o histórico; fase 2 (`eth_getStorageAt`, só avaliada, DEC-104).
+
+### Correção pós-entrega — paginação do discovery (DEC-106, 2026-10-08)
+
+- Reportado pelo usuário no QA: o discovery só trazia 50 contratos (todos `STANDALONE`), sem proxies. Causa: `BlockscoutClient.listVerifiedContracts` lia só a 1ª página (o QA tem 74 em 2 páginas; 9 `ERC1967Proxy` na 2ª). Corrigido com paginação via `next_page_params` (teto, anti-laço, falha explícita). Backend 691/691.
+- Em aberto (decisão do usuário): o `kind` depende dos `Upgraded` já ingeridos; complemento via `getLogs` do Blockscout no discovery fica como fase 2.
+
+### Complemento do discovery com `getLogs` do Blockscout (DEC-107, 2026-10-08) — ✅ implementado e revisado (aprovado com ressalvas)
+
+- Pedido do usuário após a DEC-106: classificar `PROXY`/`IMPLEMENTATION` mesmo com o poller atrás. 1 chamada `getLogs` por `topic0` (sem endereço, paginada por bloco, cache 30 s, timeouts) reconciliada com os eventos ingeridos; flag `indexer.blockscout.upgrade-logs-enabled`; degradação para só-ingeridos com aviso. Sem mudança de contrato nem de frontend. Backend 725/725.
+- Revisão `reviewer` 2026-10-08: aprovada com ressalvas, sem achado bloqueante; N1 (redirects no `HttpClient` dos timeouts) corrigido; backend 725/725. Pendências: TD do `@Value("#{true}")` no `BlockscoutClient` (+ teste dos timeouts do bean de produção); sugestões S1–S4; validação ao vivo no QA (reiniciar o backend e conferir o discovery).
+
+### Nome derivado para itens PROXY (DEC-108, 2026-10-08) — ✅ implementado
+
+- Pedido do usuário no QA: proxies verificados chegavam todos como `ERC1967Proxy`; agora `"<Nome da implementação> (Proxy)"` (implementação mais recente do histórico presente na lista de verificados; mantém o nome original se nenhuma estiver listada). Só backend; backend 737/737. Sem revisão separada do `reviewer` (ajuste pequeno e puro, coberto por testes unitários).
+
+### `validFromBlock` pelo bloco de criação no cadastro BLOCKSCOUT (DEC-109, 2026-10-08) — ✅ implementado
+
+- Pedido do usuário: o cadastro de ABI por Blockscout vinha sempre de bloco 0. Agora, sem `validFromBlock` e com `source=BLOCKSCOUT`, usa o bloco de criação do contrato no Blockscout (fallback 0 sem derrubar o cadastro); valor explícito sempre respeitado; regra saiu do `ContractsApiServiceImpl`; removido `default: 0` do yaml; rótulo do formulário ajustado. Backend 752/752. Sem revisão separada do `reviewer` (ajuste pequeno coberto por 15 testes).
+- Limite: proxy usa o bloco de criação do proxy (aproximação); faixas por upgrade = import de histórico (DEC-105).
+

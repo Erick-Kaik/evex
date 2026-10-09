@@ -11,3 +11,38 @@ properties:
     type: string
     nullable: true
     description: Nome do contrato, conforme reportado pelo Blockscout (quando disponível).
+  kind:
+    type: string
+    enum:
+      - PROXY
+      - IMPLEMENTATION
+      - STANDALONE
+    description: >
+      Classificação estrutural (DEC-104) baseada nos eventos `Upgraded(address)` já ingeridos.
+      PROXY: o endereço emitiu `Upgraded`; IMPLEMENTATION: algum proxy aponta para ele (cadastre o proxy,
+      não a implementação); STANDALONE: nenhum proxy observado nos eventos ingeridos — NÃO prova a
+      ausência de proxy, depende da cobertura da ingestão. O consumidor deve tratar qualquer valor
+      desconhecido como STANDALONE.
+  proxyAddresses:
+    type: array
+    items:
+      type: string
+      pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Proxies vigentes que apontam para este endereço (quando kind=IMPLEMENTATION), em lowercase.
+  implementationAddress:
+    type: string
+    nullable: true
+    pattern: "^0x[a-fA-F0-9]{40}$"
+    description: Implementação atual conforme o último `Upgraded` observado (quando kind=PROXY), em lowercase.
+  lastUpgradeBlock:
+    type: integer
+    format: int64
+    nullable: true
+    description: >
+      Bloco do último `Upgraded` observado. Inclui o `Upgraded` emitido no deploy do proxy, portanto
+      não significa necessariamente um upgrade posterior ao deploy.
+  warnings:
+    type: array
+    items:
+      type: string
+    description: Avisos informativos em PT-BR; não bloqueiam o cadastro.
