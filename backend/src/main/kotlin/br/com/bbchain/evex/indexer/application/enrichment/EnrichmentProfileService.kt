@@ -1,6 +1,9 @@
 package br.com.bbchain.evex.indexer.application.enrichment
 
 import br.com.bbchain.evex.indexer.application.abi.ContractMethodCatalogService
+import br.com.bbchain.evex.indexer.domain.abi.AbiMethodResolver
+import br.com.bbchain.evex.indexer.domain.abi.MethodResolution
+import br.com.bbchain.evex.indexer.domain.abi.ParsedAbiMethod
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
@@ -61,7 +64,7 @@ class EnrichmentProfileService(
      * pra cobrir todo `EnrichmentOutputMapping.outputIndex` referenciado. Um método pode aparecer mais
      * de uma vez no catálogo (faixas de validade de ABI distintas, DEC-007) — usa a maior contagem de
      * saídas entre as versões encontradas, pra não rejeitar um `outputIndex` que só existe numa versão
-     * mais recente.
+     * mais recente. Método escolhido por **nome + aridade** (`args.size`) — ver [AbiMethodResolver].
      */
     private fun validateCalls(calls: List<EnrichmentCall>) {
         calls.forEach { call ->
@@ -71,13 +74,41 @@ class EnrichmentProfileService(
             } catch (ex: ContractNotFoundException) {
                 throw InvalidEnrichmentProfileException("targetContractAddress não cadastrado: ${call.targetContractAddress}")
             }
-            val matching = methods.filter { it.name == call.methodName }
-            if (matching.isEmpty()) {
+            // Resolução por nome + aridade (mesma regra do resolver de runtime). Avaliada por VERSÃO de ABI
+            // (faixa de blocos, DEC-007): ambiguidade em qualquer versão já é erro (falharia em runtime
+            // para aquela faixa); método/aridade ausente só é erro se NENHUMA versão o resolver — um
+            // método introduzido por um upgrade de proxy continua válido.
+            val perVersion = methods
+                .groupBy { it.validFromBlock to it.validToBlock }
+                .values
+                .map { version ->
+                    AbiMethodResolver.resolve(
+                        version.map { ParsedAbiMethod(it.name, it.inputs, it.outputs) },
+                        call.methodName,
+                        call.args.size,
+                    )
+                }
+            perVersion.filterIsInstance<MethodResolution.Ambiguous>().firstOrNull()?.let {
+                throw InvalidEnrichmentProfileException(
+                    "método '${call.methodName}' é ambíguo para ${call.args.size} argumento(s) na ABI de " +
+                        "${call.targetContractAddress}: ${it.candidates.joinToString()} — informe a assinatura " +
+                        "canônica (ex.: '${it.candidates.first()}')",
+                )
+            }
+            val found = perVersion.filterIsInstance<MethodResolution.Found>().map { it.method }
+            if (found.isEmpty()) {
+                val arityMismatch = perVersion.filterIsInstance<MethodResolution.ArityMismatch>().firstOrNull()
+                if (arityMismatch != null) {
+                    throw InvalidEnrichmentProfileException(
+                        "método '${call.methodName}' não tem sobrecarga com ${call.args.size} argumento(s) na ABI de " +
+                            "${call.targetContractAddress} — disponíveis: ${arityMismatch.availableSignatures.joinToString()}",
+                    )
+                }
                 throw InvalidEnrichmentProfileException(
                     "método '${call.methodName}' não encontrado (ou não é view/pure) na ABI de ${call.targetContractAddress}",
                 )
             }
-            val maxOutputs = matching.maxOf { it.outputs.size }
+            val maxOutputs = found.maxOf { it.outputs.size }
             call.outputs.forEach { mapping ->
                 if (mapping.outputIndex < 0 || mapping.outputIndex >= maxOutputs) {
                     throw InvalidEnrichmentProfileException(

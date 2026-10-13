@@ -41,6 +41,7 @@ import {
   helpers,
   interfaceSuggestions,
 } from './db'
+import { webhookResendHandlers } from './webhookResendHandlers'
 
 /** Contratos cujo histórico já foi "importado" nesta sessão do mock (vira SKIP_ALREADY_IMPORTED). */
 const historyImported = new Set<string>()
@@ -210,6 +211,9 @@ function validateContributors(contributors: ModelContributor[]): string | undefi
 }
 
 export const handlers = [
+  // Pré-visualização/reenvio de webhooks, matching-events, blocks/by-date e capabilities (E33).
+  ...webhookResendHandlers,
+
   // ---------------- Contratos ----------------
 
   http.get('*/v1/contracts', async ({ request }) => {

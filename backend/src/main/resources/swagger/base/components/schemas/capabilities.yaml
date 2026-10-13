@@ -1,0 +1,28 @@
+type: object
+description: Capacidades/limites habilitados nesta instância — a UI usa para decidir o que exibir.
+required:
+  - webhookUrlOverrideEnabled
+  - webhookResendMaxEventsPerRequest
+  - webhookPreviewMaxEvents
+properties:
+  webhookUrlOverrideEnabled:
+    type: boolean
+    description: "`true` se `overrideUrl` em `POST /v1/webhooks/{id}/resend` está habilitado (desligado por padrão)."
+  webhookResendMaxEventsPerRequest:
+    type: integer
+    format: int32
+  webhookPreviewMaxEvents:
+    type: integer
+    format: int32
+  webhookResendMaxPendingResends:
+    type: integer
+    format: int32
+    description: Teto de reenvios `PENDING` na fila (excedente = 429 `RESEND_QUEUE_FULL`). Opcional (aditivo).
+  webhookResendMaxPerMinutePerWebhook:
+    type: integer
+    format: int32
+    description: Máx. de reenvios por minuto por webhook (excedente = 429 `RATE_LIMITED`). Opcional (aditivo).
+  webhookMaxRequestsPerMinutePerInstance:
+    type: integer
+    format: int32
+    description: Máx. de requisições de preview + reenvio por minuto na instância (excedente = 429 `RATE_LIMITED`). Opcional (aditivo).

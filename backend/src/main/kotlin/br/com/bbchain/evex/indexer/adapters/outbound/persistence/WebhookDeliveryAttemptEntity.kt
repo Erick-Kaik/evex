@@ -10,6 +10,8 @@ import jakarta.persistence.Index
 import jakarta.persistence.Table
 import java.time.Instant
 import java.util.UUID
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import org.springframework.data.domain.Persistable
 
 /**
@@ -38,6 +40,14 @@ class WebhookDeliveryAttemptEntity(
     val responseBody: String? = null,
     @Column(name = "error_message", columnDefinition = "text")
     val errorMessage: String? = null,
+    /** E33: lista de resultados por chamada de enriquecimento (JSON já serializado, ver [JpaWebhookDeliveryAdapter]). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "enrichment_results")
+    val enrichmentResults: String? = null,
+    @Column(name = "enrichment_block_used", length = 32)
+    val enrichmentBlockUsed: String? = null,
+    @Column(name = "sent_payload", columnDefinition = "text")
+    val sentPayload: String? = null,
 ) : Persistable<UUID> {
     override fun getId(): UUID = id
 

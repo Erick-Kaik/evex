@@ -1,0 +1,24 @@
+type: object
+description: >-
+  Em qual bloco as chamadas de enriquecimento (`eth_call`) rodam. `mode` é um código EXTENSÍVEL
+  (string, não enum fechado) — o consumidor deve tratar valor desconhecido como "não aplicável".
+  Omitido = `EVENT_BLOCK` (comportamento do disparo normal).
+properties:
+  mode:
+    type: string
+    default: EVENT_BLOCK
+    description: >-
+      Valores iniciais: `EVENT_BLOCK` (bloco em que o evento ocorreu; exige nó com estado histórico),
+      `LATEST` (bloco mais recente), `BLOCK_NUMBER` (exige `blockNumber`), `BLOCK_AT_DATE` (exige
+      `blockDate`; resolvido a número uma única vez no servidor). Modo desconhecido = 400
+      `INVALID_ENRICHMENT_BLOCK_MODE`.
+  blockNumber:
+    type: integer
+    format: int64
+    nullable: true
+    description: Número do bloco — usado quando `mode = BLOCK_NUMBER`.
+  blockDate:
+    type: string
+    format: date-time
+    nullable: true
+    description: Data/hora a converter em bloco — usada quando `mode = BLOCK_AT_DATE`.

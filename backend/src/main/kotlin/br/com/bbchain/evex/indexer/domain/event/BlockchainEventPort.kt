@@ -3,6 +3,7 @@ package br.com.bbchain.evex.indexer.domain.event
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
+import java.util.UUID
 
 /**
  * Porta de saída para persistência/consulta de eventos indexados. Implementação JPA/Postgres em
@@ -70,4 +71,24 @@ interface BlockchainEventPort {
      * se o poller ainda não alcançou esse endereço.
      */
     fun findDistinctTopic0s(contractAddress: String): Set<String>
+
+    /** Evento por id (qualquer estado, `decoded` ou não) — preview/reenvio. */
+    fun findById(id: UUID): BlockchainEvent?
+
+    /** Eventos pelos [ids] existentes (ids inexistentes ficam de fora; ordem não garantida). */
+    fun findAllByIds(ids: Collection<UUID>): List<BlockchainEvent>
+
+    /**
+     * Varredura por cursor, da mais recente para a mais antiga (`blockNumber DESC, logIndex DESC`), de
+     * eventos `decoded = true` que casam com o pré-filtro [filter]. Só traz eventos ESTRITAMENTE antes de
+     * [after] (ausente = a partir do mais recente). Leitura pura — os `filters` do webhook são aplicados
+     * em memória por quem chama (E33, matching-events).
+     */
+    fun scanDecoded(filter: EventScanFilter, after: EventCursor?, limit: Int): List<BlockchainEvent>
+
+    /**
+     * Quantos eventos `decoded = true` do pré-filtro [filter] têm `blockTimestamp` nulo — ignorados por
+     * um filtro de data (vira aviso); a faixa de data de [filter] é desconsiderada aqui, só a de bloco vale.
+     */
+    fun countDecodedWithoutTimestamp(filter: EventScanFilter): Long
 }

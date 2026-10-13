@@ -86,4 +86,58 @@ class WebhookHttpClientTest {
         assertThat(result.httpStatus).isNull()
         assertThat(result.errorMessage).isNotNull()
     }
+
+    @Test
+    fun `a 3xx with Location is NOT followed (E33 SSRF) - the target of the redirect receives nothing`() {
+        val target = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        val hits = java.util.concurrent.atomic.AtomicInteger()
+        target.createContext("/") { exchange ->
+            hits.incrementAndGet()
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        target.start()
+        try {
+            val redirecting = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+            redirecting.createContext("/hook") { exchange ->
+                exchange.responseHeaders.add("Location", "http://localhost:${target.address.port}/internal")
+                exchange.sendResponseHeaders(302, -1)
+                exchange.close()
+            }
+            redirecting.start()
+            server = redirecting
+
+            val result = client().send("http://localhost:${redirecting.address.port}/hook", "{}")
+
+            assertThat(result.success).isFalse()
+            assertThat(result.httpStatus).isEqualTo(302)
+            assertThat(hits.get()).isZero()
+        } finally {
+            target.stop(0)
+        }
+    }
+
+    @Test
+    fun `transport failures carry a generic errorCode - connection refused is CONNECT_FAILED, invalid url is INVALID_URL`() {
+        assertThat(client().send("http://localhost:1/hook", "{}").errorCode).isEqualTo("CONNECT_FAILED")
+        assertThat(client().send("not-a-url", "{}").errorCode).isEqualTo("INVALID_URL")
+    }
+
+    @Test
+    fun `a read timeout is classified as TIMEOUT`() {
+        val httpServer = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        httpServer.createContext("/hook") { exchange ->
+            Thread.sleep(1500)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        httpServer.start()
+        server = httpServer
+
+        val slow = WebhookHttpClient(RestClient.builder(), WebhookProperties().apply { requestTimeoutMs = 300 })
+        val result = slow.send("http://localhost:${httpServer.address.port}/hook", "{}")
+
+        assertThat(result.success).isFalse()
+        assertThat(result.errorCode).isEqualTo("TIMEOUT")
+    }
 }

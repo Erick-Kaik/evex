@@ -68,12 +68,25 @@ class WebhookHttpClient(
             )
         } catch (ex: RestClientException) {
             // Falha antes de qualquer resposta HTTP (timeout, conexão recusada, DNS, etc.).
-            WebhookAttemptResult(success = false, httpStatus = null, responseBody = null, errorMessage = ex.message)
+            WebhookAttemptResult(success = false, httpStatus = null, responseBody = null, errorMessage = ex.message, errorCode = transportErrorCode(ex))
         } catch (ex: IllegalArgumentException) {
             // URL sintaticamente aceita no cadastro (java.net.URI relativa) mas inválida pra uma
             // requisição HTTP de verdade (sem host/esquema) - RestClient.uri(...)/SimpleClientHttpRequestFactory
             // lançam IllegalArgumentException (ou o subtipo InvalidUrlException) direto, sem passar
             // por RestClientException. Rede de segurança - o caminho normal é barrado antes, no cadastro.
-            WebhookAttemptResult(success = false, httpStatus = null, responseBody = null, errorMessage = ex.message)
+            WebhookAttemptResult(success = false, httpStatus = null, responseBody = null, errorMessage = ex.message, errorCode = "INVALID_URL")
         }
+
+    /** Redirects (3xx) NÃO são seguidos: `SimpleClientHttpRequestFactory` só segue em GET; o POST devolve o 3xx como está. */
+    private fun transportErrorCode(ex: Throwable): String {
+        var cause: Throwable? = ex
+        while (cause != null) {
+            when (cause) {
+                is java.net.SocketTimeoutException -> return "TIMEOUT"
+                is java.net.ConnectException -> return "CONNECT_FAILED"
+            }
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        return "UNREACHABLE"
+    }
 }

@@ -1,25 +1,16 @@
-import { Fragment, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import {
   Box,
   Button,
-  Chip,
-  Collapse,
-  Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Tooltip,
   Typography,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import EditIcon from '@mui/icons-material/Edit'
+import PreviewIcon from '@mui/icons-material/Visibility'
+import SendIcon from '@mui/icons-material/Send'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
-import { Pagination } from '../../components/Pagination'
 import { StatusToggle } from '../../components/StatusToggle'
 import type { StatusOption } from '../../components/StatusToggle'
 import type { PageMode } from '../../components/pageMode'
@@ -28,12 +19,11 @@ import {
   useUpdateWebhook,
   useUpdateWebhookStatus,
   useWebhook,
-  useWebhookDeliveries,
 } from './useWebhooks'
+import { WebhookDeliveriesSection } from './WebhookDeliveriesSection'
+import { WebhookResendDialog } from './WebhookResendDialog'
 import { WebhookForm } from './WebhookForm'
 import type { WebhookFormValues } from './WebhookForm'
-
-const PAGE_SIZE = 20
 
 const ACTIVE_OPTIONS: StatusOption<boolean>[] = [
   { value: true, label: 'Ativo', color: 'success' },
@@ -106,9 +96,12 @@ function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; 
   const updateWebhook = useUpdateWebhook(id)
   const updateStatus = useUpdateWebhookStatus(id)
 
-  const [page, setPage] = useState(0)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const deliveries = useWebhookDeliveries(id, page, PAGE_SIZE)
+  const [dialogIntent, setDialogIntent] = useState<'preview' | 'resend' | null>(null)
+
+  function handleViewDeliveries() {
+    setDialogIntent(null)
+    document.getElementById('webhook-deliveries')?.scrollIntoView?.({ behavior: 'smooth' })
+  }
 
   function handleSubmit(payload: WebhookFormValues) {
     updateWebhook.mutate(payload, {
@@ -148,6 +141,16 @@ function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; 
                 onChange={(active) => updateStatus.mutate({ active })}
               />
               {mode === 'view' && (
+                <>
+                  <Button variant="outlined" size="small" startIcon={<PreviewIcon />} onClick={() => setDialogIntent('preview')}>
+                    Pré-visualizar
+                  </Button>
+                  <Button variant="outlined" size="small" startIcon={<SendIcon />} onClick={() => setDialogIntent('resend')}>
+                    Reenviar
+                  </Button>
+                </>
+              )}
+              {mode === 'view' && (
                 <Button
                   variant="outlined"
                   size="small"
@@ -174,113 +177,16 @@ function ViewEditForm({ id, mode, navigateBack }: { id: string; mode: PageMode; 
             />
           </Box>
 
-          <Box sx={{ mt: 5 }}>
-            <Typography variant="h6">Entregas</Typography>
+          <WebhookDeliveriesSection webhookId={id} />
 
-            {deliveries.isPending && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Carregando...
-              </Typography>
-            )}
-            {deliveries.isError && <ApiErrorAlert error={deliveries.error} />}
-
-            {deliveries.data && deliveries.data.content.length === 0 && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Nenhuma entrega registrada ainda.
-              </Typography>
-            )}
-
-            {deliveries.data && deliveries.data.content.length > 0 && (
-              <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Status</TableCell>
-                      <TableCell>Tentativas</TableCell>
-                      <TableCell>Próxima tentativa</TableCell>
-                      <TableCell />
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {deliveries.data.content.map((delivery) => (
-                      <Fragment key={delivery.id}>
-                        <TableRow hover>
-                          <TableCell>{delivery.status}</TableCell>
-                          <TableCell>{delivery.attemptCount}</TableCell>
-                          <TableCell>
-                            {delivery.nextAttemptAt ? new Date(delivery.nextAttemptAt).toLocaleString('pt-BR') : '—'}
-                          </TableCell>
-                          <TableCell align="right">
-                            <Button size="small" onClick={() => setExpandedId(expandedId === delivery.id ? null : delivery.id)}>
-                              {expandedId === delivery.id ? 'ocultar' : 'ver tentativas'}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell colSpan={4} sx={{ p: 0, borderBottom: expandedId === delivery.id ? undefined : 'none' }}>
-                            <Collapse in={expandedId === delivery.id} unmountOnExit>
-                              <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
-                                {delivery.attempts.length === 0 && (
-                                  <Typography variant="body2" color="text.secondary">
-                                    Nenhuma tentativa registrada ainda.
-                                  </Typography>
-                                )}
-                                {delivery.attempts.length > 0 && (
-                                  <Table size="small">
-                                    <TableHead>
-                                      <TableRow>
-                                        <TableCell>#</TableCell>
-                                        <TableCell>Quando</TableCell>
-                                        <TableCell>Sucesso</TableCell>
-                                        <TableCell>HTTP</TableCell>
-                                        <TableCell>Resposta</TableCell>
-                                        <TableCell>Erro</TableCell>
-                                      </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                      {delivery.attempts.map((attempt) => (
-                                        <TableRow key={attempt.id}>
-                                          <TableCell>{attempt.attemptNumber}</TableCell>
-                                          <TableCell>{new Date(attempt.attemptedAt).toLocaleString('pt-BR')}</TableCell>
-                                          <TableCell>
-                                            <Chip size="small" label={attempt.success ? 'sim' : 'não'} color={attempt.success ? 'success' : 'error'} />
-                                          </TableCell>
-                                          <TableCell>{attempt.httpStatus ?? '—'}</TableCell>
-                                          <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            <Tooltip title={attempt.responseBody ?? ''}>
-                                              <span>{attempt.responseBody ?? '—'}</span>
-                                            </Tooltip>
-                                          </TableCell>
-                                          <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            <Tooltip title={attempt.errorMessage ?? ''}>
-                                              <span>{attempt.errorMessage ?? '—'}</span>
-                                            </Tooltip>
-                                          </TableCell>
-                                        </TableRow>
-                                      ))}
-                                    </TableBody>
-                                  </Table>
-                                )}
-                              </Box>
-                            </Collapse>
-                          </TableCell>
-                        </TableRow>
-                      </Fragment>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-
-            {deliveries.data && (
-              <Pagination
-                page={deliveries.data.page}
-                totalPages={deliveries.data.totalPages}
-                totalElements={deliveries.data.totalElements}
-                onPageChange={setPage}
-              />
-            )}
-          </Box>
+          <WebhookResendDialog
+            webhookId={id}
+            webhookActive={webhook.data.active}
+            open={dialogIntent !== null}
+            intent={dialogIntent ?? 'preview'}
+            onClose={() => setDialogIntent(null)}
+            onViewDeliveries={handleViewDeliveries}
+          />
         </>
       )}
     </Box>

@@ -1,0 +1,28 @@
+type: object
+description: >-
+  Diagnóstico comparativo (só no preview com `diagnose = true`) de uma chamada que falhou. O `verdict` é
+  INDÍCIO, nunca causa afirmada. `verdict` é string extensível; iniciais: `FAILS_EVERYWHERE`,
+  `FAILS_ONLY_AT_BLOCK`, `OK_AT_LATEST_ONLY`, `INCONCLUSIVE`.
+required:
+  - targetContractAddress
+  - methodName
+  - verdict
+properties:
+  profileId:
+    type: string
+    format: uuid
+    nullable: true
+  targetContractAddress:
+    type: string
+  methodName:
+    type: string
+  verdict:
+    type: string
+  atLatest:
+    $ref: "./enrichment-diagnosis-attempt.yaml"
+  atEventBlock:
+    $ref: "./enrichment-diagnosis-attempt.yaml"
+  probe:
+    type: string
+    nullable: true
+    description: "Sonda de estado do bloco (indício): ex. `PROBE_STATE_OK`, `PROBE_STATE_UNAVAILABLE`."

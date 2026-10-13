@@ -1,0 +1,27 @@
+post:
+  tags:
+    - Webhooks
+  operationId: resendWebhook
+  summary: Reenvia eventos já indexados para um webhook (cria novas entregas PENDING)
+  description: >-
+    Cria uma nova entrega (`origin = RESEND`) por evento que casa, processada pelo mesmo job de dispatch
+    (retry/backoff/log de tentativas). Não toca eventos, saldos nem modelos. Webhook pausado = 409
+    `WEBHOOK_INACTIVE`. Erros 400: `TOO_MANY_EVENTS`, `INVALID_ENRICHMENT_BLOCK_MODE`,
+    `URL_OVERRIDE_DISABLED`, `URL_NOT_ALLOWED`. 429: `RATE_LIMITED`/`RESEND_QUEUE_FULL` com `Retry-After`.
+  parameters:
+    - $ref: "../base/components/param/path/webhook-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/webhook-resend-request.yaml"
+  responses:
+    "202":
+      $ref: "../base/components/responses/webhook-resend-result-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+    "409":
+      $ref: "../base/components/responses/error-response.yaml"
+    "422":
+      $ref: "../base/components/responses/error-response.yaml"
+    "429":
+      $ref: "../base/components/responses/rate-limited-response.yaml"

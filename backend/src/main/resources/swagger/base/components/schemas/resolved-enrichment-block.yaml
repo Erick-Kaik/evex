@@ -1,0 +1,29 @@
+type: object
+description: Bloco de enriquecimento efetivamente resolvido para um preview/reenvio.
+required:
+  - mode
+properties:
+  mode:
+    type: string
+    description: Modo aplicado (string extensível; ver `EnrichmentBlockSpec`).
+  blockNumber:
+    type: integer
+    format: int64
+    nullable: true
+    description: "Bloco fixo resolvido; `null` em `EVENT_BLOCK` (varia por evento) e `LATEST`."
+  resolvedFromDate:
+    type: string
+    format: date-time
+    nullable: true
+  source:
+    type: string
+    nullable: true
+    description: "Origem da conversão data -> bloco (string extensível: `INGESTED`, `RPC`, `COMBINED`); só em `BLOCK_AT_DATE`."
+  approximate:
+    type: boolean
+    nullable: true
+    description: "`true` se a conversão data -> bloco foi aproximada."
+  warnings:
+    type: array
+    items:
+      type: string

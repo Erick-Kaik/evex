@@ -1,0 +1,35 @@
+type: object
+description: >-
+  Página (por cursor) de eventos que CASAM com a config de um webhook — filtros do webhook aplicados em
+  memória sobre uma janela pré-filtrada por SQL, com varredura limitada (`scanTruncated`).
+required:
+  - content
+  - scanned
+  - scanTruncated
+properties:
+  content:
+    type: array
+    items:
+      $ref: "./event.yaml"
+  nextCursor:
+    type: string
+    nullable: true
+    description: "Cursor opaco da próxima página (`block:logIndex`); `null` = fim. Continua válido mesmo com `scanTruncated`."
+  scanned:
+    type: integer
+    format: int32
+    description: Quantos eventos foram examinados para montar esta página.
+  scanTruncated:
+    type: boolean
+    description: "`true` quando a varredura atingiu o limite (`max-scan`) sem completar `size`."
+  filtersApplied:
+    type: boolean
+    nullable: true
+    description: "`true` quando o webhook tem filtros avaliados em memória."
+  warnings:
+    type: array
+    description: >-
+      Códigos/avisos extensíveis (ex.: `DATE_FILTER_EXCLUDES_EVENTS_WITHOUT_TIMESTAMP:<n>` = quantidade de
+      eventos sem `blockTimestamp` ignorados no filtro por data).
+    items:
+      type: string

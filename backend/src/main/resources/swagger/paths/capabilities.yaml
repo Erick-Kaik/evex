@@ -1,0 +1,8 @@
+get:
+  tags:
+    - Capabilities
+  operationId: getCapabilities
+  summary: Capacidades e limites habilitados nesta instância
+  responses:
+    "200":
+      $ref: "../base/components/responses/capabilities-response.yaml"

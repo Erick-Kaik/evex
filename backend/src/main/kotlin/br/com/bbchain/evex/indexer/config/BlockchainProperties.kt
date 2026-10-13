@@ -15,6 +15,20 @@ class BlockchainProperties {
     /** URL do `HttpService` do Web3j — sem BBChain Keeper (regra não-negociável). */
     var rpcUrl: String = "http://localhost:8545"
 
+    /**
+     * Timeout de conexão TCP/TLS com o nó (`indexer.blockchain.connect-timeout`). O default do OkHttp
+     * 4.12 usado pelo `HttpService` do Web3j era 10s (conferido no source do jar); aqui o default é
+     * mais conservador (5s) e agora configurável.
+     */
+    var connectTimeout: Duration = Duration.ofSeconds(5)
+
+    /**
+     * Timeout de leitura da resposta (`indexer.blockchain.read-timeout`). Default 15s (OkHttp: 10s) —
+     * folga para `eth_getLogs` de janelas grandes e `eth_call` em bloco histórico. Vale para todas as
+     * chamadas HTTP ao nó.
+     */
+    var readTimeout: Duration = Duration.ofSeconds(15)
+
     /** Quantos blocos de "cauda" ficam de fora do `safeHead` por segurança de reorg (DEC-005). */
     var confirmations: Long = 0
 

@@ -1,6 +1,12 @@
 package br.com.bbchain.evex.indexer.application.webhook
 
 import br.com.bbchain.evex.indexer.config.WebhookProperties
+import br.com.bbchain.evex.indexer.config.WebhookResendProperties
+import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentBlockSpec
+import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentResolution
+import br.com.bbchain.evex.indexer.domain.webhook.HostResolverPort
+import br.com.bbchain.evex.indexer.domain.webhook.OutboundUrlPolicy
+import java.net.InetAddress
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookAttemptResult
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfig
@@ -29,10 +35,18 @@ class WebhookDispatchJobTest {
     // regressão zero) — testes específicos de enriquecimento sobrescrevem este stub.
     private val enrichmentResolver: WebhookEnrichmentResolver = mockk()
 
-    private val job = WebhookDispatchJob(deliveries, webhookConfigs, dispatchPort, recorder, properties, enrichmentResolver)
+    private val urlPolicy = OutboundUrlPolicy(object : HostResolverPort {
+        override fun resolve(host: String): List<InetAddress> = emptyList()
+    })
+    private val job = WebhookDispatchJob(deliveries, webhookConfigs, dispatchPort, recorder, properties, enrichmentResolver, urlPolicy, WebhookResendProperties())
+
+    private fun resolution(payload: String) = EnrichmentResolution(payload, emptyList(), emptyMap(), emptyList(), EnrichmentBlockSpec.EventBlock)
 
     init {
-        every { enrichmentResolver.resolve(any(), any()) } answers { firstArg<WebhookDelivery>().payload }
+        // E33: o job usa `resolveDetailed` (relatório por chamada); sem perfis devolve o payload sem alteração.
+        every { enrichmentResolver.resolveDetailed(any<WebhookDelivery>(), any(), any(), any(), any()) } answers {
+            resolution(firstArg<WebhookDelivery>().payload)
+        }
     }
 
     private fun config(url: String = "https://example.test/hook") = WebhookConfig(
@@ -84,7 +98,7 @@ class WebhookDispatchJobTest {
 
         job.dispatch()
 
-        verify(exactly = 1) { recorder.recordAttempt(due, result) }
+        verify(exactly = 1) { recorder.recordAttempt(due, result, null, null, due.payload) }
     }
 
     @Test
@@ -96,7 +110,7 @@ class WebhookDispatchJobTest {
         job.dispatch()
 
         verify(exactly = 0) { dispatchPort.send(any(), any()) }
-        verify(exactly = 0) { recorder.recordAttempt(any(), any()) }
+        verify(exactly = 0) { recorder.recordAttempt(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -106,7 +120,7 @@ class WebhookDispatchJobTest {
         job.dispatch()
 
         verify(exactly = 0) { dispatchPort.send(any(), any()) }
-        verify(exactly = 0) { recorder.recordAttempt(any(), any()) }
+        verify(exactly = 0) { recorder.recordAttempt(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -125,13 +139,13 @@ class WebhookDispatchJobTest {
         every { dispatchPort.send(any(), any()) } returns result
         // simula uma falha futura em recorder.recordAttempt (ex.: erro ao gravar no banco) só pra
         // deliveryB — nunca deve abortar o processamento de deliveryC, que vem depois no mesmo lote.
-        every { recorder.recordAttempt(deliveryB, result) } throws RuntimeException("boom")
+        every { recorder.recordAttempt(deliveryB, result, null, null, deliveryB.payload) } throws RuntimeException("boom")
 
         job.dispatch()
 
-        verify(exactly = 1) { recorder.recordAttempt(deliveryA, result) }
-        verify(exactly = 1) { recorder.recordAttempt(deliveryB, result) }
-        verify(exactly = 1) { recorder.recordAttempt(deliveryC, result) }
+        verify(exactly = 1) { recorder.recordAttempt(deliveryA, result, null, null, deliveryA.payload) }
+        verify(exactly = 1) { recorder.recordAttempt(deliveryB, result, null, null, deliveryB.payload) }
+        verify(exactly = 1) { recorder.recordAttempt(deliveryC, result, null, null, deliveryC.payload) }
         verify(exactly = 1) { dispatchPort.send(cfgC.url, deliveryC.payload) }
     }
 
@@ -144,12 +158,12 @@ class WebhookDispatchJobTest {
         val resolvedPayload = """{"amount":"125000"}"""
         every { deliveries.findDue(50) } returns listOf(due)
         every { webhookConfigs.findById(cfg.id) } returns cfg
-        every { enrichmentResolver.resolve(due, cfg.enrichmentProfileIds) } returns resolvedPayload
+        every { enrichmentResolver.resolveDetailed(due, cfg.enrichmentProfileIds, any(), any(), any()) } returns resolution(resolvedPayload)
         every { dispatchPort.send(cfg.url, resolvedPayload) } returns WebhookAttemptResult(success = true, httpStatus = 200, responseBody = null, errorMessage = null)
 
         job.dispatch()
 
-        verify(exactly = 1) { enrichmentResolver.resolve(due, cfg.enrichmentProfileIds) }
+        verify(exactly = 1) { enrichmentResolver.resolveDetailed(due, cfg.enrichmentProfileIds, any(), any(), any()) }
         verify(exactly = 1) { dispatchPort.send(cfg.url, resolvedPayload) }
         verify(exactly = 0) { dispatchPort.send(cfg.url, due.payload) }
     }

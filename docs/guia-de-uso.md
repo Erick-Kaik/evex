@@ -41,6 +41,7 @@ campo `network` (`MAINNET` | `TESTNET`).
 - [12. Consultar saldo numa data / histórico](#12-consultar-saldo-numa-data--histórico)
 - [13. Eventos enriquecidos no payload de webhook](#13-eventos-enriquecidos-no-payload-de-webhook)
 - [14. Chave de correlação do Modelo de Entidade](#14-chave-de-correlação-do-modelo-de-entidade)
+- [15. Pré-visualizar e reenviar webhooks (sem mexer em dados)](#15-pré-visualizar-e-reenviar-webhooks-sem-mexer-em-dados)
 - [Referência rápida](#referência-rápida)
 - [Troubleshooting](#troubleshooting)
 
@@ -824,6 +825,127 @@ fonte dos campos. (O editor de modelo tem um único modo — selects/construtor 
 
 ---
 
+## 15. Pré-visualizar e reenviar webhooks (sem mexer em dados)
+
+Serve para testar um webhook (template, filtros, enriquecimento) contra eventos **já indexados** e,
+se quiser, mandar de novo uma notificação — sem reprocessar nada e sem tocar em eventos, saldos nem
+modelos.
+
+**Fluxo (3 passos):**
+
+1. **Selecionar os eventos que casam** — `GET /v1/webhooks/{id}/matching-events` com a janela por
+   **data** (`fromDate`/`toDate`) e/ou **bloco** (`fromBlock`/`toBlock`). Só devolve eventos que casam
+   com o webhook (contrato + evento + rede + decodificados + os filtros do webhook), do mais recente
+   para o mais antigo, paginados por `cursor` ("carregar mais"). Os filtros são avaliados em memória: a
+   varredura tem teto (`scanned`/`scanTruncated`); se truncar, refine a janela ou continue pelo
+   `nextCursor`. O filtro por **data** só enxerga eventos com timestamp de bloco gravado — eventos sem
+   timestamp ficam de fora e aparecem em `warnings` (contagem).
+2. **Pré-visualizar** — `POST /v1/webhooks/{id}/preview` com `eventIds` (até 5 por requisição por padrão).
+   Devolve, por evento, o payload final **como seria enviado**, se casa (`matches`/`notMatchingReason`;
+   um evento que não casa também é renderizado, útil para testar o template), o estado do modelo e o
+   relatório do enriquecimento **por chamada** (OK/ERRO com o `code`, a mensagem do nó, `rpcCode`/`rpcData`
+   brutos e o bloco usado), mais o resumo agregado de falhas. `diagnose: true` reexecuta as chamadas que
+   falharam em `latest` e no bloco do evento e devolve um veredicto — é **indício**, não causa. O
+   preview **nunca grava nada nem faz POST**: nenhuma linha em nenhuma tabela, nenhum envio.
+3. **Reenviar** — `POST /v1/webhooks/{id}/resend` com `eventIds` **ou** `range` (nunca os dois; `range`
+   enfileira os eventos que casam, até o teto por requisição). Responde **202** na hora: cada evento aceito
+   vira uma entrega `PENDING` (`accepted[{eventId, deliveryId}]`) e o job de dispatch a processa com o
+   mesmo retry/backoff/histórico do disparo normal. O que não foi enfileirado vem em `skipped` com o
+   motivo (`NOT_MATCHING`, `ALREADY_PENDING`, `EVENT_NOT_DECODED`, `EVENT_NOT_FOUND`). Reenviar o mesmo
+   evento enquanto o anterior ainda está `PENDING` é `ALREADY_PENDING` (proteção contra duplo clique).
+   Webhook pausado não reenvia (409 `WEBHOOK_INACTIVE`), salvo com URL de teste válida; o preview
+   funciona sempre.
+
+**Em qual bloco o enriquecimento roda** (`enrichmentBlock.mode`, string extensível; padrão `EVENT_BLOCK`):
+
+| Modo | O que faz | Observações |
+|---|---|---|
+| `EVENT_BLOCK` | `eth_call` no bloco do evento (o comportamento do disparo normal) | Exige um nó que **guarde estado histórico** (não podado). Um `-32603` genérico **não prova** isso: pode ser revert, ABI/argumento incorreto ou falha do nó — use `diagnose` ou compare com `LATEST` antes de concluir. |
+| `LATEST` | estado **atual** da cadeia | Re-resolvido a **cada tentativa** da entrega (um retry tardio vê o estado do momento do retry); o bloco usado fica registrado por tentativa. |
+| `BLOCK_NUMBER` | bloco fixo (`blockNumber`) | Congelado na entrega. |
+| `BLOCK_AT_DATE` | último bloco **até** `blockDate` (arredondamento para baixo) | Resolvido **uma vez** no envio do reenvio e congelado como número. Limites: resolução **aproximada** (só usa eventos ingeridos com timestamp e, se o nó responder, bisseção por RPC — o resultado diz `approximate`/`source`); data anterior ao gênesis = 422; e, como nos demais, só serve se o nó tiver estado histórico. |
+
+**Estado do modelo no reenvio = ATUAL.** O `{{model.*}}` usa o registro do Modelo de Entidade **de agora**
+(o registro é acumulado e não guarda versões), que pode ter avançado depois do evento. A resposta traz
+`modelState.stateAt` (última atualização lida) e `newerThanEvent`, com o aviso
+`MODEL_STATE_NEWER_THAN_EVENT`; o `modelStateAt` fica gravado na entrega. Não há como reconstituir o
+estado "da época" nesta versão.
+
+**Efeito zero nos dados.** O preview não grava nada. O reenvio escreve **só** em `webhook_deliveries` (e
+as tentativas, ao serem processadas): não altera `decoded`/parâmetros decodificados, não reprojeta saldo
+nem modelo, não dispara redecode.
+
+**Histórico de entregas** (`GET /v1/webhooks/{id}/deliveries`): cada entrega mostra a origem (`origin`:
+`MATCH` = disparo normal, `RESEND` = reenvio; `resend` derivado), o modo/número do bloco, `modelStateAt` e
+a URL de teste **redigida** (só `esquema://host[:porta]`). Cada **tentativa** mostra o `sentPayload` (o
+payload final de fato enviado, depois do enriquecimento — gravado em **toda** tentativa, inclusive no
+disparo normal), o bloco usado (`enrichmentBlockUsed`) e o relatório por chamada
+(`enrichmentResults`, com a mensagem do nó preservada). Entregas antigas não têm esses campos (aparecem
+vazios).
+
+**URL de teste (`overrideUrl`) — desligada por padrão.** Sem autenticação na PoC, um endpoint que faz
+POST para uma URL qualquer seria um proxy aberto para a rede interna; por isso `overrideUrl` informado com a
+capacidade desligada responde 400 `URL_OVERRIDE_DISABLED`. Para habilitar (ambiente de laboratório):
+
+```
+EVEX_WEBHOOK_RESEND_ALLOW_URL_OVERRIDE=true
+# opcional — hosts exatos e/ou CIDRs liberados mesmo em faixa privada (ex.: um sink local de teste):
+EVEX_WEBHOOK_RESEND_URL_ALLOWLIST=<host-ou-cidr>,<host-ou-cidr>
+# opcional — portas de destino permitidas (padrão 80,443):
+EVEX_WEBHOOK_RESEND_ALLOWED_PORTS=80,443
+```
+
+`GET /v1/capabilities` diz se está ligada. Quando ligada, a URL passa por uma política (400
+`URL_NOT_ALLOWED`, mensagem genérica que não ecoa URL nem IP): só `http`/`https`; sem usuário/senha na URL; porta na
+lista permitida; o host é **resolvido no servidor** e a URL é bloqueada se **qualquer** endereço resolvido
+for loopback, link-local (inclui o endpoint de metadata de nuvem), privado, CGNAT, ULA, não especificado,
+multicast ou IPv4 embutido em IPv6 dessas faixas (literais IP idem). A política é **revalidada imediatamente
+antes de cada envio** (se falhar, a tentativa fica `FAILED` com código genérico e nada é enviado); redirects
+(3xx) **não são seguidos**; o corpo da resposta **não é gravado nem exposto** nas entregas com URL de teste e os
+erros de rede viram códigos genéricos (`OVERRIDE_URL_BLOCKED`, `OVERRIDE_CONNECT_FAILED`, `OVERRIDE_TIMEOUT`,
+`OVERRIDE_UNREACHABLE`...). **Risco residual conhecido (aceito na PoC):** DNS rebinding — um DNS controlado
+por quem opera o destino pode responder um IP público na checagem e outro na conexão; a revalidação reduz a
+janela mas não a fecha. Mantenha desligado fora de laboratório. *(Reservado, ainda sem efeito:
+`EVEX_WEBHOOK_URL_POLICY_MODE=OFF|WARN|ENFORCE` — aplicará a mesma política à URL **cadastrada** em uma
+entrega futura.)*
+
+**Limites de abuso** (valem para preview e reenvio; estado em memória por instância, zera no restart):
+
+| Limite | Padrão | Ao exceder |
+|---|---|---|
+| eventos por reenvio (`eventIds`/`range`) | 50 | 400 `TOO_MANY_EVENTS` (nada é enfileirado); em `range`, enfileira até o teto e avisa `RANGE_TRUNCATED` |
+| eventos por preview | 5 | 400 `TOO_MANY_EVENTS` |
+| reenvios por minuto por webhook | 10 | 429 `RATE_LIMITED` + `Retry-After` (segundos) |
+| requisições (preview + reenvio) por minuto na instância | 30 | 429 `RATE_LIMITED` + `Retry-After` |
+| reenvios `PENDING` na fila | 500 | 429 `RESEND_QUEUE_FULL` + `Retry-After` (tudo-ou-nada) |
+
+Os valores efetivos saem em `GET /v1/capabilities`. Entregas de reenvio têm prioridade menor que o disparo
+normal na fila, então um reenvio grande não atrasa as notificações em tempo real.
+
+**Pela UI:** abra o detalhe de um webhook (`/webhooks/<id>`, modo leitura) e use **Pré-visualizar** ou
+**Reenviar** — os dois abrem o mesmo painel, em 3 passos: (1) **Eventos que casam** — filtro **por data**
+(de/até, `datetime-local`, enviado em ISO-8601 com o offset do seu fuso, mostrado abaixo do campo) **ou por
+bloco** (de/até; há um auxiliar "Resolver data → bloco" que usa `GET /v1/blocks/by-date` e mostra
+`source`/`approximate`/avisos), lista paginada por cursor ("Carregar mais"), aviso quando a varredura é
+truncada, avisos traduzidos e seleção múltipla com contador (limites vindos de `GET /v1/capabilities`; se a
+consulta falhar, valem os padrões conservadores 5/50); (2) **Bloco do enriquecimento** — select com
+`EVENT_BLOCK`/`LATEST`/`BLOCK_NUMBER`/`BLOCK_AT_DATE` e os campos de cada modo; (3) **Pré-visualizar**
+(com a opção "Diagnosticar falhas"; mostra payload final, estado do modelo, cada chamada de enriquecimento
+com o erro bruto da rede e o diagnóstico rotulado como indício — nada é enviado nem gravado) ou
+**Reenviar…** (diálogo de confirmação; a opção de URL de teste só aparece com
+`webhookUrlOverrideEnabled=true`; um 429 mostra "tente novamente em N s" e desabilita o botão). O resultado
+lista os aceitos (com atalho para o histórico), os ignorados com o motivo e os avisos. Em **Entregas**, cada
+linha mostra a origem (Reenvio/Normal), o modo de bloco, o `modelStateAt` e a URL de teste redigida, e
+"ver tentativas → detalhes" mostra o payload efetivamente enviado e o resultado do enriquecimento por chamada.
+No modo mock (`npm run dev:mock`) os cenários são fictícios; acrescente `?urlOverride=1` à URL do front para
+ligar a capacidade de URL de teste (o 3º reenvio da sessão simula o 429).
+
+**Limite genérico do produto:** o Evex reenvia o que **ele** indexou e já decodificou, com o enriquecimento
+e o modelo disponíveis **agora**; ele não reconstitui o estado do passado nem garante que o destino
+processe o mesmo evento duas vezes de forma idempotente — quem recebe deve tratar reentrega.
+
+---
+
 ## Referência rápida
 
 ### Telas (UI mínima — doc §6)
@@ -888,6 +1010,10 @@ GET/POST   /v1/webhooks
 GET/PATCH  /v1/webhooks/{id}
 PATCH      /v1/webhooks/{id}/status
 GET        /v1/webhooks/{id}/deliveries
+GET        /v1/webhooks/{id}/matching-events         # eventos que casam (data/bloco), cursor
+POST       /v1/webhooks/{id}/preview                 # dry-run: não grava, não envia
+POST       /v1/webhooks/{id}/resend                  # 202; cria entregas PENDING (origin=RESEND)
+GET        /v1/capabilities                          # flags/limites do preview e reenvio
 
 # Eventos enriquecidos (E19)
 GET        /v1/contracts/{address}/methods          # catálogo de métodos view/pure p/ o <MethodPicker>

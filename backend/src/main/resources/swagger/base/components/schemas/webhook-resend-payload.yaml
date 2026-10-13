@@ -1,0 +1,23 @@
+type: object
+description: >-
+  Reenvio manual de eventos já indexados para um webhook. Informe `eventIds` OU `range` (nunca os dois).
+  Limite por requisição: `resendMaxEventsPerRequest` (ver `GET /v1/capabilities`, default 50); excedente =
+  400 `TOO_MANY_EVENTS`, sem enfileirar parcial. Não altera eventos, saldos nem modelos — só cria entregas.
+properties:
+  eventIds:
+    type: array
+    nullable: true
+    items:
+      type: string
+      format: uuid
+  range:
+    $ref: "./webhook-resend-range.yaml"
+  enrichmentBlock:
+    $ref: "./enrichment-block-spec.yaml"
+  overrideUrl:
+    type: string
+    format: uri
+    nullable: true
+    description: >-
+      URL de destino de teste, no lugar da URL cadastrada. DESLIGADO por padrão (400 `URL_OVERRIDE_DISABLED`);
+      quando ligado passa por política de destino (400 `URL_NOT_ALLOWED`). Ver `GET /v1/capabilities`.

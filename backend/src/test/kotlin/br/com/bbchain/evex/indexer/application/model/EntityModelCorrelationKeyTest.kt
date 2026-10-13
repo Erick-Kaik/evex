@@ -4,7 +4,8 @@ import br.com.bbchain.evex.indexer.adapters.outbound.persistence.EntityModelJpaR
 import br.com.bbchain.evex.indexer.adapters.outbound.persistence.EntityModelRecordJpaRepository
 import br.com.bbchain.evex.indexer.adapters.outbound.persistence.JpaEntityModelAdapter
 import br.com.bbchain.evex.indexer.adapters.outbound.persistence.JpaEntityModelRecordAdapter
-import br.com.bbchain.evex.indexer.adapters.outbound.webhook.WebhookPayloadRenderer
+import br.com.bbchain.evex.indexer.application.webhook.WebhookPayloadComposer
+import br.com.bbchain.evex.indexer.application.webhook.WebhookPayloadRenderer
 import br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingService
 import br.com.bbchain.evex.indexer.config.IndexerProperties
 import br.com.bbchain.evex.indexer.domain.common.Network
@@ -180,7 +181,7 @@ class EntityModelCorrelationKeyTest : AbstractIntegrationTest() {
         every { webhookConfigs.findActive(triggering.contractAddress, triggering.eventName!!) } returns listOf(config)
         val slot = slot<WebhookDelivery>()
         every { deliveries.enqueue(capture(slot)) } answers { slot.captured }
-        WebhookMatchingService(webhookConfigs, deliveries, WebhookPayloadRenderer(), models, records, IndexerProperties())
+        WebhookMatchingService(webhookConfigs, deliveries, WebhookPayloadComposer(WebhookPayloadRenderer(), models, records), IndexerProperties())
             .matchAndEnqueue(listOf(triggering))
         return if (slot.isCaptured) slot.captured.payload else null
     }

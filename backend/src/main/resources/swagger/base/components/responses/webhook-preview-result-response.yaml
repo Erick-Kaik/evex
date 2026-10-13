@@ -1,0 +1,5 @@
+description: Resultado do preview (nada foi enviado nem gravado).
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-preview-result.yaml"

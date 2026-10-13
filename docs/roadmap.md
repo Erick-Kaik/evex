@@ -2933,3 +2933,28 @@ Origem: lacunas apontadas ao testar um ciclo de ativos tokenizados num QA de pro
 - Revisão (`reviewer`, 2026-10-09): **aprovada com ressalvas, sem achado bloqueante**. Backend **820/820**, frontend **160/160** (34 arquivos; `tsc -b`/lint/build limpos), reconfirmados do zero. N1 (esta seção citava o projeto de origem) e N2 (status desatualizado) corrigidos aqui; S1 (WARN espúrio em array vazio) corrigido (teste estendido); N3 e S2/S3 registrados na DEC-112.
 - **Pendências:** e2e `10-balance-batch.spec.ts` escrito e **não executado** (sem Hardhat neste ambiente); e2e Playwright existentes não rodados; reprojeção opt-in de modelo, contribuinte por `topic0` e parte de chave por enriquecimento ficam como evolução futura (DEC-111).
 
+---
+
+## E33 — Pré-visualização e reenvio de webhooks sem mexer em dados (e erro do enriquecimento por chamada) — ✅ Concluída (A, B e C feitas; revisão `reviewer` 2026-10-09 aprovada com ressalvas, sem achado bloqueante; N1 corrigido)
+
+Origem: pedido do usuário (2026-10-09). Hoje testar um webhook com evento já processado exige editar o banco (`decoded=false` + redecode), o que reprojeta saldos/modelos; quer **pré-visualizar** e **reenviar** pela tela e pela API. Ordem: **A** análise (PARA e espera confirmação) → **B** backend → **C** UMA passada de frontend → **uma** revisão do `reviewer`. Mesma branch (`feat/discovery-proxy-implementation-awareness`), após o commit da E32 (`b810941`).
+
+### Etapa A — análise ✅ (2026-10-09, sem código)
+
+- Fatos (`blockchain-integration` + `hexagonal-architect`): a entrega nasce em `WebhookMatchingService.matchSafely` (só chamada pela ingestão e pelo redecode); o enriquecimento roda a **cada tentativa** em `WebhookDispatchJob`; não há unique por (webhook, evento) — o reenvio não precisa contornar idempotência, só de guarda contra duplo clique; o erro do `eth_call` vira só `WARN` e o placeholder `null` (code/message embutidos em string, `data` descartado); método de enriquecimento escolhido **só por nome** (sem aridade); `BlockchainPort.call` recebe `Long` fixo (sem `latest`); não existe rate limit nem política de URL de destino além do esquema; **não existe backfill de timestamp** (`blockTimestamp` vem da ingestão; `Instant?`).
+- Evidência real do usuário: 4 `EnrichmentCall` de 3 contratos falharam no MESMO bloco recente com `-32603 Internal error`, inclusive views triviais — o código genérico **não prova** "nó sem estado histórico"; o desenho preserva `code`/`message`/`data` brutos, não afirma a causa e oferece diagnóstico (mesma chamada em `LATEST`/outro bloco).
+- Desenho e decisões em aberto: ver relatório da sessão. DEC-113 a DEC-117 previstas (nenhuma gravada ainda). Próxima migration: `V8`. Nada implementado.
+
+### Etapa B — backend ✅ (2026-10-09)
+
+- Fatia 1 (`blockchain-integration`, DEC-114/115): `CallBlock`, `BlockchainCallException` (code/message/`data` brutos), classificador por indício explícito, timeouts, método por nome+aridade, `resolveDetailed` com resultado por chamada/memoização/circuit-breaker/diagnóstico, `BlockResolutionService`. Fatia 2 (`kotlin-backend-dev`, DEC-113): contrato OpenAPI aditivo, migration `V8`, persistência, portas de leitura, `GET /v1/capabilities`. Fatia 3a (DEC-113/117): `WebhookPayloadComposer`, preview (efeito zero), `matching-events`, `blocks/by-date`. Fatia 3b (DEC-116): reenvio, dispatch (`sent_payload`/`enrichment_results` por tentativa), `OutboundUrlPolicy` (SSRF), limites de abuso, guia §15.
+- Backend **1067/1067** (820 → +84, +31, +42, +90). Ajustes em testes existentes: construtores/stubs (e `recordAttempt(…, due.payload)` por causa do D5) e o `maximum-pool-size=5` do `AbstractIntegrationTest` (estouro de `max_connections` do Postgres do Testcontainers com mais contextos em cache).
+- **Não verificado:** contra nó Besu/Hardhat real; DNS rebinding e redes reais; formatos reais de erro dos nós (classificador é heurística); timeout menor para override e limite de tamanho de payload (não implementados).
+- Pendente: Etapa C (UMA passada de frontend: "Pré-visualizar"/"Reenviar", seletor de eventos por data/bloco, modo de bloco, erros do enriquecimento por chamada, "ver tentativas" com payload enviado/erros, modo mock, testes) e UMA revisão final do `reviewer`.
+
+### Etapa C — frontend + revisão final ✅ (2026-10-09)
+
+- `frontend-dev`, uma única passada: botões "Pré-visualizar"/"Reenviar" no detalhe do webhook (painel único em 3 passos), seletor de eventos que casam (data ou bloco, cursor, `scanTruncated`, limites de `capabilities`, "resolver data → bloco"), modo de bloco com ajuda honesta sobre o `-32603`, preview com erro bruto por chamada/diagnóstico como indício/`modelState`, reenvio com confirmação e `overrideUrl` só com capability, 409/429 com `Retry-After`, histórico com origem/`sentPayload`/`enrichmentResults`; mock completo; cliente TS regenerado. Frontend **201/201** (39 arquivos).
+- Revisão (`reviewer`): **aprovada com ressalvas, sem achado bloqueante**; backend **1068/1068** na revisão (**1074/1074** após os ajustes). Ajustes pós-revisão: `Retry-After` exposto via CORS; N1 (race do reenvio → índice único parcial + `ALREADY_PENDING`) e S2 (URL em branco → 400); demais itens na errata do `decisions.md` (N2 `sent_payload` sem retenção, N3 inanição, N4 conexão presa durante RPC, N5 timeout global de 15 s, N6 memoização no disparo normal, N7 `useRetryWait`).
+- **Pendências:** e2e Playwright e `dev:mock` no navegador não executados; nenhum nó/DNS real; timeout menor para override, limite de tamanho de payload, retenção de tentativas e enforcement da política de URL na URL cadastrada ficam como evolução; registrar a exceção `useRetryWait` em `frontend/CLAUDE.md`.
+

@@ -9,7 +9,7 @@ import java.util.UUID
  * `(contractAddress, eventName)` a uma [url] de destino, [filters] opcionais (`emptyList()` = sem
  * filtro, sempre dispara) e um [payloadTemplate] opcional (decisão tomada com o usuário: string JSON
  * com placeholders `{{campo}}`/`{{decodedParameters.nome}}`, interpolação simples — se ausente, usa o
- * envelope JSON padrão de [br.com.bbchain.evex.indexer.adapters.outbound.webhook.WebhookPayloadRenderer]).
+ * envelope JSON padrão de [br.com.bbchain.evex.indexer.application.webhook.WebhookPayloadRenderer]).
  *
  * "Por usuário" não implica uma entidade `User` real — PoC sem auth (mesmo padrão sem "dono" já usado
  * em `BalanceMonitorConfig`, E7).

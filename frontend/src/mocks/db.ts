@@ -313,6 +313,45 @@ function seed(): void {
         { id: uid(), deliveryId: 'd2', attemptNumber: 3, attemptedAt: NOW, success: false, httpStatus: 503, responseBody: 'Service Unavailable' },
       ],
     },
+    {
+      // Reenvio manual (E33): enriquecimento falhou por chamada (-32603) e o payload saiu com null.
+      id: uid(), webhookConfigId: w1, blockchainEventId: db.events[1].id,
+      payload: '{"value":"40000","supply":null}',
+      status: 'DELIVERED', attemptCount: 1, createdAt: NOW,
+      origin: 'RESEND', resend: true, enrichmentBlockMode: 'EVENT_BLOCK', modelStateAt: '2026-10-01T12:00:00Z',
+      targetUrlOverride: 'https://example.invalid',
+      attempts: [
+        {
+          id: uid(), deliveryId: 'd3', attemptNumber: 1, attemptedAt: NOW, success: true, httpStatus: 200,
+          enrichmentBlockUsed: '178',
+          sentPayload: '{"value":"40000","supply":null}',
+          enrichmentResults: [
+            {
+              profileId: '22222222-2222-2222-2222-222222222222',
+              targetContractAddress: '0x0000000000000000000000000000000000000001',
+              methodName: 'totalSupply', status: 'ERROR', code: 'RPC_ERROR',
+              message: 'eth_call em 0x…01.totalSupply (bloco 178) não retornou resultado (code=-32603): Internal error',
+              rpcCode: -32603, classification: 'NODE_ERROR', blockUsed: '178',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      // Disparo normal recente: payload enviado e enriquecimento OK por chamada.
+      id: uid(), webhookConfigId: w1, blockchainEventId: db.events[3].id,
+      payload: '{"value":"90000","supply":"7"}',
+      status: 'DELIVERED', attemptCount: 1, createdAt: NOW, origin: 'MATCH',
+      attempts: [
+        {
+          id: uid(), deliveryId: 'd4', attemptNumber: 1, attemptedAt: NOW, success: true, httpStatus: 200,
+          enrichmentBlockUsed: '160', sentPayload: '{"value":"90000","supply":"7"}',
+          enrichmentResults: [
+            { profileId: '22222222-2222-2222-2222-222222222222', targetContractAddress: '0x0000000000000000000000000000000000000001', methodName: 'totalSupply', status: 'OK', outputs: { supply: '7' }, blockUsed: '160' },
+          ],
+        },
+      ],
+    },
   ]
 }
 

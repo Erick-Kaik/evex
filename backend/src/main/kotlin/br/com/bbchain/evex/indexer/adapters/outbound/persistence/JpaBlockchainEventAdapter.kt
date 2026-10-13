@@ -4,12 +4,15 @@ import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.common.PageResult
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEventPort
+import br.com.bbchain.evex.indexer.domain.event.EventCursor
+import br.com.bbchain.evex.indexer.domain.event.EventScanFilter
 import br.com.bbchain.evex.indexer.domain.event.EventSearchFilter
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
+import java.util.UUID
 import org.springframework.data.jpa.domain.Specification
 import org.springframework.stereotype.Component
 
@@ -48,6 +51,58 @@ class JpaBlockchainEventAdapter(
         val entities = events.map { it.toEntity(isNew = false) }
         return repository.saveAll(entities).map { it.toDomain() }
     }
+
+    override fun findById(id: UUID): BlockchainEvent? = repository.findById(id).orElse(null)?.toDomain()
+
+    override fun findAllByIds(ids: Collection<UUID>): List<BlockchainEvent> =
+        if (ids.isEmpty()) emptyList() else repository.findAllById(ids.toSet()).map { it.toDomain() }
+
+    override fun scanDecoded(filter: EventScanFilter, after: EventCursor?, limit: Int): List<BlockchainEvent> {
+        val pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "blockNumber", "logIndex"))
+        val specification = Specification.allOf(
+            listOfNotNull(
+                scanBaseSpecification(filter),
+                after?.let { c ->
+                    // Estritamente antes do cursor, na ordem (blockNumber DESC, logIndex DESC).
+                    Specification<BlockchainEventEntity> { root, _, cb ->
+                        cb.or(
+                            cb.lessThan(root.get("blockNumber"), c.blockNumber),
+                            cb.and(
+                                cb.equal(root.get<Long>("blockNumber"), c.blockNumber),
+                                cb.lessThan(root.get("logIndex"), c.logIndex),
+                            ),
+                        )
+                    }
+                },
+            ),
+        )
+        return repository.findAll(specification, pageable).content.map { it.toDomain() }
+    }
+
+    override fun countDecodedWithoutTimestamp(filter: EventScanFilter): Long =
+        repository.count(
+            Specification.allOf(
+                scanBaseSpecification(filter.copy(fromDate = null, toDate = null)),
+                Specification<BlockchainEventEntity> { root, _, cb -> cb.isNull(root.get<Any>("blockTimestamp")) },
+            ),
+        )
+
+    /** Reaproveita [buildSpecification] (contrato/evento/bloco/data) e soma `decoded = true` + `network`. */
+    private fun scanBaseSpecification(filter: EventScanFilter): Specification<BlockchainEventEntity> =
+        Specification.allOf(
+            buildSpecification(
+                EventSearchFilter(
+                    contractAddress = filter.contractAddress,
+                    eventName = filter.eventName,
+                    fromBlock = filter.fromBlock,
+                    toBlock = filter.toBlock,
+                    fromDate = filter.fromDate,
+                    toDate = filter.toDate,
+                ),
+            ),
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.isTrue(root.get("decoded")) },
+            Specification<BlockchainEventEntity> { root, _, cb -> cb.equal(root.get<Network>("network"), filter.network) },
+        )
 
     override fun findPendingCandidates(filter: RedecodeFilter, limit: Int): List<BlockchainEvent> {
         val pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.ASC, "blockNumber", "logIndex", "id"))

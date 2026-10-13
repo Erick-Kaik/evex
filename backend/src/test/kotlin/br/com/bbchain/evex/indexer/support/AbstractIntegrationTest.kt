@@ -48,6 +48,10 @@ abstract class AbstractIntegrationTest {
             registry.add("spring.datasource.url", postgres::getJdbcUrl)
             registry.add("spring.datasource.username", postgres::getUsername)
             registry.add("spring.datasource.password", postgres::getPassword)
+            // Cada contexto Spring em cache segura um pool Hikari (padrão 10 conexões ociosas); com ~10 contextos
+            // distintos na suíte o Postgres do Testcontainers (max_connections=100) estourava ("too many clients").
+            // Pool pequeno por contexto mantém o total folgado mesmo com mais contextos (E33 adicionou um).
+            registry.add("spring.datasource.hikari.maximum-pool-size") { "5" }
             // Flyway aponta pro mesmo datasource; sem migrations ainda (ver application.yml) — só o
             // schema history table é criado, o resto do schema vem de ddl-auto: update (DEC-006).
 

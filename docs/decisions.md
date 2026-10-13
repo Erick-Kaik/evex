@@ -2132,7 +2132,7 @@ Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev` (implementação),
 - **`CorrelationKeyResolver` no domain (Kotlin puro) = ÚNICA fonte da chave**, com registros `Map<String, KeyPartEvaluator>` por tipo (sem `when` espalhado; porta aberta para um futuro avaliador por enriquecimento). Usado por `EntityModelProjectionService` **e** pelo `{{model.*}}` do webhook (derivação duplicada eliminada): evento → chave pelo mesmo resolver → registro; um evento de contribuinte diferente do que criou o registro o enxerga quando a chave coincide, senão os placeholders do modelo saem `null` (como já era).
 - **Normalização determinística (partes `PARAM`):** números (Int/Long/BigInteger/String numérica) → decimal canônico; endereços lowercase; strings como estão; lista/Map/struct/vazio/nulo ⇒ **parte ausente**. **Parte ausente, nula ou tipo desconhecido em execução ⇒ o evento NÃO correlaciona** (nenhum registro escrito, nunca chave parcial) com WARN deduplicado por `model.id`.
 - **Montagem:** 1 parte = valor puro, sem escape (idêntico ao legado); 2+ partes = valores com escape (`\` → `\\`, `|` → `\|`) unidos por `|`.
-- **`source` no mapeamento de campo (acréscimo do usuário):** `ModelFieldMapping.source: String` opcional, código extensível, **default `PARAM`** (comportamento atual); valores iniciais `PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `BLOCK_TIMESTAMP`. Permite, por exemplo, um registro chaveado por `TX_HASH` que guarda também o endereço emissor de cada evento. `decodedParam` passou a opcional/anulável (obrigatório só para `source = PARAM`; relaxamento aditivo). Fonte desconhecida/ausente ⇒ campo omitido com WARN deduplicado, **sem derrubar o evento nem o lote**; `PARAM` com parâmetro ausente mantém o legado (valor nulo). **`BLOCK_TIMESTAMP`:** `BlockchainEvent.blockTimestamp` existe mas é `Instant?` (preenchido pelo poller ou pelo backfill de timestamp); valor em ISO-8601 (`Instant.toString()`); nulo ⇒ campo omitido com WARN; **nenhuma RPC na projeção**.
+- **`source` no mapeamento de campo (acréscimo do usuário):** `ModelFieldMapping.source: String` opcional, código extensível, **default `PARAM`** (comportamento atual); valores iniciais `PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `BLOCK_TIMESTAMP`. Permite, por exemplo, um registro chaveado por `TX_HASH` que guarda também o endereço emissor de cada evento. `decodedParam` passou a opcional/anulável (obrigatório só para `source = PARAM`; relaxamento aditivo). Fonte desconhecida/ausente ⇒ campo omitido com WARN deduplicado, **sem derrubar o evento nem o lote**; `PARAM` com parâmetro ausente mantém o legado (valor nulo). **`BLOCK_TIMESTAMP`:** `BlockchainEvent.blockTimestamp` existe mas é `Instant?` (preenchido de forma síncrona na ingestão pelo `IngestionBatchProcessor`, memoizado por bloco do lote — **não existe backfill de timestamp separado**, corrigido em 2026-10-09; o tipo é `Instant?` por contrato defensivo, mas em eventos ingeridos pelo poller ele sempre existe); valor em ISO-8601 (`Instant.toString()`); nulo ⇒ campo omitido com WARN; **nenhuma RPC na projeção**.
 - **Validação no create/update (400, PT-BR, `InvalidEntityModelException`):** tipo ou `source` desconhecido; `arg` ausente em `PARAM`/`LITERAL`; `PARAM` com `arg` fora do evento; sem chave nenhuma; **aridade** (nº de partes) diferente entre contribuintes do mesmo modelo. Com `correlationKey` presente o `correlationParam` legado não é validado contra o evento. Modelos já gravados não são revalidados na leitura/projeção.
 - **Persistência:** `contributors` é JSONB ⇒ só ganha a chave `correlationKey` (linhas antigas leem com default nulo) e `source` nos mappings (default `PARAM`); **sem coluna nova, sem mudar a unique `(model_id, correlation_value, network)`, sem migration**; mapper Jackson do adapter com `FAIL_ON_UNKNOWN_PROPERTIES = false` (JSONB interno; o rollback para a versão com o mapper novo continua lendo).
 
@@ -2192,3 +2192,186 @@ Backend 820/820 e frontend 160/160 (34 arquivos; `tsc -b`/lint/build limpos) rec
 
 - `e2e/tests/10-balance-batch.spec.ts` (escrito, plausível por leitura — helpers existentes e `mintBatch([2,3])` do `local-env` — mas **não executado nem tipado**: sem Hardhat/`node_modules` neste ambiente) e os specs Playwright existentes.
 - Sem "duplicar modelo" nem reprojeção de modelo (DEC-111, evolução futura); sem reordenar partes por arrastar.
+
+---
+
+## DEC-113 — Contrato de pré-visualização, reenvio e seleção de eventos de webhook (`preview`, `resend`, `matching-events`, `blocks/by-date`, `capabilities`) sem mexer em dados
+
+Data: 2026-10-09
+
+Módulo: backend (`application/webhook`, `adapters/inbound/api`, `adapters/outbound/persistence`, migration `V8`, contrato OpenAPI). Frontend na Etapa C (única passada). Epic E33.
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (fatia 1) + `kotlin-backend-dev` (fatias 2, 3a, 3b), consolidado pela sessão principal. Decisões D1–D8 do desenho confirmadas pelo usuário. Princípio do produto: ver DEC-110 (genérico e configurável; nada de projeto específico; códigos extensíveis; `/v1` só aditivo).
+
+### Contexto
+
+Para testar um webhook com um evento já processado era preciso editar o banco (`decoded=false` + redecode), o que **reprojeta saldos e modelos** e não serve para uso real. Fatos do código: a entrega nasce em `WebhookMatchingService.matchSafely` (só chamada pela ingestão e pelo redecode); a Fase 2 (`{{enriched.*}}`) roda no **disparo, a cada tentativa**; **não existe unique por (webhook, evento)** (o reenvio não precisa contornar idempotência, só de guarda contra duplo clique); a entrega não guardava o payload final enviado.
+
+### Decisão
+
+- **Endpoints aditivos (OpenAPI-first, `ApiServiceImpl` finas):**
+  - `GET /v1/webhooks/{id}/matching-events` — endpoint **dedicado** (D1), paginação por cursor `block:logIndex`, filtro por data **ou** bloco; resposta reaproveita o schema `Event` e traz `nextCursor`, `scanned`, `scanTruncated` (teto `max-scan` = 5000) e `warnings`. Os filtros do webhook são funções **em memória** (`WebhookFilterCondition`), por isso um filtro `webhookId` em `/v1/events` foi rejeitado (sem total honesto por offset, semântica dupla). Pré-filtro SQL por contrato/evento/rede/janela.
+  - `POST /v1/webhooks/{id}/preview` — 1 a 5 eventos, `enrichmentBlock{mode, blockNumber?, blockDate?}`, `diagnose?`; **não grava nada**. Resposta por evento: `matches` (+ `notMatchingReason`), `payload` final, `modelState`, `enrichment{blockUsed, calls[], unresolvedTokens, failuresSummary, diagnoses?}`, `warnings`; mais `failuresSummary` agregado da requisição. Evento que não casa é renderizado mesmo assim.
+  - `POST /v1/webhooks/{id}/resend` (202) — até 50 `eventIds` **ou** um `range`; resposta `accepted[{eventId, deliveryId}]`, `skipped[{eventId, reason}]`, `modelState`, `enrichmentBlock`, `warnings`.
+  - `GET /v1/blocks/by-date?date&direction=FLOOR|CEILING` e `GET /v1/capabilities` (flags/limites efetivos para a UI: `webhookUrlOverrideEnabled`, `webhookResendMaxEventsPerRequest`, `webhookPreviewMaxEvents`, `webhookResendMaxPendingResends`, `webhookResendMaxPerMinutePerWebhook`, `webhookMaxRequestsPerMinutePerInstance`).
+  - **Valores como string extensível** (nenhum enum fechado novo): `mode` (`EVENT_BLOCK` padrão, `LATEST`, `BLOCK_NUMBER`, `BLOCK_AT_DATE`), `status` da chamada (`OK`/`ERROR`), `reason` do skip (`NOT_MATCHING`, `ALREADY_PENDING`, `EVENT_NOT_DECODED`, `EVENT_NOT_FOUND`, `PAYLOAD_RENDER_FAILED`), `classification`, `code`, `verdict`, `source`, `origin`. O consumidor trata valor desconhecido como "não aplicável".
+  - Erros (`ApiError`): 400 `TOO_MANY_EVENTS`, `INVALID_ENRICHMENT_BLOCK_MODE`, `INVALID_CURSOR`, `INVALID_DIRECTION`, `URL_OVERRIDE_DISABLED`, `URL_NOT_ALLOWED`, `VALIDATION_ERROR`; 404 `WEBHOOK_CONFIG_NOT_FOUND`; **409 `WEBHOOK_INACTIVE`** (reenvio de webhook inativo, salvo com `overrideUrl` válido — D7; preview sempre liberado); 422 `BLOCK_RESOLUTION_FAILED`; 429 `RATE_LIMITED`/`RESEND_QUEUE_FULL` com `Retry-After`. Os limites de lista não entram como `maxItems` no yaml (geraria `VALIDATION_ERROR` em vez de `TOO_MANY_EVENTS` e o teto é configurável): só documentados.
+- **Fila e histórico reaproveitados:** o reenvio usa o MESMO `WebhookDeliveryPort.enqueue`, e o `WebhookDispatchJob` processa; retry, backoff e estados PENDING/DELIVERED/FAILED não mudam. A Fase 1 (casamento, render, `{{model.*}}` via `CorrelationKeyResolver`) foi extraída para o `WebhookPayloadComposer` (application), usado por disparo normal, preview e reenvio; `WebhookPayloadRenderer` movido de `adapters` para `application/webhook` (D8). `findDue` ordena disparos normais **antes** de reenvios (`CASE WHEN origin='MATCH' …, createdAt`) para um reenvio lento não atrasar o tempo real.
+- **Dados (migration `V8`, `ADD COLUMN IF NOT EXISTS`, padrão V4/DEC-041):** `webhook_deliveries` += `origin` (varchar `DEFAULT 'MATCH'`; `resend` do DTO é **derivado**, sem coluna própria), `enrichment_block_mode`, `enrichment_block_number`, `target_url_override`, `model_state_at`; `webhook_delivery_attempts` += `enrichment_results` JSONB, `enrichment_block_used` (varchar(32): número ou `latest`), `sent_payload` (gravado **sempre**, D5, também no disparo normal); índices `(webhook_config_id, blockchain_event_id)` e `(block_timestamp, block_number)`. Os resultados ficam na **tentativa** (a Fase 2 roda a cada tentativa) e aparecem em "ver tentativas". Leitura tolerante do JSONB.
+- **Efeito colateral zero:** o preview usa só portas de leitura, `@Transactional(readOnly = true)`, com testes de snapshot das tabelas e `verify(exactly = 0)` em enqueue/save/send/recordAttempt; o reenvio escreve **só em `webhook_deliveries`** (sem `updateAll`, sem projeção de saldo/modelo, `decoded` intacto), provado por snapshot.
+- **Retry de reenvio:** `EVENT_BLOCK` re-resolve por evento; `BLOCK_NUMBER` e `BLOCK_AT_DATE` ficam **congelados** no enqueue (a data é resolvida por FLOOR e vira número); `LATEST` é **re-resolvido a cada tentativa** (D6), com o bloco usado gravado por tentativa. Entregas antigas sem modo = `EVENT_BLOCK` = comportamento anterior idêntico.
+
+### Alternativas rejeitadas
+
+Filtro `webhookId` em `GET /v1/events`; coluna `resend` redundante a `origin`; resultados do enriquecimento só na entrega (a Fase 2 roda por tentativa); reenvio via `decoded=false`/redecode (reprojeta saldo/modelo); fila paralela só para reenvio (duplica retry/backoff); reconstituir o modelo "na época" por reprojeção; enums fechados; `maxItems` no yaml.
+
+### Limites
+
+O limiter e a fila de reenvio são **por instância** (zeram no restart). `warnings` de `matching-events` usam código + contagem (ex.: `DATE_FILTER_EXCLUDES_EVENTS_WITHOUT_TIMESTAMP:<n>`), a UI traduz.
+
+### Testes
+
+Backend 820 → **1067/1067** na E33 (fatias: +84, +31, +42, +90): migration V8 com linhas existentes; round-trip dos campos novos; `findDue` com ordenação; paginação por cursor; preview sem escrita (snapshot de tabelas); reenvio sem alterar `decoded`/saldo/modelo; `WebhookResendApiTest` (Testcontainers, 19), `WebhookPreviewMatchingApiTest` (14).
+
+---
+
+## DEC-114 — Enriquecimento tipado por chamada: erro estruturado (`BlockchainCallException`), resultado por chamada (`EnrichmentCallOutcome`), resolução de método por nome + aridade, `CallBlock`
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/blockchain`, `domain/enrichment`, `domain/abi`, `adapters/outbound/blockchain/Web3jBlockchainClient`, `application/webhook/WebhookEnrichmentResolver`, `application/enrichment/EnrichmentProfileService`, `application/common/WarnLogDeduper`). Epic E33.
+
+Autor: `blockchain-integration`, consolidado pela sessão principal. Evidência real do usuário: 4 `EnrichmentCall` de 3 contratos falharam no **mesmo bloco recente** com `code=-32603 'Internal error'`, inclusive views triviais, e a causa só aparecia no `WARN` (nunca no registro da entrega).
+
+### Decisão
+
+- **Erro preservado, causa não afirmada.** `BlockchainCallException(code, rpcMessage, data, classification)` guarda `code`, `message` e **`data` brutos** do erro JSON-RPC (o `data` era descartado). `classification` é string extensível derivada **só de indício explícito**: `REVERTED` (`execution reverted`), `TIMEOUT`, `IO`, `NODE_ERROR` (`-32603`/`-32000` genéricos), `STATE_UNAVAILABLE_SUSPECTED` **apenas** com mensagem explícita (`missing trie node`, `state not available`, `world state`, `pruned`). **Um `-32603` genérico nunca vira "sem estado histórico"** (o bloco do caso real é recente). Falha de transporte vira `TIMEOUT`/`IO` sem URL na mensagem (regra S4).
+- **`CallBlock`** (`Number(n)` | `Latest`) em `BlockchainPort.call(..., block)`; a assinatura antiga com `Long` vira overload que delega. Valida `args.size == inputTypes.size` no adaptador (antes o `zip` truncava em silêncio).
+- **Timeouts** no cliente Web3j (`indexer.blockchain.connect-timeout=5s`, `read-timeout=15s`; antes dependia do default do OkHttp: 10 s lidos no source, não validado em execução com o Web3j 6).
+- **Resultado por chamada:** `EnrichmentCallOutcome` (`Success{outputs, blockUsed}` | `Failure{code, message, rpcCode, rpcData, classification, blockUsed}`), `EnrichmentFailureCodes` string extensível (`METHOD_NOT_FOUND`, `METHOD_AMBIGUOUS`, `ABI_NOT_FOUND`, `CONTRACT_NOT_REGISTERED`, `ARG_UNRESOLVED`, `BLOCK_UNRESOLVED`, `ENCODING_ERROR`, `RPC_ERROR`, `UNEXPECTED_ERROR`, `SKIPPED_DEPENDENCY`, `SKIPPED_AFTER_REPEATED_FAILURE`). `WebhookEnrichmentResolver.resolveDetailed(...)` devolve o relatório por chamada, preserva o encadeamento (`{{enriched.x}}` de uma chamada que falhou ⇒ dependentes `SKIPPED_DEPENDENCY` com causa) e **`resolve()` continua wrapper com o mesmo retorno** — o payload mantém `null` na falha (**DEC-057 mantida**).
+- **Modo de bloco como estratégia:** `Map<String, EnrichmentBlockStrategy>` (`EVENT_BLOCK`, `LATEST`, `BLOCK_NUMBER`, `BLOCK_AT_DATE`; extensível, sem `when` espalhado). **Qual ABI vale:** `EVENT_BLOCK`/`BLOCK_NUMBER`/`BLOCK_AT_DATE` usam a versão vigente **no bloco da chamada**; `LATEST` usa a versão **aberta** (proxy upgradável, DEC-007).
+- **Resolução por nome + aridade** (função pura em `domain/abi`): aridade que não bate = `METHOD_NOT_FOUND` com as assinaturas disponíveis (o antigo truncamento silencioso era um bug); duas sobrecargas distintas de mesma aridade = `METHOD_AMBIGUOUS`; o `methodName` aceita **assinatura canônica** (`get(address)`) para desambiguar (o `eth_call` usa sempre o nome simples). No cadastro do perfil a checagem é por versão de ABI: ambiguidade em qualquer versão rejeita; método/aridade ausente só rejeita se nenhuma versão resolver (não bloqueia método introduzido por upgrade).
+- **Memoização** por (contrato, método, args, bloco), **inclusive de falhas**, numa execução (`EnrichmentExecutionContext`, não thread-safe; um por requisição de preview; um por ciclo no disparo normal — D9); ABI/método memoizados por (endereço, bloco) (eram 4 acessos ao banco por chamada). **Circuit-breaker** (`SKIPPED_AFTER_REPEATED_FAILURE`, limiar 3 falhas idênticas por (contrato, assinatura, bloco)) **só em preview/reenvio**, nunca no disparo normal. **WARN agregado** por janela (`WarnLogDeduper` ganhou chave string; a API por UUID intacta; sem mensagem do nó nem URL no WARN — a mensagem completa vai em DEBUG e no relatório).
+- **Diagnóstico opcional** (`diagnose=true`): reexecuta a mesma chamada em `LATEST` e no bloco do evento e roda uma **sonda** (`probeStateAt`, `eth_getCode` no bloco, nunca lança por erro de RPC). Veredito `FAILS_EVERYWHERE` | `FAILS_ONLY_AT_BLOCK` | `OK_AT_LATEST_ONLY` | `INCONCLUSIVE`, **sempre rotulado como indício**; falha de transporte em qualquer tentativa de referência ⇒ `INCONCLUSIVE`.
+
+### Alternativas rejeitadas
+
+Afirmar "nó sem estado histórico" a partir de um `-32603` genérico; esconder o erro bruto atrás de uma mensagem "amigável"; devolver `null` sem causa (como era); escolher o primeiro método com o nome; enum fechado de códigos de falha; ativar circuit-breaker no disparo normal (mudaria comportamento de produção); um WARN por chamada.
+
+### Não verificado
+
+Formatos reais de erro de Besu/Hardhat/geth (as palavras-chave do classificador e os selectors `0x08c379a0`/`0x4e487b71` são heurística sem nó real); timeouts contra socket real (só com Web3j mockado); `eth_call` que devolve `"0x"` por contrato sem código no bloco decodifica para lista vazia sem erro (comportamento mantido; candidato a classificar).
+
+### Testes
+
++84 (aridade, classificador de erro, estratégias de bloco, `resolveDetailed`, memoização, circuit-breaker, WARN agregado, wiring Spring sem Docker). 5 stubs de `call(..., 42)` em `WebhookEnrichmentResolverTest` trocados por `CallBlock.Number(42)` (nenhuma asserção alterada).
+
+---
+
+## DEC-115 — Data → bloco: `BlockResolutionService` (bracket nos eventos ingeridos + bisseção por RPC) e `GET /v1/blocks/by-date`
+
+Data: 2026-10-09
+
+Módulo: backend (`application/block`, `domain/block`, `adapters/outbound/persistence/JpaBlockTimestampLookupAdapter`). Epic E33.
+
+Autor: `blockchain-integration` + `kotlin-backend-dev`, consolidado pela sessão principal.
+
+### Decisão
+
+- **Estratégia combinada:** bracket nos eventos ingeridos (`BlockTimestampLookupPort.findBlockBracket(instant)`; `lower` = bloco de maior timestamp `<= data`, empate pelo maior número; `upper` = de menor timestamp `>= data`, empate pelo menor; eventos com `blockTimestamp` nulo são ignorados; índice `(block_timestamp, block_number)`) + **bisseção por RPC** (`BlockchainPort.getBlockTimestamp`) com teto de 32 chamadas (`indexer.blocks.max-rpc-calls`; o teto conta TODAS as chamadas, inclusive `currentBlockNumber` e gênesis/topo; cobre cadeias de até ~2^29 blocos). Um bloco ingerido com `ts == data` não é confiável sozinho (blocos posteriores podem ter o mesmo timestamp) e vai a RPC. Resultado `{blockNumber?, blockTimestamp?, source: INGESTED|RPC|COMBINED, approximate, warnings[]}`; sem RPC degrada para o ingerido com `approximate=true`.
+- **Bordas:** FLOOR antes do gênesis ⇒ `null` + `DATE_BEFORE_GENESIS`; CEILING antes do gênesis ⇒ bloco 0 + aviso; FLOOR depois do topo ⇒ **o topo** + `DATE_AFTER_LATEST` (é o piso correto); CEILING depois do topo ⇒ `null` + `DATE_AFTER_LATEST`; orçamento esgotado ⇒ aproximado + `RPC_BUDGET_EXHAUSTED`. No `BLOCK_AT_DATE` do enriquecimento usa-se **FLOOR** (estado do último bloco até aquela data) e o número é congelado no enqueue.
+- **Porta separada** `BlockTimestampLookupPort` (em vez de método em `BlockchainEventPort`): evita quebrar mocks/fakes e respeita ISP (decisão da fatia 1, divergência registrada do desenho).
+
+### Limites registrados
+
+Resolução aproximada (bloco com `timestamp >= data` ou o anterior, conforme a direção); **só eventos ingeridos têm timestamp** (`blockTimestamp` é preenchido de forma síncrona na ingestão e **não existe backfill de timestamp** — correção do texto da DEC-111); filtro por data em `matching-events` ignora eventos sem timestamp e avisa a contagem; timestamps assumidos não decrescentes (Besu IBFT2/QBFT); fuso: `Instant` UTC no backend, a UI envia ISO-8601 com offset; nó sem estado histórico não afeta esta parte (`eth_getBlockByNumber` funciona), só o `eth_call` posterior.
+
+### Alternativas rejeitadas
+
+Só RPC (20–25 chamadas por consulta); só ingeridos (resolução limitada aos blocos com evento); novo método em `BlockchainEventPort`.
+
+### Testes
+
+`BlockResolutionServiceTest` (bracket, bisseção ≤ 32 chamadas verificado no fake, antes do gênesis/depois do topo, timestamps repetidos, sem RPC ⇒ `approximate`, FLOOR vs CEILING), `JpaBlockTimestampLookupAdapterTest` (empates, nulos ignorados, fora do intervalo).
+
+---
+
+## DEC-116 — URL de teste no reenvio (`overrideUrl`) e proteção contra abuso: política de destino contra SSRF, desligada por padrão, limites em memória
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/webhook/OutboundUrlPolicy`, `HostResolverPort`, `application/webhook/WebhookResendService`, `ResendRateLimiter`, `WebhookDispatchJob`, `adapters/outbound/webhook`). Epic E33.
+
+Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev`, consolidado pela sessão principal. D2–D4 confirmadas pelo usuário. O produto não tem autenticação na PoC, então um endpoint que faz `POST` para uma URL arbitrária é um vetor de SSRF.
+
+### Decisão
+
+- **`overrideUrl` vem DESLIGADO** (`indexer.webhook.resend.allow-url-override=false`, env `EVEX_WEBHOOK_RESEND_ALLOW_URL_OVERRIDE`). `overrideUrl` com a capacidade desligada ⇒ 400 `URL_OVERRIDE_DISABLED`. Ligado, passa pela `OutboundUrlPolicy` (domain puro; DNS atrás do `HostResolverPort` para ser simulável): só `http`/`https`; **sem userinfo**; portas numa allowlist (`allowed-ports`, padrão 80/443); **DNS resolvido no servidor e bloqueado se QUALQUER endereço resolvido** for loopback, link-local (inclui metadata `169.254.169.254`), RFC1918, CGNAT `100.64/10`, ULA `fc00::/7`, unspecified, multicast, `0/8`, `192.0.0/24`, `198.18/15`, `240/4`, `fec0::/10`, IPv4-compatível/IPv4-mapeado/NAT64/6to4, e literais IP nessas faixas; formas decimal/octal/hex de IP caem em `INVALID_URL`; falha de resolução ⇒ bloqueado. **Allowlist explícita para laboratório** (`url-allowlist`, vazia por padrão): host com match exato dispensa a checagem de IP; um CIDR libera só os endereços que cobre (host com um IP dentro e outro fora continua bloqueado). Violação ⇒ 400 `URL_NOT_ALLOWED` com mensagem **genérica** (não ecoa URL nem IP).
+- **Sem redirects:** um 3xx com `Location` não é seguido no override (provado contra servidor HTTP local). **Revalidação imediatamente antes de cada envio** (se a política mudar ou a capacidade for desligada depois do enqueue ⇒ tentativa `FAILED` com `OVERRIDE_URL_BLOCKED`, sem `POST`).
+- **Fecha o SSRF de leitura:** em entrega com override o `responseBody` **não é gravado nem exposto** (o `httpStatus` é mantido) e erros de transporte viram códigos genéricos (`OVERRIDE_TIMEOUT`, `OVERRIDE_CONNECT_FAILED`, `OVERRIDE_UNREACHABLE`, `OVERRIDE_INVALID_URL`, `OVERRIDE_URL_BLOCKED`) sem mensagem de rede detalhada. A URL completa fica só no banco (`target_url_override`); o DTO devolve só `esquema://host[:porta]` (redigida).
+- **Limites de abuso (sem autenticação):** 50 eventos por reenvio e 5 por pré-visualização (configuráveis); limiter **em memória** (janela deslizante, `Clock` injetável, thread-safe): 10 reenvios/min por webhook e 30 requisições/min por instância (resend e preview; preview só conta na instância) ⇒ 429 `RATE_LIMITED`; teto de **500 reenvios pendentes** (tudo-ou-nada: `pending + planejados > 500` ⇒ 429 `RESEND_QUEUE_FULL` sem enfileirar nada) com `Retry-After`. Aplicados no **application**, não no controller. Ordem das validações no reenvio: 404 → rate limit → `eventIds` XOR `range`/vazio/teto → `overrideUrl` → 409 inativo → modo de bloco → coleta/composição → teto de fila → enqueue (o rate limit vem **antes** de validar a URL para o DNS não virar oráculo).
+- **D4 (ponto de extensão, sem enforcement):** `indexer.webhook.url-policy.mode` (`OFF`|`WARN`|`ENFORCE`, padrão `OFF`) fica como propriedade documentada para aplicar a mesma política à URL **cadastrada**; **nenhum código a lê ainda**.
+
+### Risco residual aceito (D3)
+
+**DNS rebinding:** o TOCTOU entre a resolução e a conexão não é fechado (a revalidação antes do envio reduz, não elimina); a URL já cadastrada tem o mesmo risco hoje. Limiter e fila são por instância e zeram no restart. Documentado no guia (§15).
+
+### Alternativas rejeitadas
+
+Aceitar qualquer URL; só validar o esquema (como a URL cadastrada hoje); gravar/expor o corpo da resposta no override (SSRF de leitura); seguir redirects; permitir sempre (sem flag de capacidade); aplicar enforcement à URL cadastrada nesta entrega (mudança de comportamento de produção fora do pedido); rate limit no controller; autenticação (fora do escopo da PoC).
+
+### Não implementado / não verificado
+
+Timeout menor para override (3 s, desenho §7.7) e limite de tamanho de payload: **não implementados** (o override usa o timeout normal de 5 s; um destino lento ainda ocupa o job single-thread — mitigado só pela ordenação do `findDue`); DNS real e redes reais (testes com resolvedor simulado e faixas de documentação).
+
+### Testes
+
+`OutboundUrlPolicyTest` (loopback/privado/link-local/metadata/CGNAT/ULA/IPv4-mapeado/literais; vários IPs com um bloqueado; allowlist de host e CIDR; porta fora da allowlist; userinfo; esquema não-http), `ResendRateLimiterTest` (janela com `Clock` fake), `WebhookDispatchJobResendTest`, `WebhookHttpClientTest` (+3: 3xx não seguido, `errorCode`, `TIMEOUT`), `WebhookResendApiTest` (19: `URL_OVERRIDE_DISABLED`, `URL_NOT_ALLOWED`, 409, 429 com `Retry-After`).
+
+---
+
+## DEC-117 — Estado do Modelo de Entidade no reenvio e na pré-visualização = registro ATUAL (com aviso visível)
+
+Data: 2026-10-09
+
+Módulo: backend (`application/webhook/WebhookPayloadComposer`, `WebhookPreviewService`, `WebhookResendService`, `EntityModelRecordPort.findLatestUpdatedAt`). Epic E33.
+
+Autor: `hexagonal-architect` + `kotlin-backend-dev`, consolidado pela sessão principal.
+
+### Decisão
+
+O `{{model.*}}` de um preview/reenvio usa o registro do Modelo de Entidade **como está agora**: `EntityModelRecord` não guarda histórico (só `updatedAt`), então **não há como reconstituir o estado da época do evento** sem reprojeção histórica (rejeitada). Para o usuário não ser surpreendido, a resposta traz `modelState{stateAt, newerThanEvent}` e o aviso `MODEL_STATE_NEWER_THAN_EVENT`; `stateAt` = maior `updatedAt` dos registros do modelo do webhook (via `findLatestUpdatedAt(modelKeys)`, leitura pura); a entrega de reenvio grava `model_state_at`. `newerThanEvent` só vale com `blockTimestamp` presente (sem timestamp = `false`). O composer devolve só as `modelKeys` (o disparo normal não ganha nenhuma consulta nova). O reenvio **não** reprojeta o modelo.
+
+### Alternativas rejeitadas
+
+Reconstituir o modelo "na época" reprojetando eventos até aquele bloco (altera dados e custa caro; contraria "sem mexer em dados"); tabela de histórico de registros (fora do escopo); esconder a diferença.
+
+### Limite
+
+Para o payload refletir o modelo da época é preciso um histórico de registros — evolução futura junto com a reprojeção opt-in de modelo (DEC-111).
+
+---
+
+## Errata da revisão da E33 (DEC-113 a DEC-117), 2026-10-09 — aprovada com ressalvas, sem achado bloqueante
+
+Backend **1068/1068** e frontend **201/201** (39 arquivos; `tsc -b`/lint/build/`test:types` limpos) reconfirmados do zero pelo `reviewer`. Confirmado: efeito colateral zero do preview e do reenvio (snapshot das tabelas certas, incluindo md5 de `decoded`/`decoded_parameters` e do `data` dos registros de modelo), nenhum bypass de SSRF fora do risco aceito (DNS rebinding), `-32603` genérico nunca vira `STATE_UNAVAILABLE_SUSPECTED`, disparo normal intacto (única asserção alterada: `recordAttempt(…, null, null, payload)` por causa do D5), contrato 100% aditivo sem enum fechado nem `maxItems`, e nenhuma menção ao projeto de origem nas linhas adicionadas. Correção feita pela sessão principal durante a revisão: `SecurityConfig` passou a **expor o `Retry-After` via CORS** (`exposedHeaders`), senão o navegador não leria o cabeçalho do 429 (teste em `CorsConfigTest`).
+
+- **N1 (corrigido):** race entre `existsPendingResend` e `enqueue` — dois reenvios simultâneos do mesmo (webhook, evento) criavam 2 entregas para o sistema externo. Corrigido com **índice único parcial** `uq_webhook_deliveries_pending_resend` em `webhook_deliveries (webhook_config_id, blockchain_event_id) WHERE status='PENDING' AND origin <> 'MATCH'` (final da V8, `CREATE UNIQUE INDEX IF NOT EXISTS`; não declarado na entidade, pois índice parcial não cabe em `@Index`, como na V6/DEC-104) + nova porta `WebhookDeliveryPort.enqueueResendIfAbsent(delivery): WebhookDelivery?` implementada com `INSERT … ON CONFLICT (…) WHERE <mesmo predicado> DO NOTHING` e retorno de linhas afetadas — perder a corrida é **resultado normal, não exceção** (nenhuma `DataIntegrityViolationException`, a transação não vira rollback-only, o teto de fila continua tudo-ou-nada; `REQUIRES_NEW` foi descartado porque cada enqueue commitaria sozinho) — e `null` vira `skipped ALREADY_PENDING`; `existsPendingResend` permanece como caminho rápido; `enqueue` do disparo `MATCH` inalterado. Testes: `WebhookResendConcurrencyTest` (6 threads com `CountDownLatch` reenviam o mesmo evento ⇒ 1 PENDING e 5 `ALREADY_PENDING`; DELIVERED/FAILED permitem novo reenvio; `MATCH` coexistem; lote com duplicata segue com os demais), repetido 4× sem falha; `WebhookResendMigrationTest` (reaplica a V8 sobre linhas legadas e confere o índice UNIQUE com o predicado). Total final do backend: **1074/1074**. Entregas `MATCH` e reenvios já concluídos não são afetados.
+- **S2 (corrigido):** `overrideUrl` presente-mas-em-branco passa a ser 400 `VALIDATION_ERROR` (antes virava "ausente" e, com webhook inativo, 409).
+- **N2 (aceito, a dimensionar):** `sent_payload TEXT` é gravado em **toda** tentativa (D5, inclusive no disparo normal), sem limite nem retenção: o banco cresce com payload × tentativas. O limite de tamanho de payload (DEC-116) e uma política de retenção ficam como evolução; operar com retenção/limpeza de tentativas antigas é recomendado.
+- **N3 (aceito):** `findDue` serve disparos normais antes de reenvios; com backlog contínuo ≥ `dispatchBatchSize` os reenvios podem esperar indefinidamente (aceitável na PoC; nota no guia).
+- **N4 (aceito, a otimizar):** o preview (`readOnly`) mantém a conexão do banco durante os `eth_call` (até 5 eventos × N chamadas × timeout 15 s) e o reenvio faz DNS/composição dentro da transação; previews concorrentes podem esgotar o pool do Hikari. Evolução: tirar o RPC da transação.
+- **N5 (aceito, registrar):** `indexer.blockchain.read-timeout=15s` vale para **todo** o cliente do nó (antes o default do OkHttp era 10 s) — inclusive `getLogs` da ingestão (timeout mais tolerante).
+- **N6 (aceito, é a D9 confirmada):** a memoização passou a valer também no disparo normal **dentro de um ciclo** do `WebhookDispatchJob`: uma falha de `eth_call` memoizada vale para todas as entregas do mesmo ciclo (mesma chamada, mesmo bloco); antes cada entrega tentava de novo. O retry continua no ciclo seguinte.
+- **N7 (aceito):** `useRetryWait` (`useWebhookResend.ts`) usa `useEffect` **só para um timer local** (contagem do `Retry-After`), sem fetch — não viola a regra "sem `useEffect` para chamadas de API", mas é uma segunda exceção além do SSE e deve constar em `frontend/CLAUDE.md`.
+- **N8 (corrigido):** status da E33 no roadmap atualizado.
+- **S1 (aceito):** `RANGE_TRUNCATED` pode aparecer quando a página fecha exatamente no fim dos dados (documentado no KDoc). **S3 (aceito):** host IDN (não ASCII) é rejeitado como `INVALID_URL` (seguro; sem conversão para punycode). **S4 (documentar):** o `HttpURLConnection` por trás do `SimpleClientHttpRequestFactory` respeita propriedades de proxy do sistema (`http.proxyHost`): com proxy global a política valida o IP final, mas a conexão sai pelo proxy.
+
+### Não executado
+
+e2e Playwright (inclusive `07-webhooks.spec.ts`, que por leitura só depende de "Entregas" e "Nenhuma entrega registrada ainda.", ambos preservados), `npm run dev:mock` no navegador, qualquer nó Besu/Hardhat/DNS real.
+
+### Decisões operacionais do frontend (Etapa C)
+
+Um único painel serve "Pré-visualizar" e "Reenviar" (3 passos); a seção de entregas foi **extraída** de `WebhookFormPage.tsx` para `WebhookDeliveriesSection.tsx` (ganhou a coluna "Origem"); mudar o filtro limpa seleção e resultados (a busca só roda em "Buscar"); "selecionar todos" marca os carregados e passar do limite não bloqueia a seleção (avisa e desabilita a ação); `range` só aparece com filtro de data/bloco aplicado; limites vêm de `GET /v1/capabilities` com fallback conservador 5/50; o `Retry-After` tem fallback para "em N segundo(s)" da mensagem quando o cabeçalho não é legível; `?urlOverride=1` na URL do modo mock liga a capability de URL de teste; sem teste isolado do `MatchingEventsSelector` (coberto pelo teste do diálogo).
+

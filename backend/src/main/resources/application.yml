@@ -153,6 +153,27 @@ indexer:
     base-delay-seconds: ${EVEX_WEBHOOK_BASE_DELAY_SECONDS:10}
     max-delay-seconds: ${EVEX_WEBHOOK_MAX_DELAY_SECONDS:300}
     request-timeout-ms: ${EVEX_WEBHOOK_REQUEST_TIMEOUT_MS:5000}
+    # E33 — preview/reenvio manual de webhooks (GET /v1/capabilities expõe estes valores à UI).
+    resend:
+      # URL de destino de teste no reenvio: DESLIGADO por padrão (SSRF, sem auth na PoC).
+      allow-url-override: ${EVEX_WEBHOOK_RESEND_ALLOW_URL_OVERRIDE:false}
+      max-events-per-request: ${EVEX_WEBHOOK_RESEND_MAX_EVENTS_PER_REQUEST:50}
+      preview-max-events: ${EVEX_WEBHOOK_PREVIEW_MAX_EVENTS:5}
+      # matching-events: teto de eventos varridos (pré-filtro SQL + filtros do webhook em memória) por requisição.
+      max-scan: ${EVEX_WEBHOOK_MATCHING_MAX_SCAN:5000}
+      # Limites de abuso (sem autenticação na PoC): fila de reenvios PENDING e taxa em memória (janela de 1 min).
+      max-pending-resends: ${EVEX_WEBHOOK_RESEND_MAX_PENDING:500}
+      queue-full-retry-after-seconds: ${EVEX_WEBHOOK_RESEND_QUEUE_FULL_RETRY_AFTER_SECONDS:30}
+      max-resends-per-minute-per-webhook: ${EVEX_WEBHOOK_RESEND_MAX_PER_MINUTE_PER_WEBHOOK:10}
+      max-requests-per-minute-per-instance: ${EVEX_WEBHOOK_MAX_REQUESTS_PER_MINUTE_PER_INSTANCE:30}
+      # Política de destino da URL de teste (OutboundUrlPolicy): portas permitidas e allowlist de laboratório
+      # (hosts exatos e/ou CIDRs; vazia = nada além do público). Só tem efeito com allow-url-override=true.
+      allowed-ports: ${EVEX_WEBHOOK_RESEND_ALLOWED_PORTS:80,443}
+      url-allowlist: ${EVEX_WEBHOOK_RESEND_URL_ALLOWLIST:}
+    # Ponto de extensão (E33/DEC-116, D4): política de destino aplicada à URL CADASTRADA — OFF | WARN | ENFORCE.
+    # Reservado: nesta entrega NENHUM código lê este modo (sem enforcement na URL cadastrada).
+    url-policy:
+      mode: ${EVEX_WEBHOOK_URL_POLICY_MODE:OFF}
   cors:
     # E8.1 — origens permitidas a consumir /v1/** via browser (config/SecurityConfig.kt, DEC via
     # Spring Security, não WebMvcConfigurer — ver docs/decisions.md). Default é a porta padrão do

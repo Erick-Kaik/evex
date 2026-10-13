@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.application.webhook
 
 import br.com.bbchain.evex.indexer.config.WebhookProperties
+import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentCallReport
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookAttemptResult
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDelivery
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryAttempt
@@ -26,8 +27,18 @@ class WebhookDeliveryRecorder(
     private val deliveries: WebhookDeliveryPort,
     private val properties: WebhookProperties,
 ) {
+    /**
+     * [enrichmentResults]/[enrichmentBlockUsed]/[sentPayload] (E33) são opcionais — `null` = nada
+     * registrado, comportamento idêntico ao anterior (o `WebhookDispatchJob` os liga na fatia seguinte).
+     */
     @Transactional
-    fun recordAttempt(delivery: WebhookDelivery, result: WebhookAttemptResult): WebhookDelivery {
+    fun recordAttempt(
+        delivery: WebhookDelivery,
+        result: WebhookAttemptResult,
+        enrichmentResults: List<EnrichmentCallReport>? = null,
+        enrichmentBlockUsed: String? = null,
+        sentPayload: String? = null,
+    ): WebhookDelivery {
         val attemptNumber = delivery.attemptCount + 1
         deliveries.recordAttempt(
             WebhookDeliveryAttempt(
@@ -40,6 +51,9 @@ class WebhookDeliveryRecorder(
                 httpStatus = result.httpStatus,
                 responseBody = result.responseBody?.take(MAX_RESPONSE_BODY_LENGTH),
                 errorMessage = result.errorMessage,
+                enrichmentResults = enrichmentResults,
+                enrichmentBlockUsed = enrichmentBlockUsed,
+                sentPayload = sentPayload,
             ),
         )
 

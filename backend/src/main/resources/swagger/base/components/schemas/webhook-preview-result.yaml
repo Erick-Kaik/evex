@@ -1,0 +1,20 @@
+type: object
+description: Resposta do preview de um webhook.
+required:
+  - items
+properties:
+  enrichmentBlock:
+    $ref: "./resolved-enrichment-block.yaml"
+  items:
+    type: array
+    items:
+      $ref: "./webhook-preview-item.yaml"
+  failuresSummary:
+    type: array
+    description: Falhas de enriquecimento agregadas da REQUISIÇÃO inteira (todos os eventos) por (contrato, método, bloco, código).
+    items:
+      $ref: "./enrichment-failure-summary.yaml"
+  warnings:
+    type: array
+    items:
+      type: string

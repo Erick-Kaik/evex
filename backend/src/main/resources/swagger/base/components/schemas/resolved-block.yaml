@@ -1,0 +1,24 @@
+type: object
+description: Bloco resolvido a partir de uma data.
+required:
+  - source
+  - approximate
+properties:
+  blockNumber:
+    type: integer
+    format: int64
+    nullable: true
+    description: "`null` quando não existe bloco no sentido pedido (ver `warnings`)."
+  blockTimestamp:
+    type: string
+    format: date-time
+    nullable: true
+  source:
+    type: string
+    description: "Origem extensível: `INGESTED` (eventos já ingeridos), `RPC`, `COMBINED`."
+  approximate:
+    type: boolean
+  warnings:
+    type: array
+    items:
+      type: string

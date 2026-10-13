@@ -11,6 +11,7 @@ import br.com.bbchain.evex.indexer.domain.abi.ContractAbiPort
 import br.com.bbchain.evex.indexer.domain.abi.ParsedAbiMethod
 import br.com.bbchain.evex.indexer.domain.abi.StorageLocation
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainPort
+import br.com.bbchain.evex.indexer.domain.blockchain.CallBlock
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.contract.ContractStatus
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContract
@@ -111,7 +112,7 @@ class WebhookEnrichmentResolverTest {
         every { abiMethodCatalog.methodsOf("irrelevant") } returns listOf(
             ParsedAbiMethod("balanceOf", listOf(CatalogedMethodInput("owner", "address")), listOf(CatalogedMethodOutput("balance", "uint256"))),
         )
-        every { blockchain.call(targetAddress, "balanceOf", listOf("address"), listOf("uint256"), listOf("0xdead"), 42) } returns listOf("125000")
+        every { blockchain.call(targetAddress, "balanceOf", listOf("address"), listOf("uint256"), listOf("0xdead"), CallBlock.Number(42)) } returns listOf("125000")
 
         val result = resolver.resolve(delivery("""{"saldo":{{enriched.saldo}}}"""), listOf(profileId))
 
@@ -130,8 +131,8 @@ class WebhookEnrichmentResolverTest {
             ParsedAbiMethod("getOwner", listOf(CatalogedMethodInput("tokenId", "address")), listOf(CatalogedMethodOutput("owner", "address"))),
             ParsedAbiMethod("balanceOf", listOf(CatalogedMethodInput("owner", "address")), listOf(CatalogedMethodOutput("balance", "uint256"))),
         )
-        every { blockchain.call(targetAddress, "getOwner", listOf("address"), listOf("address"), listOf("0xdead"), 42) } returns listOf("0xowner")
-        every { blockchain.call(targetAddress, "balanceOf", listOf("address"), listOf("uint256"), listOf("0xowner"), 42) } returns listOf("999")
+        every { blockchain.call(targetAddress, "getOwner", listOf("address"), listOf("address"), listOf("0xdead"), CallBlock.Number(42)) } returns listOf("0xowner")
+        every { blockchain.call(targetAddress, "balanceOf", listOf("address"), listOf("uint256"), listOf("0xowner"), CallBlock.Number(42)) } returns listOf("999")
 
         val result = resolver.resolve(delivery("""{"saldo":{{enriched.saldo}}}"""), listOf(profileId))
 
@@ -153,8 +154,8 @@ class WebhookEnrichmentResolverTest {
             ParsedAbiMethod("methodA", emptyList(), listOf(CatalogedMethodOutput("a", "uint256"))),
             ParsedAbiMethod("methodB", listOf(CatalogedMethodInput("a", "uint256")), listOf(CatalogedMethodOutput("b", "uint256"))),
         )
-        every { blockchain.call(targetAddress, "methodA", emptyList(), listOf("uint256"), emptyList(), 42) } returns listOf("111")
-        every { blockchain.call(targetAddress, "methodB", listOf("uint256"), listOf("uint256"), listOf("111"), 42) } returns listOf("222")
+        every { blockchain.call(targetAddress, "methodA", emptyList(), listOf("uint256"), emptyList(), CallBlock.Number(42)) } returns listOf("111")
+        every { blockchain.call(targetAddress, "methodB", listOf("uint256"), listOf("uint256"), listOf("111"), CallBlock.Number(42)) } returns listOf("222")
 
         val result = resolver.resolve(delivery("""{"a":{{enriched.a}},"b":{{enriched.b}}}"""), listOf(profileAId, profileBId))
 
@@ -172,7 +173,7 @@ class WebhookEnrichmentResolverTest {
         every { abiMethodCatalog.methodsOf("irrelevant") } returns listOf(
             ParsedAbiMethod("methodOk", emptyList(), listOf(CatalogedMethodOutput("ok", "uint256"))),
         )
-        every { blockchain.call(targetAddress, "methodOk", emptyList(), listOf("uint256"), emptyList(), 42) } returns listOf("1")
+        every { blockchain.call(targetAddress, "methodOk", emptyList(), listOf("uint256"), emptyList(), CallBlock.Number(42)) } returns listOf("1")
 
         val result = resolver.resolve(delivery("""{"broken":{{enriched.broken}},"ok":{{enriched.ok}}}"""), listOf(profileId))
 

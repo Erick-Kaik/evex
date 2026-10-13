@@ -1,6 +1,5 @@
 package br.com.bbchain.evex.indexer.application.webhook
 
-import br.com.bbchain.evex.indexer.adapters.outbound.webhook.WebhookPayloadRenderer
 import br.com.bbchain.evex.indexer.config.IndexerProperties
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent
@@ -39,7 +38,7 @@ class WebhookMatchingServiceTest {
     private val entityModels: EntityModelPort = mockk()
     private val entityModelRecords: EntityModelRecordPort = mockk()
     private val indexerProperties = IndexerProperties()
-    private val service = WebhookMatchingService(webhookConfigs, deliveries, WebhookPayloadRenderer(), entityModels, entityModelRecords, indexerProperties)
+    private val service = WebhookMatchingService(webhookConfigs, deliveries, WebhookPayloadComposer(WebhookPayloadRenderer(), entityModels, entityModelRecords), indexerProperties)
 
     private val contractAddress = "0xaaaa000000000000000000000000000000aaaa"
 

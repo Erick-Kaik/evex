@@ -1,0 +1,6 @@
+name: cursor
+in: query
+required: false
+description: Cursor opaco devolvido em `nextCursor` (formato `block:logIndex`) — ausente = primeira página.
+schema:
+  type: string

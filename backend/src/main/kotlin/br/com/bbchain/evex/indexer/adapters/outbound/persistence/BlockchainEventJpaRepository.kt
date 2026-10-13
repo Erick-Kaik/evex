@@ -18,6 +18,29 @@ import org.springframework.data.repository.query.Param
 interface BlockchainEventJpaRepository : JpaRepository<BlockchainEventEntity, UUID>, JpaSpecificationExecutor<BlockchainEventEntity> {
     fun existsByTxHashAndLogIndex(txHash: String, logIndex: Long): Boolean
 
+    /**
+     * E33: bloco de MAIOR timestamp `<= :instant` (empate: maior número) — usa `idx_blockchain_event_block_timestamp`;
+     * `block_timestamp NULL` nunca satisfaz o `<=`. Pagine com `PageRequest.of(0, 1)`. Linhas `[blockNumber, blockTimestamp]`.
+     */
+    @Query(
+        """
+            SELECT e.blockNumber, e.blockTimestamp FROM BlockchainEventEntity e
+            WHERE e.blockTimestamp <= :instant
+            ORDER BY e.blockTimestamp DESC, e.blockNumber DESC
+        """,
+    )
+    fun findFloorBlockPoint(@Param("instant") instant: Instant, pageable: Pageable): List<Array<Any?>>
+
+    /** E33: bloco de MENOR timestamp `>= :instant` (empate: menor número). Mesmo formato de [findFloorBlockPoint]. */
+    @Query(
+        """
+            SELECT e.blockNumber, e.blockTimestamp FROM BlockchainEventEntity e
+            WHERE e.blockTimestamp >= :instant
+            ORDER BY e.blockTimestamp ASC, e.blockNumber ASC
+        """,
+    )
+    fun findCeilingBlockPoint(@Param("instant") instant: Instant, pageable: Pageable): List<Array<Any?>>
+
     /** `topic0`s distintos já ingeridos para um contrato (E6, detecção automática de interface). */
     @Query("SELECT DISTINCT e.topic0 FROM BlockchainEventEntity e WHERE e.contractAddress = :contractAddress AND e.topic0 IS NOT NULL")
     fun findDistinctTopic0sByContractAddress(@Param("contractAddress") contractAddress: String): Set<String>
