@@ -2,12 +2,21 @@ package br.com.bbchain.evex.indexer.adapters.outbound.blockchain
 
 import br.com.bbchain.evex.indexer.config.BlockchainProperties
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainLog
+import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainCallException
+import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainErrorClassification
+import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainErrorClassifier
 import br.com.bbchain.evex.indexer.domain.blockchain.BlockchainPort
+import br.com.bbchain.evex.indexer.domain.blockchain.CallBlock
+import br.com.bbchain.evex.indexer.domain.blockchain.ProbeResult
 import br.com.bbchain.evex.indexer.domain.blockchain.RpcRangeException
 import com.fasterxml.jackson.core.type.TypeReference as JacksonTypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
+import java.io.IOException
+import java.io.InterruptedIOException
 import java.math.BigInteger
 import java.time.Instant
+import okhttp3.OkHttpClient
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.web3j.abi.FunctionEncoder
 import org.web3j.abi.FunctionReturnDecoder
@@ -24,6 +33,7 @@ import org.web3j.abi.datatypes.Type
 import org.web3j.abi.datatypes.Utf8String
 import org.web3j.protocol.Web3j
 import org.web3j.protocol.core.DefaultBlockParameter
+import org.web3j.protocol.core.DefaultBlockParameterName
 import org.web3j.protocol.core.DefaultBlockParameterNumber
 import org.web3j.protocol.core.Response
 import org.web3j.protocol.core.methods.request.EthFilter
@@ -49,6 +59,7 @@ class Web3jBlockchainClient(
     private val properties: BlockchainProperties,
     private val keycloakTokenProvider: KeycloakTokenProvider,
 ) : BlockchainPort {
+    private val logger = LoggerFactory.getLogger(Web3jBlockchainClient::class.java)
 
     // Referência à própria `HttpService` (não só ao `Web3j` derivado dela) — necessária pro complemento
     // Keycloak (E27/DEC-095): `HttpService.headers` é um `HashMap` mutável, lido de novo por
@@ -57,7 +68,13 @@ class Web3jBlockchainClient(
     // `Authorization` nela (via `addHeaders`) antes de cada request, sem recriar `HttpService`/`Web3j`.
     // Isso é o que permite um token Keycloak (expira em minutos) continuar válido ao longo da vida do
     // processo sem recriar a conexão.
-    internal var httpService: HttpService = HttpService(properties.rpcUrl)
+    //
+    // Timeouts explícitos ([BlockchainProperties.connectTimeout]/[BlockchainProperties.readTimeout]) —
+    // o `HttpService(url)` sem cliente usa o default do OkHttp 4.12 (10s connect/read/write, conferido
+    // no source do jar), que não é configurável. O builder vem de `HttpService.getOkHttpClientBuilder()`
+    // (mantém as `connectionSpecs` do Web3j); o header de auth continua sendo aplicado por
+    // `addHeaders` na `HttpService`, não no `OkHttpClient`, então nada disso é afetado.
+    internal var httpService: HttpService = HttpService(properties.rpcUrl, buildOkHttpClient(properties))
 
     // `internal var` (não `private val`) pelo mesmo motivo de `isRangeError`/`toBlockchainLog` abaixo:
     // permite ao [Web3jBlockchainClientTest] substituir por um `Web3j` mockado (MockK) sem HTTP real,
@@ -85,6 +102,7 @@ class Web3jBlockchainClient(
 
     override fun getLogs(fromBlock: Long, toBlock: Long): List<BlockchainLog> {
         refreshAuthHeader()
+        logger.debug("eth_getLogs solicitado: blocos [{}..{}]", fromBlock, toBlock)
         // `address = null`: EthFilter/Filter é `@JsonInclude(NON_NULL)`, então o campo é omitido do
         // corpo JSON-RPC — o nó interpreta ausência de `address` como "qualquer endereço", diferente
         // de uma lista vazia (que alguns clientes podem tratar como "nenhum endereço"). DEC-001/DEC-002:
@@ -98,13 +116,25 @@ class Web3jBlockchainClient(
         if (response.hasError()) {
             val error = response.error
             if (isRangeError(error)) {
+                logger.warn(
+                    "eth_getLogs recusado por range em [{}..{}] (code={}): {}",
+                    fromBlock,
+                    toBlock,
+                    error.code,
+                    error.message,
+                )
                 throw RpcRangeException("eth_getLogs recusado por range (code=${error.code}): ${error.message}")
             }
+            logger.error("eth_getLogs falhou em [{}..{}] (code={}): {}", fromBlock, toBlock, error.code, error.message)
             throw IllegalStateException("eth_getLogs falhou (code=${error.code}): ${error.message}")
         }
-        return response.logs
-            .map { it.get() as Log }
-            .map { it.toBlockchainLog() }
+        val logs = response.logs.map { it.get() as Log }
+        if (logs.isNotEmpty()) {
+            logger.info("eth_getLogs [{}..{}]: {} log(s) recebido(s) da rede", fromBlock, toBlock, logs.size)
+        } else {
+            logger.debug("eth_getLogs [{}..{}]: nenhum log novo", fromBlock, toBlock)
+        }
+        return logs.map { it.toBlockchainLog() }
     }
 
     override fun getBlockTimestamp(blockNumber: Long): Instant {
@@ -125,33 +155,83 @@ class Web3jBlockchainClient(
         return code != "0x"
     }
 
-    // E19/DEC-082 ("Perfil de Enriquecimento"): eth_call de leitura no bloco histórico informado (não
-    // `latest`). Mesmo padrão de tratamento de erro de `currentBlockNumber`/`getBlockTimestamp`/
-    // `hasCode`: sem checagem de `hasError()` própria (essa é exclusiva de `getLogs`, que precisa
-    // distinguir erro de range pra disparar auto-shrink) — se o nó retornar erro JSON-RPC, o campo
-    // `result` vem nulo (JSON-RPC nunca preenche `result` e `error` juntos), e isso já basta pra
-    // detectar a falha aqui; qualquer outra falha (timeout, `IOException`) sobe crua, igual às demais.
+    // E19/DEC-082 ("Perfil de Enriquecimento"): eth_call de leitura no bloco informado ([CallBlock.Number]
+    // histórico ou [CallBlock.Latest]). Erro JSON-RPC vira [BlockchainCallException] preservando
+    // code/message/data BRUTOS (`Response.Error.getData()` antes era descartado); timeout/IO viram
+    // [BlockchainCallException] sem URL na mensagem (regra S4). Quem chama decide como degradar (DEC-057).
     override fun call(
         contractAddress: String,
         methodName: String,
         inputTypes: List<String>,
         outputTypes: List<String>,
         args: List<String>,
-        blockNumber: Long,
+        block: CallBlock,
     ): List<String> {
+        require(args.size == inputTypes.size) {
+            "Aridade inconsistente em eth_call '$methodName': ${inputTypes.size} tipo(s) de entrada " +
+                "mas ${args.size} argumento(s)"
+        }
         refreshAuthHeader()
         val inputParameters: List<Type<*>> = inputTypes.zip(args).map { (type, value) -> toSolidityValue(type, value) }
         val outputParameters: List<TypeReference<*>> = outputTypes.map { TypeReference.makeTypeReference(it) }
         val function = Function(methodName, inputParameters, outputParameters)
         val encodedFunction = FunctionEncoder.encode(function)
         val transaction = Transaction.createEthCallTransaction(null, contractAddress, encodedFunction)
-        val response = web3j.ethCall(transaction, DefaultBlockParameter.valueOf(BigInteger.valueOf(blockNumber))).send()
+        val response = try {
+            web3j.ethCall(transaction, block.toDefaultBlockParameter()).send()
+        } catch (ex: IOException) {
+            throw transportFailure("eth_call", ex)
+        }
+        if (response.hasError()) {
+            val error = response.error
+            throw BlockchainCallException.fromRpcError("eth_call", error.code, error.message, error.data)
+        }
         val result = response.value
-            ?: throw IllegalStateException(
-                "eth_call em $contractAddress.$methodName (bloco $blockNumber) não retornou resultado " +
-                    "(code=${response.error?.code}): ${response.error?.message}",
+            ?: throw BlockchainCallException(
+                code = null,
+                rpcMessage = null,
+                data = null,
+                classification = BlockchainErrorClassification.UNCLASSIFIED,
+                message = "eth_call ($block) não retornou resultado nem erro",
             )
         return FunctionReturnDecoder.decode(result, function.outputParameters).map { it.toCallResultString() }
+    }
+
+    // Sonda de estado (indício de diagnóstico, nunca causa): `eth_getCode` no bloco — mesma exigência de
+    // estado histórico do `eth_call`, porém barato e sem depender de ABI/argumentos.
+    override fun probeStateAt(address: String, block: Long): ProbeResult {
+        refreshAuthHeader()
+        return try {
+            val response = web3j.ethGetCode(address, DefaultBlockParameterNumber(block)).send()
+            if (response.hasError()) {
+                val error = response.error
+                ProbeResult.Failed(
+                    error.code,
+                    error.message,
+                    error.data,
+                    BlockchainErrorClassifier.classify(error.code, error.message, error.data),
+                )
+            } else {
+                ProbeResult.Ok(hasCode = response.code != null && response.code != "0x")
+            }
+        } catch (ex: IOException) {
+            val failure = transportFailure("eth_getCode", ex)
+            ProbeResult.Failed(null, null, null, failure.classification)
+        }
+    }
+
+    private fun CallBlock.toDefaultBlockParameter(): DefaultBlockParameter = when (this) {
+        is CallBlock.Number -> DefaultBlockParameterNumber(value)
+        CallBlock.Latest -> DefaultBlockParameterName.LATEST
+    }
+
+    private fun transportFailure(operation: String, ex: IOException): BlockchainCallException {
+        val isTimeout = ex is InterruptedIOException || ex.message?.contains("timeout", ignoreCase = true) == true
+        return BlockchainCallException.transport(
+            operation,
+            if (isTimeout) BlockchainErrorClassification.TIMEOUT else BlockchainErrorClassification.IO,
+            ex,
+        )
     }
 
     /**
@@ -296,6 +376,13 @@ class Web3jBlockchainClient(
     )
 
     companion object {
+        /** Cliente OkHttp com timeouts explícitos de [BlockchainProperties] — `internal` para teste de propriedades. */
+        internal fun buildOkHttpClient(properties: BlockchainProperties): OkHttpClient =
+            HttpService.getOkHttpClientBuilder()
+                .connectTimeout(properties.connectTimeout)
+                .readTimeout(properties.readTimeout)
+                .build()
+
         // Detecta o sufixo de array Solidity no fim do tipo (`T[]`/`T[N]`) — grupo 1 é o tipo do
         // elemento, grupo 2 é o tamanho (vazio pra dinâmico). Só o ÚLTIMO par de colchetes, de
         // propósito: não cobre array de array (`uint256[][]`) nem array de tupla — fora de escopo

@@ -251,4 +251,166 @@ class BalanceProjectionServiceTest {
             assertThat(captor.warnMessages().count { it.contains("não gerou nenhum delta") }).isEqualTo(2)
         }
     }
+
+    // ---- DEC-110: eventos em lote (batch=true) ----
+
+    private val zero = "0x0000000000000000000000000000000000000000"
+    private val walletA = "0x1111111111111111111111111111111111111111"
+    private val walletB = "0x2222222222222222222222222222222222222222"
+
+    private fun batchConfig(
+        behavior: BalanceBehavior = BalanceBehavior.TRANSFER,
+        batch: Boolean = true,
+    ) = BalanceMonitorConfig(
+        id = UUID.randomUUID(),
+        contractAddress = contractAddress,
+        network = Network.TESTNET,
+        eventName = "TransferBatch",
+        behavior = behavior,
+        walletParam = if (behavior == BalanceBehavior.TRANSFER) null else "wallet",
+        fromParam = if (behavior == BalanceBehavior.TRANSFER) "from" else null,
+        toParam = if (behavior == BalanceBehavior.TRANSFER) "to" else null,
+        valueParam = "values",
+        tokenIdParam = "ids",
+        active = true,
+        createdAt = Instant.now(),
+        batch = batch,
+    )
+
+    private fun batchEvent(parameters: Map<String, Any?>) = decodedEvent(eventName = "TransferBatch", parameters = parameters)
+
+    private fun project(config: BalanceMonitorConfig, vararg events: BlockchainEvent): List<BalanceDelta> {
+        every { configs.findActive(contractAddress, "TransferBatch") } returns listOf(config)
+        val slot = slot<List<BalanceDelta>>()
+        every { balances.applyDeltas(capture(slot)) } returns Unit
+        service.projectBatch(events.toList())
+        return if (slot.isCaptured) slot.captured else emptyList()
+    }
+
+    @Test
+    fun `batch mint (from = zero address) credits only the recipient on EACH id`() {
+        val deltas = project(
+            batchConfig(),
+            batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(2, 3), "values" to listOf(10, 20))),
+        )
+
+        assertThat(deltas).hasSize(2)
+        assertThat(deltas).allMatch { it.walletAddress == walletB }
+        assertThat(deltas.associate { it.tokenId to it.amount }).isEqualTo(
+            mapOf("2" to BigInteger.TEN, "3" to BigInteger.valueOf(20)),
+        )
+    }
+
+    @Test
+    fun `batch transfer debits the sender and credits the recipient on each id`() {
+        val deltas = project(
+            batchConfig(),
+            batchEvent(mapOf("from" to walletA, "to" to walletB, "ids" to listOf(2, 3), "values" to listOf(10, 20))),
+        )
+
+        assertThat(deltas).hasSize(4)
+        assertThat(deltas.filter { it.walletAddress == walletA }.associate { it.tokenId to it.amount }).isEqualTo(
+            mapOf("2" to BigInteger.TEN.negate(), "3" to BigInteger.valueOf(-20)),
+        )
+        assertThat(deltas.filter { it.walletAddress == walletB }.associate { it.tokenId to it.amount }).isEqualTo(
+            mapOf("2" to BigInteger.TEN, "3" to BigInteger.valueOf(20)),
+        )
+    }
+
+    @Test
+    fun `batch burn (to = zero address) only debits the sender`() {
+        val deltas = project(
+            batchConfig(),
+            batchEvent(mapOf("from" to walletA, "to" to zero, "ids" to listOf(2, 3), "values" to listOf(10, 20))),
+        )
+
+        assertThat(deltas).hasSize(2)
+        assertThat(deltas).allMatch { it.walletAddress == walletA && it.amount.signum() < 0 }
+    }
+
+    @Test
+    fun `CREDIT DEBIT and DELTA also work in batch mode with a scalar wallet`() {
+        val params = mapOf("wallet" to walletA, "ids" to listOf(1, 2), "values" to listOf(5, 7))
+
+        val credit = project(batchConfig(BalanceBehavior.CREDIT), batchEvent(params))
+        assertThat(credit.map { it.amount }).containsExactly(BigInteger.valueOf(5), BigInteger.valueOf(7))
+        assertThat(credit.map { it.tokenId }).containsExactly("1", "2")
+
+        val debit = project(batchConfig(BalanceBehavior.DEBIT), batchEvent(params))
+        assertThat(debit.map { it.amount }).containsExactly(BigInteger.valueOf(-5), BigInteger.valueOf(-7))
+
+        val delta = project(batchConfig(BalanceBehavior.DELTA), batchEvent(mapOf("wallet" to walletA, "ids" to listOf(1, 2), "values" to listOf(-5, 7))))
+        assertThat(delta.map { it.amount }).containsExactly(BigInteger.valueOf(-5), BigInteger.valueOf(7))
+    }
+
+    @Test
+    fun `arrays of different sizes discard the WHOLE event with a deduplicated WARN, and the rest of the batch still applies`() {
+        val invalidA = batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(2, 3), "values" to listOf(10)))
+        val invalidB = batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(4), "values" to listOf(1, 2)))
+        val valid = batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(9), "values" to listOf(1)))
+        every { configs.findActive(contractAddress, "TransferBatch") } returns listOf(batchConfig())
+        val slot = slot<List<BalanceDelta>>()
+        every { balances.applyDeltas(capture(slot)) } returns Unit
+
+        LogCaptor(BalanceProjectionService::class.java).use { captor ->
+            service.projectBatch(listOf(invalidA, valid, invalidB))
+
+            assertThat(captor.warnMessages().count { it.contains("Falha ao projetar saldo") }).isEqualTo(1)
+        }
+        assertThat(slot.captured).hasSize(1)
+        assertThat(slot.captured.single().tokenId).isEqualTo("9")
+    }
+
+    @Test
+    fun `batch=false with list params discards the event with an explicit WARN suggesting batch=true, no garbage tokenId`() {
+        every { configs.findActive(contractAddress, "TransferBatch") } returns listOf(batchConfig(batch = false))
+
+        LogCaptor(BalanceProjectionService::class.java).use { captor ->
+            service.projectBatch(
+                listOf(batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(2, 3), "values" to listOf(10, 20)))),
+            )
+
+            assertThat(captor.warnMessages()).anyMatch { it.contains("batch=true") }
+        }
+        verify(exactly = 0) { balances.applyDeltas(any()) }
+    }
+
+    @Test
+    fun `batch=true with an empty array is a no-op without any WARN`() {
+        every { configs.findActive(contractAddress, "TransferBatch") } returns listOf(batchConfig())
+
+        LogCaptor(BalanceProjectionService::class.java).use { captor ->
+            service.projectBatch(
+                listOf(batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to emptyList<Any>(), "values" to emptyList<Any>()))),
+            )
+
+            assertThat(captor.warnMessages()).isEmpty()
+        }
+        verify(exactly = 0) { balances.applyDeltas(any()) }
+    }
+
+    @Test
+    fun `batch=true keeps repeated ids as separate deltas and handles 2^256-1 values`() {
+        val max = BigInteger.TWO.pow(256).subtract(BigInteger.ONE)
+        val deltas = project(
+            batchConfig(),
+            batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(5, 5), "values" to listOf(max, 1))),
+        )
+        assertThat(deltas.map { it.amount }).containsExactly(max, BigInteger.ONE)
+        assertThat(deltas.map { it.tokenId }).containsExactly("5", "5")
+    }
+
+    @Test
+    fun `projectHistoryForConfig (backfill) also expands batch events`() {
+        val slot = slot<List<BalanceDelta>>()
+        every { balances.applyDeltas(capture(slot)) } returns Unit
+
+        val count = service.projectHistoryForConfig(
+            listOf(batchEvent(mapOf("from" to zero, "to" to walletB, "ids" to listOf(2, 3), "values" to listOf(10, 20)))),
+            batchConfig(),
+        )
+
+        assertThat(count).isEqualTo(2)
+        assertThat(slot.captured.map { it.tokenId }).containsExactly("2", "3")
+    }
 }

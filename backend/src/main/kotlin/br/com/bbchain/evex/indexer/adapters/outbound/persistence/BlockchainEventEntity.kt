@@ -37,6 +37,8 @@ import org.springframework.data.domain.Persistable
     indexes = [
         Index(name = "idx_blockchain_event_contract_address", columnList = "contract_address"),
         Index(name = "idx_blockchain_event_block_number", columnList = "block_number"),
+        // E33: data -> bloco e filtro de data de eventos (block_timestamp, desempate por bloco).
+        Index(name = "idx_blockchain_event_block_timestamp", columnList = "block_timestamp,block_number"),
     ],
     uniqueConstraints = [UniqueConstraint(columnNames = ["tx_hash", "log_index"])],
 )

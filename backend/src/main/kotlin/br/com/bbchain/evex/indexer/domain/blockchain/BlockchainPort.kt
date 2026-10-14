@@ -54,6 +54,24 @@ interface BlockchainPort {
      * nó RPC com estado histórico retido (`archive`/não-podado) para blocos antigos — Hardhat local
      * retém tudo por padrão; Besu em produção pode estar configurado como nó podado. Quem chama decide
      * como degradar (timeout curto + não travar o dispatch, DEC-057) se a chamada falhar.
+     *
+     * [block] escolhe o bloco ([CallBlock.Number] histórico ou [CallBlock.Latest]). Contrato de erro:
+     * `args.size != inputTypes.size` lança `IllegalArgumentException` (nunca trunca em silêncio); erro
+     * JSON-RPC do nó e falha de transporte sobem como [BlockchainCallException] (code/message/data
+     * brutos + `classification`).
+     */
+    fun call(
+        contractAddress: String,
+        methodName: String,
+        inputTypes: List<String>,
+        outputTypes: List<String>,
+        args: List<String>,
+        block: CallBlock,
+    ): List<String>
+
+    /**
+     * Atalho histórico: `eth_call` em bloco numérico exato. Delega a [call] com [CallBlock.Number] —
+     * mantém compatível todo chamador/teste anterior ao [CallBlock].
      */
     fun call(
         contractAddress: String,
@@ -62,5 +80,12 @@ interface BlockchainPort {
         outputTypes: List<String>,
         args: List<String>,
         blockNumber: Long,
-    ): List<String>
+    ): List<String> = call(contractAddress, methodName, inputTypes, outputTypes, args, CallBlock.Number(blockNumber))
+
+    /**
+     * Sonda de estado: `eth_getCode` de [address] no [block]. Usada só como INDÍCIO no diagnóstico
+     * do preview de enriquecimento (o nó tem estado para esse bloco?). Nunca lança por erro de RPC —
+     * devolve [ProbeResult.Failed] com o erro bruto.
+     */
+    fun probeStateAt(address: String, block: Long): ProbeResult
 }

@@ -7,10 +7,19 @@
  */
 import { http, HttpResponse, delay } from 'msw'
 import type {
+  AbiHistoryImportPayload,
+  AbiHistoryItem,
+  AbiHistoryPlan,
   BalanceMonitorConfig,
   Contract,
   ContractAbi,
   CreateBalanceMonitorPayload,
+  CreateEntityModelPayload,
+  EntityModel,
+  ModelContributor,
+  UpdateBalanceMonitorPayload,
+  UpdateEntityModelPayload,
+  UpdateEntityModelStatusPayload,
   CreateContractPayload,
   CreateWalletPayload,
   CreateWebhookPayload,
@@ -32,6 +41,94 @@ import {
   helpers,
   interfaceSuggestions,
 } from './db'
+import { webhookResendHandlers } from './webhookResendHandlers'
+
+/** Contratos cujo histórico já foi "importado" nesta sessão do mock (vira SKIP_ALREADY_IMPORTED). */
+const historyImported = new Set<string>()
+
+const IMPL = {
+  v1: '0x4444000000000000000000000000000000000001',
+  v2: '0x4444000000000000000000000000000000000002',
+  v3: '0x4444000000000000000000000000000000000003',
+}
+const TX = (n: number) => `0x${n.toString(16).padStart(64, '0')}`
+
+/**
+ * Plano de histórico de ABI (DEC-105), fictício. AUTO/INGESTED_ONLY: 3 upgrades (o 3º com a mesma ABI
+ * do 2º; diff do 1→2 com 3 métodos adicionados). BLOCKSCOUT_ONLY: variante com o 2º upgrade sem ABI
+ * verificada (PENDING_NO_VERIFIED_ABI) e o 3º BLOCKED_AFTER_PENDING.
+ */
+function buildHistoryPlan(
+  address: string,
+  source: string,
+  applied: boolean,
+  replaceLegacy = false,
+): AbiHistoryPlan {
+  const pendingVariant = source === 'BLOCKSCOUT_ONLY'
+  // Contrato com versão legada (BLOCKSCOUT sem implementação, from=0): sem a flag o legado ocupa o
+  // início da linha do tempo (CONFLICT_MANUAL + BLOCKED_AFTER_PENDING); com a flag, tudo vira APPLY.
+  const legacy =
+    address === ADDR.legacyProxy
+      ? db.abis.filter((a) => a.contractAddress === address && a.source === 'BLOCKSCOUT' && !a.implementationAddress)
+      : []
+  const blockedByLegacy = legacy.length > 0 && !replaceLegacy
+  const done = (status: string) => (applied && status === 'APPLY' ? 'SKIP_ALREADY_IMPORTED' : status)
+  const items: AbiHistoryItem[] = [
+    {
+      sequence: 1, validFromBlock: 0, validToBlock: 299, upgradeBlockNumber: 100, implementationAddress: IMPL.v1,
+      txHash: TX(1), upgradeSource: 'BOTH', abiAvailable: true, identicalToPrevious: false,
+      ...(blockedByLegacy
+        ? { status: 'CONFLICT_MANUAL', statusReason: 'Já existe uma versão de ABI (legada) neste início de faixa.' }
+        : { status: done('APPLY') }),
+    },
+    pendingVariant
+      ? {
+          sequence: 2, validFromBlock: 300, validToBlock: 499, upgradeBlockNumber: 300, implementationAddress: IMPL.v2,
+          txHash: TX(2), upgradeSource: 'BLOCKSCOUT', abiAvailable: false, status: 'PENDING_NO_VERIFIED_ABI',
+          statusReason: 'A implementação não tem ABI verificada no Blockscout.', identicalToPrevious: false,
+        }
+      : {
+          sequence: 2, validFromBlock: 300, validToBlock: 499, upgradeBlockNumber: 300, implementationAddress: IMPL.v2,
+          txHash: TX(2), upgradeSource: 'BLOCKSCOUT', abiAvailable: true, identicalToPrevious: false,
+          ...(blockedByLegacy
+            ? { status: 'BLOCKED_AFTER_PENDING', statusReason: 'Vem depois de um item em conflito.' }
+            : { status: done('APPLY') }),
+          diffFromPrevious: {
+            eventsAdded: ['EventTwo(uint256)'],
+            eventsRemoved: ['EventOne(uint256)'],
+            methodsAdded: ['burn(uint256)', 'mint(address,uint256)', 'pause()'],
+            methodsRemoved: [],
+          },
+        },
+    pendingVariant
+      ? {
+          sequence: 3, validFromBlock: 500, upgradeBlockNumber: 500, implementationAddress: IMPL.v3, txHash: TX(3),
+          upgradeSource: 'BLOCKSCOUT', abiAvailable: true, status: 'BLOCKED_AFTER_PENDING',
+          statusReason: 'Vem depois de um item pendente.', identicalToPrevious: false,
+        }
+      : {
+          sequence: 3, validFromBlock: 500, upgradeBlockNumber: 500, implementationAddress: IMPL.v3, txHash: TX(3),
+          upgradeSource: 'INGESTED', abiAvailable: true, identicalToPrevious: true,
+          ...(blockedByLegacy
+            ? { status: 'BLOCKED_AFTER_PENDING', statusReason: 'Vem depois de um item em conflito.' }
+            : { status: done('APPLY') }),
+          diffFromPrevious: { eventsAdded: [], eventsRemoved: [], methodsAdded: [], methodsRemoved: [] },
+        },
+  ]
+  const willApply = items.some((i) => i.status === 'APPLY')
+  return {
+    contractAddress: address,
+    historySource: source as AbiHistoryPlan['historySource'],
+    ingestedUntilBlock: 620,
+    truncated: false,
+    // A flag entra no fingerprint (o plano com a flag é outro plano); legacyVersionsToReplace, não.
+    fingerprint: `mock-${source}-${applied ? 'applied' : 'fresh'}${replaceLegacy ? '-replace' : ''}`,
+    warnings: pendingVariant ? ['Dado do Blockscout isolado: o histórico pode estar incompleto.'] : [],
+    items,
+    legacyVersionsToReplace:
+      replaceLegacy && willApply ? legacy.map((a) => ({ abiId: a.id, validFromBlock: a.validFromBlock })) : [],
+  }
+}
 
 const CONTROL_PANEL = 'http://localhost:8899'
 
@@ -50,7 +147,73 @@ const findWallet = (address: string) => db.wallets.find((w) => w.address.toLower
 const notFound = (code = 'NOT_FOUND', message = 'Não encontrado') =>
   HttpResponse.json({ code, message, timestamp: new Date().toISOString() }, { status: 404 })
 
+const apiError = (code: string, message: string, status = 400) =>
+  HttpResponse.json({ code, message, timestamp: new Date().toISOString() }, { status })
+
+type BatchCheck = { error?: string; warnings: string[] }
+
+/**
+ * Equivalente mock da validação `batch` × ABI (DEC-110): considera TODAS as versões do catálogo do
+ * contrato. 400 só se nenhuma versão é compatível; se só algumas, devolve aviso com as faixas incompatíveis.
+ */
+function checkBatch(body: { contractAddress: string; eventName: string; valueParam: string; tokenIdParam?: string; batch?: boolean }): BatchCheck {
+  const batch = body.batch === true
+  const versions = (eventCatalogs[body.contractAddress.toLowerCase()] ?? []).filter((e) => e.name === body.eventName)
+  if (versions.length === 0) return { warnings: [] }
+  const isArray = (type: string) => /^u?int\d*\[\d*]$/.test(type)
+  const compatible = (e: (typeof versions)[number]) =>
+    [body.valueParam, body.tokenIdParam].every((name) => {
+      const t = name ? e.inputs.find((i) => i.name === name)?.type : undefined
+      return t === undefined || (batch ? isArray(t) : !t.endsWith(']'))
+    })
+  const bad = versions.filter((e) => !compatible(e))
+  if (bad.length === versions.length) {
+    return {
+      error: batch
+        ? `A flag batch=true exige que valueParam e tokenIdParam sejam arrays numéricos (ex.: uint256[]), mas nenhuma versão da ABI do evento '${body.eventName}' é compatível.`
+        : `A flag batch=false exige parâmetros escalares, mas nenhuma versão da ABI do evento '${body.eventName}' é compatível (há arrays; use batch=true).`,
+      warnings: [],
+    }
+  }
+  if (bad.length > 0) {
+    const ranges = bad.map((e) => `${e.validFromBlock}..${e.validToBlock ?? 'atual'}`).join(', ')
+    return {
+      warnings: [
+        `A flag batch=${batch} é incompatível com a ABI das versões nas faixas de blocos ${ranges} deste contrato; nessas faixas o evento '${body.eventName}' será descartado com WARN.`,
+      ],
+    }
+  }
+  return { warnings: [] }
+}
+
+const KEY_TYPES = ['PARAM', 'EMITTER_ADDRESS', 'TX_HASH', 'BLOCK_NUMBER', 'LITERAL']
+const FIELD_SOURCES = ['PARAM', 'EMITTER_ADDRESS', 'TX_HASH', 'BLOCK_NUMBER', 'BLOCK_TIMESTAMP']
+
+/** Validações 400 do Modelo de Entidade (DEC-111): tipo/source desconhecido, `arg` ausente, aridade, sem chave. */
+function validateContributors(contributors: ModelContributor[]): string | undefined {
+  const arities = new Set<number>()
+  for (const c of contributors) {
+    const key = c.correlationKey?.length ? c.correlationKey : c.correlationParam ? [{ type: 'PARAM', arg: c.correlationParam }] : []
+    if (key.length === 0) return `O contribuinte '${c.eventName}' precisa de correlationKey ou correlationParam.`
+    for (const part of key) {
+      if (!KEY_TYPES.includes(part.type)) return `Tipo de parte da chave desconhecido: '${part.type}'.`
+      if ((part.type === 'PARAM' || part.type === 'LITERAL') && !part.arg) return `A parte ${part.type} da chave exige 'arg'.`
+    }
+    arities.add(key.length)
+    for (const m of c.fieldMappings) {
+      const source = m.source ?? 'PARAM'
+      if (!FIELD_SOURCES.includes(source)) return `Fonte de campo desconhecida: '${source}'.`
+      if (source === 'PARAM' && !m.decodedParam) return `O campo '${m.modelField}' (fonte PARAM) exige 'decodedParam'.`
+    }
+  }
+  if (arities.size > 1) return 'Todos os contribuintes do modelo precisam ter o mesmo número de partes na chave de correlação.'
+  return undefined
+}
+
 export const handlers = [
+  // Pré-visualização/reenvio de webhooks, matching-events, blocks/by-date e capabilities (E33).
+  ...webhookResendHandlers,
+
   // ---------------- Contratos ----------------
 
   http.get('*/v1/contracts', async ({ request }) => {
@@ -148,6 +311,49 @@ export const handlers = [
     return HttpResponse.json(abi, { status: 201 })
   }),
 
+  http.get('*/v1/contracts/:address/abi/history-plan', async ({ params, request }) => {
+    await delay(150)
+    const addr = String(params.address).toLowerCase()
+    if (!findContract(addr)) return notFound('CONTRACT_NOT_FOUND')
+    const source = new URL(request.url).searchParams.get('historySource') ?? 'AUTO'
+    const replaceLegacy = new URL(request.url).searchParams.get('replaceBlockscoutLegacy') === 'true'
+    return HttpResponse.json(buildHistoryPlan(addr, source, historyImported.has(addr), replaceLegacy))
+  }),
+
+  http.post('*/v1/contracts/:address/abi/history-import', async ({ params, request }) => {
+    await delay(150)
+    const addr = String(params.address).toLowerCase()
+    const c = findContract(addr)
+    if (!c) return notFound('CONTRACT_NOT_FOUND')
+    const body = ((await request.json().catch(() => ({}))) ?? {}) as AbiHistoryImportPayload
+    const source = body.historySource ?? 'AUTO'
+    const replaceLegacy = body.replaceBlockscoutLegacy === true
+    const current = buildHistoryPlan(addr, source, historyImported.has(addr), replaceLegacy)
+    if (body.expectedFingerprint && body.expectedFingerprint !== current.fingerprint) {
+      return HttpResponse.json(
+        { code: 'ABI_HISTORY_PLAN_CHANGED', message: 'O plano mudou desde o dry-run.', timestamp: new Date().toISOString() },
+        { status: 409 },
+      )
+    }
+    const toApply = current.items.filter((i) => i.status === 'APPLY')
+    if (toApply.length > 0 && replaceLegacy) {
+      const removed = new Set((current.legacyVersionsToReplace ?? []).map((l) => l.abiId))
+      db.abis = db.abis.filter((a) => !removed.has(a.id))
+    }
+    const items = current.items.map((i) => {
+      if (i.status !== 'APPLY') return i
+      const abi: ContractAbi = {
+        id: helpers.uid(), contractAddress: addr, network: c.network, source: 'BLOCKSCOUT',
+        storageType: body.storage ?? 'DATABASE', validFromBlock: i.validFromBlock, validToBlock: i.validToBlock,
+        implementationAddress: i.implementationAddress, createdAt: new Date().toISOString(),
+      }
+      db.abis.push(abi)
+      return { ...i, abiId: abi.id }
+    })
+    if (toApply.length > 0) historyImported.add(addr)
+    return HttpResponse.json({ ...current, items, appliedCount: toApply.length, redecodeStarted: toApply.length > 0 })
+  }),
+
   http.get('*/v1/contracts/:address/abi/suggestions', async ({ params }) => {
     const addr = String(params.address).toLowerCase()
     return HttpResponse.json(interfaceSuggestions[addr] ?? [])
@@ -203,9 +409,12 @@ export const handlers = [
 
   http.post('*/v1/balance-monitors', async ({ request }) => {
     const body = (await request.json()) as CreateBalanceMonitorPayload
-    const created: BalanceMonitorConfig = { id: helpers.uid(), ...body, active: true, createdAt: new Date().toISOString() }
+    const check = checkBatch(body)
+    if (check.error) return apiError('INVALID_BALANCE_MONITOR_CONFIG', check.error)
+    const created: BalanceMonitorConfig = { id: helpers.uid(), ...body, batch: body.batch === true, active: true, createdAt: new Date().toISOString() }
     db.monitors.unshift(created)
-    return HttpResponse.json(created, { status: 201 })
+    // `warnings` só na resposta do POST/PUT (não fica no db: o GET não devolve).
+    return HttpResponse.json(check.warnings.length ? { ...created, warnings: check.warnings } : created, { status: 201 })
   }),
 
   http.get('*/v1/balance-monitors/backfill/status', async () =>
@@ -225,10 +434,52 @@ export const handlers = [
     return m ? HttpResponse.json(m) : notFound('BALANCE_MONITOR_NOT_FOUND')
   }),
 
-  http.patch('*/v1/balance-monitors/:id', async ({ params, request }) => {
+  http.put('*/v1/balance-monitors/:id', async ({ params, request }) => {
     const m = db.monitors.find((x) => x.id === params.id)
     if (!m) return notFound('BALANCE_MONITOR_NOT_FOUND')
-    Object.assign(m, await request.json())
+    const body = (await request.json()) as UpdateBalanceMonitorPayload
+    const check = checkBatch(body)
+    if (check.error) return apiError('INVALID_BALANCE_MONITOR_CONFIG', check.error)
+    Object.assign(m, body, { batch: body.batch === true }) // PUT: `batch` omitido = false
+    return HttpResponse.json(check.warnings.length ? { ...m, warnings: check.warnings } : m)
+  }),
+
+  // ---------------- Modelos de Entidade (E19 + DEC-111) ----------------
+
+  http.get('*/v1/entity-models', async ({ request }) => {
+    const url = new URL(request.url)
+    const network = url.searchParams.get('network')
+    return HttpResponse.json(page(network ? db.entityModels.filter((m) => m.network === network) : db.entityModels, url))
+  }),
+
+  http.post('*/v1/entity-models', async ({ request }) => {
+    const body = (await request.json()) as CreateEntityModelPayload
+    const error = validateContributors(body.contributors)
+    if (error) return apiError('INVALID_ENTITY_MODEL', error)
+    const created: EntityModel = { id: helpers.uid(), ...body, status: 'ACTIVE', createdAt: new Date().toISOString() }
+    db.entityModels.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+
+  http.get('*/v1/entity-models/:id', async ({ params }) => {
+    const m = db.entityModels.find((x) => x.id === params.id)
+    return m ? HttpResponse.json(m) : notFound('ENTITY_MODEL_NOT_FOUND')
+  }),
+
+  http.put('*/v1/entity-models/:id', async ({ params, request }) => {
+    const m = db.entityModels.find((x) => x.id === params.id)
+    if (!m) return notFound('ENTITY_MODEL_NOT_FOUND')
+    const body = (await request.json()) as UpdateEntityModelPayload
+    const error = validateContributors(body.contributors)
+    if (error) return apiError('INVALID_ENTITY_MODEL', error)
+    Object.assign(m, body)
+    return HttpResponse.json(m)
+  }),
+
+  http.patch('*/v1/entity-models/:id/status', async ({ params, request }) => {
+    const m = db.entityModels.find((x) => x.id === params.id)
+    if (!m) return notFound('ENTITY_MODEL_NOT_FOUND')
+    m.status = ((await request.json()) as UpdateEntityModelStatusPayload).status
     return HttpResponse.json(m)
   }),
 

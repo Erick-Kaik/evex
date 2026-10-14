@@ -1,0 +1,24 @@
+post:
+  tags:
+    - Webhooks
+  operationId: previewWebhook
+  summary: Pré-visualiza (dry-run) o payload que o webhook enviaria para eventos existentes
+  description: >-
+    Nenhum POST e nenhuma gravação. Renderiza o payload final (template, `{{model.*}}`, `{{enriched.*}}`)
+    e devolve, por chamada de enriquecimento, o resultado/erro bruto do nó. Permitido mesmo com o webhook
+    pausado. `status`, `mode`, `reason`, `classification` e `code` são strings extensíveis.
+  parameters:
+    - $ref: "../base/components/param/path/webhook-id.yaml"
+  requestBody:
+    $ref: "../base/components/requests/webhook-preview-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/webhook-preview-result-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+    "422":
+      $ref: "../base/components/responses/error-response.yaml"
+    "429":
+      $ref: "../base/components/responses/rate-limited-response.yaml"

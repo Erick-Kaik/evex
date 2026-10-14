@@ -21,11 +21,13 @@ import {
 import SearchIcon from '@mui/icons-material/Search'
 import AddIcon from '@mui/icons-material/Add'
 import ListAltIcon from '@mui/icons-material/ListAlt'
+import HistoryIcon from '@mui/icons-material/History'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { useContractAbiVersions } from './useContracts'
 import { useRedecodeStatus } from './useRedecodeStatus'
 import { AbiRegisterDialog } from './AbiRegisterDialog'
 import { AbiSuggestionsDialog } from './AbiSuggestionsDialog'
+import { AbiHistoryImportDialog } from './AbiHistoryImportDialog'
 
 interface AbiSectionProps {
   address: string
@@ -44,13 +46,17 @@ export function AbiSection({ address }: AbiSectionProps) {
   const redecode = useRedecodeStatus()
   const [registerOpen, setRegisterOpen] = useState(false)
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   return (
     <Card variant="outlined" sx={{ mt: 3 }}>
       <CardContent>
         <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="h6">ABI</Typography>
-          <Stack direction="row" sx={{ gap: 1 }}>
+          <Stack direction="row" sx={{ gap: 1, flexWrap: 'wrap' }}>
+            <Button size="small" startIcon={<HistoryIcon />} onClick={() => setHistoryOpen(true)}>
+              Importar histórico de versões do Blockscout
+            </Button>
             <Button size="small" startIcon={<SearchIcon />} onClick={() => setSuggestionsOpen(true)}>
               Ver sugestões automáticas
             </Button>
@@ -127,6 +133,15 @@ export function AbiSection({ address }: AbiSectionProps) {
       </CardContent>
 
       <AbiRegisterDialog address={address} open={registerOpen} onClose={() => setRegisterOpen(false)} />
+      <AbiHistoryImportDialog
+        address={address}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onRegisterManual={() => {
+          setHistoryOpen(false)
+          setRegisterOpen(true)
+        }}
+      />
       <AbiSuggestionsDialog address={address} open={suggestionsOpen} onClose={() => setSuggestionsOpen(false)} />
     </Card>
   )

@@ -1,0 +1,5 @@
+description: Reenvio aceito — entregas criadas como `PENDING`.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-resend-result.yaml"

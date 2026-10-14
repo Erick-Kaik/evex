@@ -30,6 +30,10 @@ tags:
     description: >-
       Modelos de entidade — acumulação de campos de eventos diferentes sobre a mesma entidade lógica,
       reaproveitável por webhooks (E19/DEC-082).
+  - name: Blocks
+    description: Conversão data -> bloco (E33).
+  - name: Capabilities
+    description: Capacidades e limites habilitados na instância (E33).
 
 paths:
   /v1/contracts:
@@ -42,6 +46,10 @@ paths:
     $ref: "../paths/contract-abi.yaml"
   /v1/contracts/{address}/abi/suggestions:
     $ref: "../paths/contract-abi-suggestions.yaml"
+  /v1/contracts/{address}/abi/history-plan:
+    $ref: "../paths/contract-abi-history-plan.yaml"
+  /v1/contracts/{address}/abi/history-import:
+    $ref: "../paths/contract-abi-history-import.yaml"
   /v1/contracts/{address}/events:
     $ref: "../paths/contract-events.yaml"
   /v1/contracts/{address}/methods:
@@ -88,6 +96,16 @@ paths:
     $ref: "../paths/webhook-status.yaml"
   /v1/webhooks/{id}/deliveries:
     $ref: "../paths/webhook-deliveries.yaml"
+  /v1/webhooks/{id}/matching-events:
+    $ref: "../paths/webhook-matching-events.yaml"
+  /v1/webhooks/{id}/preview:
+    $ref: "../paths/webhook-preview.yaml"
+  /v1/webhooks/{id}/resend:
+    $ref: "../paths/webhook-resend.yaml"
+  /v1/blocks/by-date:
+    $ref: "../paths/blocks-by-date.yaml"
+  /v1/capabilities:
+    $ref: "../paths/capabilities.yaml"
   /v1/wallets/suggestions:
     $ref: "../paths/wallet-suggestions.yaml"
   /v1/wallets:

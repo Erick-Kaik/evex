@@ -2,6 +2,8 @@ import { isAxiosError } from 'axios'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ContractsApi, DiscoveryApi } from '../../api/api'
 import type {
+  AbiHistoryImportPayload,
+  AbiHistorySource,
   BlockscoutContract,
   CreateContractPayload,
   RegisterAbiPayload,
@@ -140,6 +142,52 @@ export function useContractUpgradeability(address: string | undefined) {
     queryKey: ['contract-upgradeability', address],
     queryFn: async () => (await contractsApi.getContractUpgradeability(address as string)).data,
     enabled: Boolean(address),
+  })
+}
+
+/** Prefixo da chave do plano de importação de histórico de ABI (DEC-105) — invalida todas as fontes. */
+export const abiHistoryPlanKey = (address: string) => ['contract-abi-history-plan', address] as const
+
+/**
+ * Dry-run da importação do histórico de versões de ABI de um proxy
+ * (`GET /v1/contracts/{address}/abi/history-plan`, DEC-105) — não grava nada. `enabled` deixa o
+ * chamador só consultar quando o diálogo está aberto (a consulta pode ir ao Blockscout, é cara).
+ * `replaceBlockscoutLegacy` entra na chave: o plano com a flag é outro plano (fingerprint próprio).
+ */
+export function useAbiHistoryPlan(
+  address: string,
+  historySource: AbiHistorySource,
+  replaceBlockscoutLegacy: boolean,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: [...abiHistoryPlanKey(address), historySource, replaceBlockscoutLegacy],
+    queryFn: async () =>
+      (await contractsApi.getContractAbiHistoryPlan(address, historySource, replaceBlockscoutLegacy)).data,
+    enabled,
+    retry: false,
+  })
+}
+
+/**
+ * Aplica o plano (`POST /v1/contracts/{address}/abi/history-import`, DEC-105). O backend dispara UM
+ * redecode ao final, então além de ABI/versões/eventos invalida `redecodeStatusKey` (acorda o polling
+ * degradado, como `useRegisterAbi`) e o plano (o que foi aplicado vira `SKIP_ALREADY_IMPORTED`).
+ */
+export function useImportAbiHistory(address: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (payload: AbiHistoryImportPayload) =>
+      (await contractsApi.importContractAbiHistory(address, payload)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['contract-abi-versions', address] })
+      void queryClient.invalidateQueries({ queryKey: ['contract-abi-entries', address] })
+      void queryClient.invalidateQueries({ queryKey: ['contract-upgradeability', address] })
+      void queryClient.invalidateQueries({ queryKey: ['contract', address] })
+      void queryClient.invalidateQueries({ queryKey: ['events'] })
+      void queryClient.invalidateQueries({ queryKey: redecodeStatusKey })
+      void queryClient.invalidateQueries({ queryKey: abiHistoryPlanKey(address) })
+    },
   })
 }
 

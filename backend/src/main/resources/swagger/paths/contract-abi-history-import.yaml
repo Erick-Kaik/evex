@@ -1,0 +1,27 @@
+post:
+  tags:
+    - Contracts
+  operationId: importContractAbiHistory
+  summary: Importa o histórico de versões de ABI de um proxy upgradável (DEC-105)
+  description: >-
+    Aplica o plano de `GET /v1/contracts/{address}/abi/history-plan`: o servidor SEMPRE recalcula o
+    plano e cadastra, em ordem crescente de bloco e numa única transação, só os itens `APPLY` (com
+    `source=BLOCKSCOUT` e a implementação gravada em cada versão), disparando UM único redecode ao
+    final. Nunca sobrescreve versões existentes (única exceção: `replaceBlockscoutLegacy=true`).
+    Se `expectedFingerprint` for informado e divergir do plano recalculado, responde `409` sem
+    aplicar nada. Reexecutar é idempotente (itens já importados viram `SKIP_ALREADY_IMPORTED`).
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+  requestBody:
+    $ref: "../base/components/requests/abi-history-import-request.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/abi-history-plan-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+    "409":
+      $ref: "../base/components/responses/error-response.yaml"
+    "503":
+      $ref: "../base/components/responses/error-response.yaml"

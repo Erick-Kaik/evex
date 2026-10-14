@@ -1,0 +1,23 @@
+get:
+  tags:
+    - Contracts
+  operationId: getContractAbiHistoryPlan
+  summary: Dry-run da importação do histórico de versões de ABI de um proxy upgradável (DEC-105)
+  description: >-
+    Reconstrói a linha do tempo de upgrades (`Upgraded`) do proxy a partir dos eventos ingeridos e/ou
+    dos logs do Blockscout (`historySource`) e, para cada upgrade, informa o que a importação faria
+    (`APPLY`, `SKIP_*`, `CONFLICT_MANUAL`, `PENDING_NO_VERIFIED_ABI`, `BLOCKED_AFTER_PENDING`) e a
+    diferença de interface para o item anterior. Não grava nada. Com `replaceBlockscoutLegacy=true`
+    o plano já considera as versões legadas removidas (o mesmo cálculo do apply com a flag). Erros: 404
+    (contrato não monitorado), 503 (Blockscout indisponível em `BLOCKSCOUT_ONLY`).
+  parameters:
+    - $ref: "../base/components/param/path/contract-address.yaml"
+    - $ref: "../base/components/param/query/abi-history-source.yaml"
+    - $ref: "../base/components/param/query/replace-blockscout-legacy.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/abi-history-plan-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"
+    "503":
+      $ref: "../base/components/responses/error-response.yaml"

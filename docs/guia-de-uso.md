@@ -30,14 +30,18 @@ campo `network` (`MAINNET` | `TESTNET`).
 - [3. Detectar automaticamente a interface (ERC20 / 721 / 1155)](#3-detectar-automaticamente-a-interface-erc20--721--1155)
 - [4. Pegar eventos já gravados e decodificar (redecode do histórico)](#4-pegar-eventos-já-gravados-e-decodificar-redecode-do-histórico)
 - [5. Monitorar saldo de carteiras ao vivo](#5-monitorar-saldo-de-carteiras-ao-vivo)
+- [5.1. Saldo de eventos em lote (arrays)](#51-saldo-de-eventos-em-lote-arrays)
 - [6. Backfill de saldo (config criada depois dos eventos)](#6-backfill-de-saldo-config-criada-depois-dos-eventos)
 - [7. Configurar um webhook (notificação de saída)](#7-configurar-um-webhook-notificação-de-saída)
 - [8. Os 3 modos de formulário (guiado / visual / manual)](#8-os-3-modos-de-formulário-guiado--visual--manual)
 - [9. Acompanhar jobs assíncronos ao vivo (SSE)](#9-acompanhar-jobs-assíncronos-ao-vivo-sse)
 - [10. Aba "Demonstração" — disparar scripts sem terminal](#10-aba-demonstração--disparar-scripts-sem-terminal)
 - [11. Contrato proxy upgradável (ABI versionada por faixa de blocos)](#11-contrato-proxy-upgradável-abi-versionada-por-faixa-de-blocos)
+- [11.1. Importar histórico de versões de ABI (proxy UUPS)](#111-importar-histórico-de-versões-de-abi-proxy-uuups)
 - [12. Consultar saldo numa data / histórico](#12-consultar-saldo-numa-data--histórico)
 - [13. Eventos enriquecidos no payload de webhook](#13-eventos-enriquecidos-no-payload-de-webhook)
+- [14. Chave de correlação do Modelo de Entidade](#14-chave-de-correlação-do-modelo-de-entidade)
+- [15. Pré-visualizar e reenviar webhooks (sem mexer em dados)](#15-pré-visualizar-e-reenviar-webhooks-sem-mexer-em-dados)
 - [Referência rápida](#referência-rápida)
 - [Troubleshooting](#troubleshooting)
 
@@ -178,10 +182,42 @@ lá em vez de digitar.
 1. **Contratos → "Novo contrato"**. Na coluna **"Importar do Blockscout"** aparecem os contratos
    verificados (no local-env: `TestERC20`, `TestEventEmitter`).
 2. Clique num item → **Endereço** e **Nome** do formulário são preenchidos automaticamente.
+   Cada item mostra um selo **Proxy**/**Implementação** e os avisos do backend. Ao clicar numa
+   **Implementação** com um único proxy, o formulário recebe o endereço do **proxy** (com um aviso na
+   coluna); com 2+ proxies, você escolhe qual proxy cadastrar. O cadastro nunca é bloqueado.
 3. Escolha a **Rede** → **"Cadastrar"** → vai para o detalhe.
 4. Na seção **ABI → "Cadastrar nova versão" → origem "Buscar no Blockscout" → "Cadastrar versão de
    ABI"**. O Evex busca a ABI direto do Blockscout.
 5. A tabela de versões ganha uma linha com **origem `BLOCKSCOUT`**.
+
+Se o bloco inicial (`validFromBlock`) não for informado, o Evex usa automaticamente o **bloco de criação do contrato** obtido no Blockscout (ou 0, se o Blockscout não tiver esse dado). Um valor informado explicitamente, inclusive 0, é sempre respeitado; para faixas de ABI por upgrade de proxy, use a importação de histórico.
+
+Itens `kind = PROXY` aparecem com o nome da implementação mais recente do proxy presente na lista de
+verificados seguido de "(Proxy)" (ex.: `TokenCoin (Proxy)`), em vez do genérico `ERC1967Proxy` do Blockscout;
+sem implementação derivável na lista, o nome original é mantido.
+
+**Proxy upgradável (DEC-104):** cada item do discovery traz também `kind`, `proxyAddresses`,
+`implementationAddress`, `lastUpgradeBlock` e `warnings`, calculados a partir dos eventos
+`Upgraded(address)` **já ingeridos** (sem consulta extra à rede):
+
+- `kind = PROXY`: o endereço emitiu `Upgraded`; `implementationAddress` é a implementação do último
+  `Upgraded` observado e `lastUpgradeBlock` o bloco dele (inclui o `Upgraded` emitido no deploy do proxy).
+  Este é o endereço certo para cadastrar.
+- `kind = IMPLEMENTATION`: algum proxy aponta para o endereço; `proxyAddresses` lista os proxies
+  vigentes (pode haver vários, ex.: um proxy por classe). Cadastre o proxy, não a implementação — os
+  eventos são emitidos pelo proxy.
+- `kind = STANDALONE`: **nenhum** `Upgraded` observado nos eventos ingeridos. Não prova que o contrato
+  não é proxy/implementação: depende da cobertura da ingestão (`warnings` avisa quando a ingestão ainda
+  não iniciou ou está atrás do bloco do `Upgraded`). Só `Upgraded(address)` é detectado (não Beacon/Diamond).
+
+Os avisos são informativos e nunca bloqueiam o cadastro.
+
+**Complemento pelos logs do Blockscout (DEC-107):** além dos eventos ingeridos, a classificação consulta
+os logs `Upgraded` da rede inteira no Blockscout, então um proxy/implementação já aparece corretamente
+mesmo que a ingestão ainda não tenha chegado ao bloco do upgrade. Quando a evidência vem só do
+Blockscout, o `warnings` diz isso e informa até onde a ingestão foi; se a lista do Blockscout vier
+truncada ou o Blockscout falhar nessa consulta, a classificação segue só com os eventos ingeridos e um
+aviso. Desligue com `indexer.blockscout.upgrade-logs-enabled=false` (volta ao comportamento só-ingeridos).
 
 **Variação:** sem Blockscout no ar, a mesma coluna mostra *"Discovery via Blockscout não está
 disponível"* (não é erro — o cadastro manual continua funcionando).
@@ -310,6 +346,64 @@ POST /v1/balance-monitors    { contractAddress, network, eventName, behavior,
 GET  /v1/balances?walletAddress=&contractAddress=&tokenId=
 PATCH /v1/balance-monitors/{id}/status   { active: false }
 ```
+
+---
+
+## 5.1. Saldo de eventos em lote (arrays)
+
+Alguns contratos emitem **um único evento com vários lançamentos** em parâmetros do tipo array — o caso
+típico é o `TransferBatch(operator, from, to, uint256[] ids, uint256[] values)` de um ERC-1155 genérico.
+A config de saldo tem a flag `batch` para isso.
+
+**Como configurar** — por contrato ERC-1155 são **2 configs**, uma por evento (o `behavior` é o mesmo,
+`TRANSFER`):
+
+```jsonc
+// 1) lançamentos individuais (batch omitido = false)
+{ "contractAddress": "0xbbbb...02", "network": "TESTNET", "eventName": "TransferSingle",
+  "behavior": "TRANSFER", "fromParam": "from", "toParam": "to", "valueParam": "value", "tokenIdParam": "id" }
+
+// 2) lançamentos em lote — valueParam e tokenIdParam são arrays
+{ "contractAddress": "0xbbbb...02", "network": "TESTNET", "eventName": "TransferBatch",
+  "behavior": "TRANSFER", "fromParam": "from", "toParam": "to", "valueParam": "values", "tokenIdParam": "ids",
+  "batch": true }
+```
+
+**Regras**
+
+- Com `batch=true`, cada posição `i` dos arrays vira um lançamento independente, aplicado com o mesmo
+  `behavior`; `from`/`to`/`wallet` continuam escalares e valem para todas as posições. Endereço zero é
+  tratado por posição (mint só credita o destinatário, burn só debita o remetente).
+- **Descarte atômico**: se os arrays tiverem tamanhos diferentes, algum parâmetro não for lista ou algum
+  elemento não for numérico, o evento **inteiro** é descartado (nenhuma posição é aplicada) com um WARN
+  deduplicado por config; o restante do lote segue. Arrays vazios não geram nenhum lançamento. Ids repetidos
+  no mesmo lote somam.
+- Com `batch=false`, um parâmetro de valor/tokenId que chega como lista também descarta o evento, com WARN
+  sugerindo `batch=true`.
+- **Validação contra a ABI** (só no cadastro/edição): se o contrato tem ABI cadastrada e o evento existe,
+  `batch=true` exige `valueParam`/`tokenIdParam` do tipo array numérico (ex.: `uint256[]`) e `batch=false`
+  exige escalares. São consideradas **todas** as versões da ABI (proxy upgradável): se **nenhuma** for
+  compatível, a API responde `400`; se **só algumas** forem, a config é aceita e a resposta traz
+  `warnings` (texto em português) com as faixas de blocos afetadas, onde o evento será descartado. Sem ABI
+  cadastrada, nada é validado.
+- **Editar uma config para `batch=true` não reprojeta o histórico.** Para contabilizar eventos já indexados,
+  crie uma config nova (ela nasce com a marca d'água do cursor) e rode o backfill (seção 6). Backfill e
+  redecode usam o mesmo caminho da ingestão ao vivo e chegam ao mesmo saldo.
+
+**Pela UI:** em **Saldos → Cadastrar** (ou Editar) a configuração tem o checkbox **"Lote (batch)"**,
+nos 3 modos do formulário. No **guiado**, ao escolher um evento que só oferece parâmetros array
+(ex.: `TransferBatch`) o Lote é marcado sozinho (dá para desmarcar) e os selects de montante/tokenId
+passam a listar só arrays numéricos (sem Lote, só escalares); no **visual**, os slots ganham o sufixo
+"(array)" e vincular um array ao montante sugere o Lote; no **manual** é um checkbox simples. Um aviso
+amarelo aparece se o tipo do parâmetro não combina com o Lote (o backend continua sendo a garantia final:
+`400` mostrado no formulário). Se a resposta do cadastro/edição trouxer `warnings`, o detalhe da config
+abre com um alerta "Configuração salva com avisos". Configs em lote exibem o chip **"Lote"** na listagem
+e no detalhe.
+
+**Limitação de precisão** — `balance` e `tokenId` da API de saldos são `string` e o banco usa inteiro
+exato, então saldos e ids grandes (até 2^256-1) estão corretos. Já os `decodedParameters` da **API de
+eventos** são números JSON: ids/valores acima de 2^53 perdem precisão em clientes JavaScript que usam
+`JSON.parse` direto (o dado gravado continua exato). Para ids grandes, use a API de saldos.
 
 ---
 
@@ -520,6 +614,66 @@ ABI_VERSION_ORDER_INVALID`.
 
 ---
 
+## 11.1. Importar histórico de versões de ABI (proxy UUPS)
+
+**Cenário:** o proxy já passou por vários upgrades e você quer uma versão de ABI por upgrade, sem
+cadastrar uma a uma (DEC-105). O Evex monta a linha do tempo de `Upgraded(address)` a partir dos
+eventos **ingeridos** e dos logs do Blockscout, busca a ABI verificada de cada implementação (composta
+com os eventos do proxy, para não perder o próprio `Upgraded`) e cadastra tudo de uma vez.
+
+**Pela UI:** no detalhe do contrato, seção **ABI → "Importar histórico de versões do Blockscout"**:
+escolha a fonte, revise o plano (tabela com diff expansível) e clique **"Aplicar importação"** →
+confirmar. O opt-in **"Substituir versões legadas importadas do Blockscout"** (`replaceBlockscoutLegacy`)
+fica no cabeçalho do diálogo, junto da fonte: ao marcá-lo o dry-run é refeito e já mostra o plano com a
+substituição e um alerta com o que será apagado (só versões importadas do Blockscout com a ABI do proxy,
+nunca uploads manuais).
+
+**Passo a passo (API):**
+
+1. **Dry-run** (não grava nada): `GET /v1/contracts/{address}/abi/history-plan?historySource=AUTO`.
+   `historySource` aceita `AUTO` (união ingeridos + Blockscout, default), `INGESTED_ONLY` e
+   `BLOCKSCOUT_ONLY`. A resposta traz uma linha por upgrade (`validFromBlock`/`validToBlock`,
+   `implementationAddress`, `txHash`, `upgradeSource`, `diffFromPrevious` com eventos/métodos
+   adicionados e removidos, `identicalToPrevious`), `warnings` e um `fingerprint`.
+2. **Aplicar:** `POST /v1/contracts/{address}/abi/history-import` com corpo opcional
+   `{"historySource": "AUTO", "expectedFingerprint": "<fingerprint do dry-run>", "replaceBlockscoutLegacy": false}`.
+   O servidor sempre recalcula o plano e cadastra só os itens `APPLY`, em ordem crescente, numa única
+   transação, e dispara **um** redecode ao final (`redecodeStarted`; se vier `false`, já havia um redecode
+   em curso: dispare `POST /v1/redecode`). Se o plano mudou desde o dry-run, devolve `409
+   ABI_HISTORY_PLAN_CHANGED` sem aplicar nada.
+3. Reexecutar é seguro: o que já foi importado volta como `SKIP_ALREADY_IMPORTED`.
+
+**Status dos itens** (string extensível; trate um valor desconhecido como "não aplicável"):
+
+| Status | Significado |
+|---|---|
+| `APPLY` | Será cadastrado. |
+| `SKIP_ALREADY_IMPORTED` | Já existe versão neste bloco (importada antes ou cadastrada manualmente). |
+| `SKIP_IDENTICAL` | Já existe versão neste bloco com conteúdo idêntico. |
+| `CONFLICT_MANUAL` | Existe versão diferente neste bloco, ou o bloco não é posterior à versão aberta. Nada é sobrescrito. |
+| `PENDING_NO_VERIFIED_ABI` | A implementação não tem ABI verificada no Blockscout. |
+| `BLOCKED_AFTER_PENDING` | Vem depois de um item pendente/em conflito: o import aplica só o prefixo, sem deixar buraco na linha do tempo. |
+
+**Limitação importante:** só aparece ABI para implementações **verificadas** no Blockscout. Se a
+implementação de um upgrade não foi verificada, o item fica `PENDING_NO_VERIFIED_ABI` (o
+`validFromBlock` dele é a sugestão de bloco) e os seguintes `BLOCKED_AFTER_PENDING`. Resolva
+cadastrando manualmente essa versão em `POST /v1/contracts/{address}/abi` (`UPLOAD_TEXT`, com o bloco
+sugerido) ou verificando a implementação no Blockscout, e rode o dry-run de novo: os itens seguintes
+passam a `APPLY`.
+
+**Notas:**
+
+- A 1ª versão sempre começa no bloco 0 (nenhum log do proxy existe antes do deploy); o `warnings` avisa
+  quando o histórico pode estar incompleto (truncado, Blockscout fora do ar, cursor de indexação atrás).
+- Se o Blockscout estiver fora do ar em `AUTO`, o plano usa só os upgrades ingeridos e avisa.
+- Versão cadastrada antes da DEC-105 com a ABI do proxy (`source=BLOCKSCOUT`, sem implementação) aparece
+  como `CONFLICT_MANUAL`. `replaceBlockscoutLegacy=true` apaga **só** essas versões legadas (nunca
+  `UPLOAD_*`) e importa o histórico, na mesma transação.
+- No bloco exato de um upgrade, logs anteriores à transação de upgrade nesse mesmo bloco usam a ABI nova
+  (a decodificação é por bloco, não por `logIndex`).
+
+---
+
 ## 12. Consultar saldo numa data / histórico
 
 Na tela **Saldos → "Consultar saldos"**, o rádio **"Saldo numa data"** consulta o saldo projetado
@@ -616,6 +770,182 @@ chamada ainda não tem convenção definida (saída com múltiplos valores funci
 
 ---
 
+## 14. Chave de correlação do Modelo de Entidade
+
+Cada contribuinte de um Modelo diz **qual chave** identifica a entidade. Dois eventos só acumulam no
+mesmo registro se as chaves finais forem **iguais**. A chave é uma lista ordenada de partes
+(`correlationKey`); o atalho antigo `correlationParam: "id"` continua valendo e equivale a
+`[PARAM(id)]` (quando os dois vêm, `correlationKey` vence). Tipos de parte (strings extensíveis, não é
+enum fechado): `PARAM` (arg = parâmetro decodificado), `EMITTER_ADDRESS` (contrato que emitiu o log),
+`TX_HASH`, `BLOCK_NUMBER`, `LITERAL` (arg = constante). Tipo desconhecido é rejeitado com 400 no
+cadastro/edição.
+
+Exemplos (endereços fictícios):
+
+| Situação | Chave de cada contribuinte | O que resolve |
+|---|---|---|
+| O mesmo `id` aparece em contratos diferentes (token A e token B) e não podem se misturar | `[EMITTER_ADDRESS, PARAM(id)]` em todos | `A\|7` e `B\|7` viram registros distintos |
+| A entidade é identificada por 2 parâmetros | `[PARAM(org), PARAM(id)]` | chave composta; `\|` e `\` nos valores são escapados |
+| Eventos de contratos diferentes na mesma transação | `[TX_HASH]` em todos | um registro por transação, campos de todos os contratos |
+| Registro singleton do modelo | `[LITERAL("global")]` em todos | uma única entidade (cuidado: um registro só acumula tudo) |
+
+**O que NÃO resolve (limites):** `EMITTER_ADDRESS` é o endereço do **próprio** emissor do evento, então só
+correlaciona eventos do **mesmo emissor**. Para unir contratos **diferentes** as partes precisam avaliar
+**igual** nos dois lados: um parâmetro que traga o endereço do outro contrato (ex.: o registry emite
+`TokenRegistered(address token, uint256 id)` com `[PARAM(token), PARAM(id)]` e o token usa
+`[EMITTER_ADDRESS, PARAM(id)]` — endereços são comparados em minúsculas), `TX_HASH` ou `LITERAL`.
+**Eventos que não carregam a chave não correlacionam entre contratos.** Parte ausente/nula/lista/struct
+faz o evento não correlacionar (nenhum registro, aviso no log por modelo). Todos os contribuintes do
+mesmo modelo precisam ter o **mesmo número de partes** (os tipos podem diferir).
+
+**Mudar a chave de um modelo já populado deixa os registros antigos ÓRFÃOS** (chave diferente): eventos
+novos criam registros novos e não existe reprojeção histórica de modelo nesta entrega. Para o histórico,
+crie um modelo novo (eventos anteriores à criação do modelo também não entram).
+*(Nota: manter um modelo por organização, cada um com chave própria, é um contorno possível, mas não é
+a recomendação — prefira a chave composta.)*
+
+**Campo `source` no mapeamento:** cada `fieldMapping` pode trazer `source` (default `PARAM` = lê
+`decodedParam`, como sempre). Fontes iniciais: `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER` e
+`BLOCK_TIMESTAMP`, que ignoram `decodedParam`. Útil para um registro chaveado por `TX_HASH` guardar o
+endereço emissor de cada evento. `BLOCK_TIMESTAMP` só preenche se o timestamp do bloco já estiver
+gravado no evento (a projeção nunca consulta a rede); senão o campo é omitido naquele evento, com aviso.
+`source` desconhecida = 400 no cadastro.
+
+**Pela UI:** em **Modelos de Entidade → Cadastrar/Editar**, cada evento contribuinte tem o **construtor
+de chave**: lista ordenada de partes (adicionar, remover, subir/descer), cada uma com tipo (`PARAM`,
+`EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `LITERAL`) e o argumento só quando aplicável (`PARAM` →
+parâmetro do evento; `LITERAL` → texto), com a pré-visualização da chave (ex.:
+`EMITTER_ADDRESS | PARAM(id)`). Modelos legados (só `correlationParam`) aparecem como uma parte
+`PARAM` e são salvos exatamente como vieram se a chave não for tocada; ao alterá-la, a UI passa a
+enviar `correlationKey` e avisa que os registros antigos ficam órfãos. O formulário exige ao menos uma
+parte, argumento preenchido e o mesmo número de partes em todos os contribuintes. Em cada campo
+mapeado há o seletor de **fonte** (`PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`,
+`BLOCK_TIMESTAMP`); o parâmetro do evento só aparece para `PARAM`. O modo leitura mostra a chave e a
+fonte dos campos. (O editor de modelo tem um único modo — selects/construtor —, sem guiado/visual/manual.)
+
+---
+
+## 15. Pré-visualizar e reenviar webhooks (sem mexer em dados)
+
+Serve para testar um webhook (template, filtros, enriquecimento) contra eventos **já indexados** e,
+se quiser, mandar de novo uma notificação — sem reprocessar nada e sem tocar em eventos, saldos nem
+modelos.
+
+**Fluxo (3 passos):**
+
+1. **Selecionar os eventos que casam** — `GET /v1/webhooks/{id}/matching-events` com a janela por
+   **data** (`fromDate`/`toDate`) e/ou **bloco** (`fromBlock`/`toBlock`). Só devolve eventos que casam
+   com o webhook (contrato + evento + rede + decodificados + os filtros do webhook), do mais recente
+   para o mais antigo, paginados por `cursor` ("carregar mais"). Os filtros são avaliados em memória: a
+   varredura tem teto (`scanned`/`scanTruncated`); se truncar, refine a janela ou continue pelo
+   `nextCursor`. O filtro por **data** só enxerga eventos com timestamp de bloco gravado — eventos sem
+   timestamp ficam de fora e aparecem em `warnings` (contagem).
+2. **Pré-visualizar** — `POST /v1/webhooks/{id}/preview` com `eventIds` (até 5 por requisição por padrão).
+   Devolve, por evento, o payload final **como seria enviado**, se casa (`matches`/`notMatchingReason`;
+   um evento que não casa também é renderizado, útil para testar o template), o estado do modelo e o
+   relatório do enriquecimento **por chamada** (OK/ERRO com o `code`, a mensagem do nó, `rpcCode`/`rpcData`
+   brutos e o bloco usado), mais o resumo agregado de falhas. `diagnose: true` reexecuta as chamadas que
+   falharam em `latest` e no bloco do evento e devolve um veredicto — é **indício**, não causa. O
+   preview **nunca grava nada nem faz POST**: nenhuma linha em nenhuma tabela, nenhum envio.
+3. **Reenviar** — `POST /v1/webhooks/{id}/resend` com `eventIds` **ou** `range` (nunca os dois; `range`
+   enfileira os eventos que casam, até o teto por requisição). Responde **202** na hora: cada evento aceito
+   vira uma entrega `PENDING` (`accepted[{eventId, deliveryId}]`) e o job de dispatch a processa com o
+   mesmo retry/backoff/histórico do disparo normal. O que não foi enfileirado vem em `skipped` com o
+   motivo (`NOT_MATCHING`, `ALREADY_PENDING`, `EVENT_NOT_DECODED`, `EVENT_NOT_FOUND`). Reenviar o mesmo
+   evento enquanto o anterior ainda está `PENDING` é `ALREADY_PENDING` (proteção contra duplo clique).
+   Webhook pausado não reenvia (409 `WEBHOOK_INACTIVE`), salvo com URL de teste válida; o preview
+   funciona sempre.
+
+**Em qual bloco o enriquecimento roda** (`enrichmentBlock.mode`, string extensível; padrão `EVENT_BLOCK`):
+
+| Modo | O que faz | Observações |
+|---|---|---|
+| `EVENT_BLOCK` | `eth_call` no bloco do evento (o comportamento do disparo normal) | Exige um nó que **guarde estado histórico** (não podado). Um `-32603` genérico **não prova** isso: pode ser revert, ABI/argumento incorreto ou falha do nó — use `diagnose` ou compare com `LATEST` antes de concluir. |
+| `LATEST` | estado **atual** da cadeia | Re-resolvido a **cada tentativa** da entrega (um retry tardio vê o estado do momento do retry); o bloco usado fica registrado por tentativa. |
+| `BLOCK_NUMBER` | bloco fixo (`blockNumber`) | Congelado na entrega. |
+| `BLOCK_AT_DATE` | último bloco **até** `blockDate` (arredondamento para baixo) | Resolvido **uma vez** no envio do reenvio e congelado como número. Limites: resolução **aproximada** (só usa eventos ingeridos com timestamp e, se o nó responder, bisseção por RPC — o resultado diz `approximate`/`source`); data anterior ao gênesis = 422; e, como nos demais, só serve se o nó tiver estado histórico. |
+
+**Estado do modelo no reenvio = ATUAL.** O `{{model.*}}` usa o registro do Modelo de Entidade **de agora**
+(o registro é acumulado e não guarda versões), que pode ter avançado depois do evento. A resposta traz
+`modelState.stateAt` (última atualização lida) e `newerThanEvent`, com o aviso
+`MODEL_STATE_NEWER_THAN_EVENT`; o `modelStateAt` fica gravado na entrega. Não há como reconstituir o
+estado "da época" nesta versão.
+
+**Efeito zero nos dados.** O preview não grava nada. O reenvio escreve **só** em `webhook_deliveries` (e
+as tentativas, ao serem processadas): não altera `decoded`/parâmetros decodificados, não reprojeta saldo
+nem modelo, não dispara redecode.
+
+**Histórico de entregas** (`GET /v1/webhooks/{id}/deliveries`): cada entrega mostra a origem (`origin`:
+`MATCH` = disparo normal, `RESEND` = reenvio; `resend` derivado), o modo/número do bloco, `modelStateAt` e
+a URL de teste **redigida** (só `esquema://host[:porta]`). Cada **tentativa** mostra o `sentPayload` (o
+payload final de fato enviado, depois do enriquecimento — gravado em **toda** tentativa, inclusive no
+disparo normal), o bloco usado (`enrichmentBlockUsed`) e o relatório por chamada
+(`enrichmentResults`, com a mensagem do nó preservada). Entregas antigas não têm esses campos (aparecem
+vazios).
+
+**URL de teste (`overrideUrl`) — desligada por padrão.** Sem autenticação na PoC, um endpoint que faz
+POST para uma URL qualquer seria um proxy aberto para a rede interna; por isso `overrideUrl` informado com a
+capacidade desligada responde 400 `URL_OVERRIDE_DISABLED`. Para habilitar (ambiente de laboratório):
+
+```
+EVEX_WEBHOOK_RESEND_ALLOW_URL_OVERRIDE=true
+# opcional — hosts exatos e/ou CIDRs liberados mesmo em faixa privada (ex.: um sink local de teste):
+EVEX_WEBHOOK_RESEND_URL_ALLOWLIST=<host-ou-cidr>,<host-ou-cidr>
+# opcional — portas de destino permitidas (padrão 80,443):
+EVEX_WEBHOOK_RESEND_ALLOWED_PORTS=80,443
+```
+
+`GET /v1/capabilities` diz se está ligada. Quando ligada, a URL passa por uma política (400
+`URL_NOT_ALLOWED`, mensagem genérica que não ecoa URL nem IP): só `http`/`https`; sem usuário/senha na URL; porta na
+lista permitida; o host é **resolvido no servidor** e a URL é bloqueada se **qualquer** endereço resolvido
+for loopback, link-local (inclui o endpoint de metadata de nuvem), privado, CGNAT, ULA, não especificado,
+multicast ou IPv4 embutido em IPv6 dessas faixas (literais IP idem). A política é **revalidada imediatamente
+antes de cada envio** (se falhar, a tentativa fica `FAILED` com código genérico e nada é enviado); redirects
+(3xx) **não são seguidos**; o corpo da resposta **não é gravado nem exposto** nas entregas com URL de teste e os
+erros de rede viram códigos genéricos (`OVERRIDE_URL_BLOCKED`, `OVERRIDE_CONNECT_FAILED`, `OVERRIDE_TIMEOUT`,
+`OVERRIDE_UNREACHABLE`...). **Risco residual conhecido (aceito na PoC):** DNS rebinding — um DNS controlado
+por quem opera o destino pode responder um IP público na checagem e outro na conexão; a revalidação reduz a
+janela mas não a fecha. Mantenha desligado fora de laboratório. *(Reservado, ainda sem efeito:
+`EVEX_WEBHOOK_URL_POLICY_MODE=OFF|WARN|ENFORCE` — aplicará a mesma política à URL **cadastrada** em uma
+entrega futura.)*
+
+**Limites de abuso** (valem para preview e reenvio; estado em memória por instância, zera no restart):
+
+| Limite | Padrão | Ao exceder |
+|---|---|---|
+| eventos por reenvio (`eventIds`/`range`) | 50 | 400 `TOO_MANY_EVENTS` (nada é enfileirado); em `range`, enfileira até o teto e avisa `RANGE_TRUNCATED` |
+| eventos por preview | 5 | 400 `TOO_MANY_EVENTS` |
+| reenvios por minuto por webhook | 10 | 429 `RATE_LIMITED` + `Retry-After` (segundos) |
+| requisições (preview + reenvio) por minuto na instância | 30 | 429 `RATE_LIMITED` + `Retry-After` |
+| reenvios `PENDING` na fila | 500 | 429 `RESEND_QUEUE_FULL` + `Retry-After` (tudo-ou-nada) |
+
+Os valores efetivos saem em `GET /v1/capabilities`. Entregas de reenvio têm prioridade menor que o disparo
+normal na fila, então um reenvio grande não atrasa as notificações em tempo real.
+
+**Pela UI:** abra o detalhe de um webhook (`/webhooks/<id>`, modo leitura) e use **Pré-visualizar** ou
+**Reenviar** — os dois abrem o mesmo painel, em 3 passos: (1) **Eventos que casam** — filtro **por data**
+(de/até, `datetime-local`, enviado em ISO-8601 com o offset do seu fuso, mostrado abaixo do campo) **ou por
+bloco** (de/até; há um auxiliar "Resolver data → bloco" que usa `GET /v1/blocks/by-date` e mostra
+`source`/`approximate`/avisos), lista paginada por cursor ("Carregar mais"), aviso quando a varredura é
+truncada, avisos traduzidos e seleção múltipla com contador (limites vindos de `GET /v1/capabilities`; se a
+consulta falhar, valem os padrões conservadores 5/50); (2) **Bloco do enriquecimento** — select com
+`EVENT_BLOCK`/`LATEST`/`BLOCK_NUMBER`/`BLOCK_AT_DATE` e os campos de cada modo; (3) **Pré-visualizar**
+(com a opção "Diagnosticar falhas"; mostra payload final, estado do modelo, cada chamada de enriquecimento
+com o erro bruto da rede e o diagnóstico rotulado como indício — nada é enviado nem gravado) ou
+**Reenviar…** (diálogo de confirmação; a opção de URL de teste só aparece com
+`webhookUrlOverrideEnabled=true`; um 429 mostra "tente novamente em N s" e desabilita o botão). O resultado
+lista os aceitos (com atalho para o histórico), os ignorados com o motivo e os avisos. Em **Entregas**, cada
+linha mostra a origem (Reenvio/Normal), o modo de bloco, o `modelStateAt` e a URL de teste redigida, e
+"ver tentativas → detalhes" mostra o payload efetivamente enviado e o resultado do enriquecimento por chamada.
+No modo mock (`npm run dev:mock`) os cenários são fictícios; acrescente `?urlOverride=1` à URL do front para
+ligar a capacidade de URL de teste (o 3º reenvio da sessão simula o 429).
+
+**Limite genérico do produto:** o Evex reenvia o que **ele** indexou e já decodificou, com o enriquecimento
+e o modelo disponíveis **agora**; ele não reconstitui o estado do passado nem garante que o destino
+processe o mesmo evento duas vezes de forma idempotente — quem recebe deve tratar reentrega.
+
+---
+
 ## Referência rápida
 
 ### Telas (UI mínima — doc §6)
@@ -654,6 +984,8 @@ GET/PATCH  /v1/contracts/{address}
 PATCH      /v1/contracts/{address}/status
 GET/POST   /v1/contracts/{address}/abi
 GET        /v1/contracts/{address}/abi/suggestions
+GET        /v1/contracts/{address}/abi/history-plan   # dry-run do histórico de ABIs de proxy (DEC-105)
+POST       /v1/contracts/{address}/abi/history-import # aplica o plano (1 redecode)
 GET        /v1/contracts/{address}/events           # catálogo p/ os forms guiados
 GET        /v1/discovery/blockscout/contracts       # discovery
 
@@ -678,6 +1010,10 @@ GET/POST   /v1/webhooks
 GET/PATCH  /v1/webhooks/{id}
 PATCH      /v1/webhooks/{id}/status
 GET        /v1/webhooks/{id}/deliveries
+GET        /v1/webhooks/{id}/matching-events         # eventos que casam (data/bloco), cursor
+POST       /v1/webhooks/{id}/preview                 # dry-run: não grava, não envia
+POST       /v1/webhooks/{id}/resend                  # 202; cria entregas PENDING (origin=RESEND)
+GET        /v1/capabilities                          # flags/limites do preview e reenvio
 
 # Eventos enriquecidos (E19)
 GET        /v1/contracts/{address}/methods          # catálogo de métodos view/pure p/ o <MethodPicker>

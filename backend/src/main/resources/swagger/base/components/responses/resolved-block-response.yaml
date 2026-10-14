@@ -1,0 +1,5 @@
+description: Bloco resolvido para a data.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/resolved-block.yaml"

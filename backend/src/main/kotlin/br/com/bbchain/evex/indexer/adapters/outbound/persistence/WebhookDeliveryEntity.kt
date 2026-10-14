@@ -33,6 +33,7 @@ import org.springframework.data.domain.Persistable
     indexes = [
         Index(name = "idx_webhook_deliveries_due", columnList = "status,next_attempt_at"),
         Index(name = "idx_webhook_deliveries_config", columnList = "webhook_config_id"),
+        Index(name = "idx_webhook_deliveries_config_event", columnList = "webhook_config_id,blockchain_event_id"),
     ],
 )
 class WebhookDeliveryEntity(
@@ -61,6 +62,20 @@ class WebhookDeliveryEntity(
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "decoded_parameters")
     val decodedParameters: String? = null,
+    /**
+     * E33: origem (código extensível). `columnDefinition` com DEFAULT pra o Hibernate conseguir adicionar a
+     * coluna NOT NULL numa tabela com linhas (mesmo racional da V4/V7; a V8 cobre o caminho Flyway).
+     */
+    @Column(nullable = false, length = 32, columnDefinition = "varchar(32) not null default 'MATCH'")
+    val origin: String = "MATCH",
+    @Column(name = "enrichment_block_mode", length = 32)
+    val enrichmentBlockMode: String? = null,
+    @Column(name = "enrichment_block_number")
+    val enrichmentBlockNumber: Long? = null,
+    @Column(name = "target_url_override", columnDefinition = "text")
+    val targetUrlOverride: String? = null,
+    @Column(name = "model_state_at")
+    val modelStateAt: Instant? = null,
     @Transient
     private val new: Boolean = false,
 ) : Persistable<UUID> {

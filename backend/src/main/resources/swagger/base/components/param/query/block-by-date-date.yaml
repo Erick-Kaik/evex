@@ -1,0 +1,7 @@
+name: date
+in: query
+required: true
+description: Data/hora a converter em número de bloco.
+schema:
+  type: string
+  format: date-time

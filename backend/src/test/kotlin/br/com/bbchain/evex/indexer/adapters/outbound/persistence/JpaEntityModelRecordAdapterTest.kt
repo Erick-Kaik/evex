@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.persistence
 
 import br.com.bbchain.evex.indexer.domain.common.Network
+import br.com.bbchain.evex.indexer.domain.model.EntityModelRecordKey
 import br.com.bbchain.evex.indexer.support.AbstractIntegrationTest
 import java.util.UUID
 import org.assertj.core.api.Assertions.assertThat
@@ -82,5 +83,27 @@ class JpaEntityModelRecordAdapterTest : AbstractIntegrationTest() {
 
         assertThat(adapter.findRecord(modelId, "1", Network.MAINNET)?.data).isEqualTo(mapOf("x" to "mainnet"))
         assertThat(adapter.findRecord(modelId, "1", Network.TESTNET)?.data).isEqualTo(mapOf("x" to "testnet"))
+    }
+
+    @Test
+    fun `findLatestUpdatedAt returns the newest updatedAt among the existing records and null when none exists`() {
+        val modelA = UUID.randomUUID()
+        val modelB = UUID.randomUUID()
+        adapter.mergeFields(modelA, "1", Network.TESTNET, mapOf("k" to "v"))
+        adapter.mergeFields(modelB, "1", Network.TESTNET, mapOf("k" to "v"))
+        val a = adapter.findRecord(modelA, "1", Network.TESTNET)!!.updatedAt
+        val b = adapter.findRecord(modelB, "1", Network.TESTNET)!!.updatedAt
+
+        val latest = adapter.findLatestUpdatedAt(
+            listOf(
+                EntityModelRecordKey(modelA, "1", Network.TESTNET),
+                EntityModelRecordKey(modelB, "1", Network.TESTNET),
+                EntityModelRecordKey(UUID.randomUUID(), "1", Network.TESTNET),
+            ),
+        )
+
+        assertThat(latest).isEqualTo(maxOf(a, b))
+        assertThat(adapter.findLatestUpdatedAt(listOf(EntityModelRecordKey(UUID.randomUUID(), "9", Network.TESTNET)))).isNull()
+        assertThat(adapter.findLatestUpdatedAt(emptyList())).isNull()
     }
 }

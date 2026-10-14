@@ -66,4 +66,31 @@ class WarnLogDeduperTest {
         assertThat(deduper.shouldLog(key)).isFalse()
         assertThat(deduper.shouldLog(otherKey)).isTrue()
     }
+
+    @Test
+    fun `string keys follow the same window rule and never collide with UUID keys`() {
+        var now = Instant.parse("2026-08-24T00:00:00Z")
+        val deduper = WarnLogDeduper(Duration.ofMinutes(5)) { now }
+
+        assertThat(deduper.shouldLog("contract|method|RPC_ERROR")).isTrue()
+        assertThat(deduper.shouldLog("contract|method|RPC_ERROR")).isFalse()
+        assertThat(deduper.shouldLog("contract|other|RPC_ERROR")).isTrue()
+        assertThat(deduper.shouldLog(key)).isTrue()
+        now = now.plusSeconds(300)
+        assertThat(deduper.shouldLog("contract|method|RPC_ERROR")).isTrue()
+    }
+
+    @Test
+    fun `occurrencesIfDue reports how many occurrences the next log line represents`() {
+        var now = Instant.parse("2026-08-24T00:00:00Z")
+        val deduper = WarnLogDeduper(Duration.ofMinutes(5)) { now }
+
+        assertThat(deduper.occurrencesIfDue("k")).isEqualTo(1)
+        assertThat(deduper.occurrencesIfDue("k")).isNull()
+        assertThat(deduper.occurrencesIfDue("k")).isNull()
+        now = now.plusSeconds(300)
+        assertThat(deduper.occurrencesIfDue("k")).isEqualTo(3) // 2 suprimidas + esta
+        assertThat(deduper.occurrencesIfDue("k")).isNull()
+    }
 }
+

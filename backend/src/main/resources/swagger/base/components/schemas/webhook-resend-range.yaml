@@ -1,0 +1,19 @@
+type: object
+description: Intervalo de eventos (bloco e/ou data) — enfileira TODOS os que casam, limitado ao mesmo teto de `eventIds`.
+properties:
+  fromBlock:
+    type: integer
+    format: int64
+    nullable: true
+  toBlock:
+    type: integer
+    format: int64
+    nullable: true
+  fromDate:
+    type: string
+    format: date-time
+    nullable: true
+  toDate:
+    type: string
+    format: date-time
+    nullable: true

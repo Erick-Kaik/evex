@@ -20,5 +20,6 @@ properties:
   validFromBlock:
     type: integer
     format: int64
-    default: 0
-    description: "Primeiro bloco (inclusive) em que esta versão passa a valer. Default 0 (genesis) quando omitido."
+    description: >-
+      Primeiro bloco (inclusive) em que esta versão passa a valer. Se omitido: origem BLOCKSCOUT usa o bloco de
+      criação do contrato no Blockscout (0 se indisponível); demais origens usam 0.

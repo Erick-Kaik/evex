@@ -1,0 +1,14 @@
+type: object
+description: Evento NÃO enfileirado, com o motivo.
+required:
+  - eventId
+  - reason
+properties:
+  eventId:
+    type: string
+    format: uuid
+  reason:
+    type: string
+    description: >-
+      Código extensível — iniciais: `NOT_MATCHING`, `ALREADY_PENDING`, `EVENT_NOT_DECODED`,
+      `EVENT_NOT_FOUND`. Valor desconhecido = "não aplicável".

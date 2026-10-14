@@ -1,0 +1,24 @@
+get:
+  tags:
+    - Webhooks
+  operationId: listWebhookMatchingEvents
+  summary: Lista (por cursor) os eventos indexados que casam com a config de um webhook
+  description: >-
+    Contrato + evento + rede do webhook, `decoded = true`, pré-filtro SQL por bloco OU data e cursor
+    `block:logIndex` (mais recente primeiro), depois os `filters` do webhook aplicados em memória. A
+    varredura é limitada (`scanTruncated`). Informe `fromDate/toDate` OU `fromBlock/toBlock`.
+  parameters:
+    - $ref: "../base/components/param/path/webhook-id.yaml"
+    - $ref: "../base/components/param/query/from-block.yaml"
+    - $ref: "../base/components/param/query/to-block.yaml"
+    - $ref: "../base/components/param/query/from-date.yaml"
+    - $ref: "../base/components/param/query/to-date.yaml"
+    - $ref: "../base/components/param/query/cursor.yaml"
+    - $ref: "../base/components/param/query/matching-events-size.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/webhook-matching-event-page-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "404":
+      $ref: "../base/components/responses/error-response.yaml"

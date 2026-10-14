@@ -1,0 +1,6 @@
+required: true
+description: Eventos e opções do preview.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-preview-payload.yaml"

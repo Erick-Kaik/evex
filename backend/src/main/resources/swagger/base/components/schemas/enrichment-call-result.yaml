@@ -1,0 +1,56 @@
+type: object
+description: >-
+  Resultado de UMA chamada de enriquecimento (o que antes só ia para o log). `status`, `code` e
+  `classification` são strings EXTENSÍVEIS: valor desconhecido = "não aplicável". Os campos `rpc*` são
+  os valores BRUTOS devolvidos pelo nó — nunca uma causa afirmada.
+required:
+  - profileId
+  - targetContractAddress
+  - methodName
+  - status
+properties:
+  profileId:
+    type: string
+    format: uuid
+  targetContractAddress:
+    type: string
+  methodName:
+    type: string
+  status:
+    type: string
+    description: "Valores iniciais: `OK`, `ERROR`."
+  outputs:
+    type: object
+    additionalProperties:
+      type: string
+    nullable: true
+    description: "Quando `status = OK`: `placeholder` (sem o prefixo `enriched.`) -> valor devolvido."
+  code:
+    type: string
+    nullable: true
+    description: >-
+      Quando `status = ERROR`: código da falha. Iniciais: `METHOD_NOT_FOUND`, `METHOD_AMBIGUOUS`,
+      `ABI_NOT_FOUND`, `CONTRACT_NOT_REGISTERED`, `ARG_UNRESOLVED`, `BLOCK_UNRESOLVED`, `ENCODING_ERROR`,
+      `RPC_ERROR`, `UNEXPECTED_ERROR`, `SKIPPED_DEPENDENCY`, `SKIPPED_AFTER_REPEATED_FAILURE`.
+  message:
+    type: string
+    nullable: true
+  rpcCode:
+    type: integer
+    format: int32
+    nullable: true
+    description: Código JSON-RPC bruto devolvido pelo nó, quando a falha veio dele.
+  rpcData:
+    type: string
+    nullable: true
+    description: Campo `data` bruto do erro JSON-RPC (truncado), quando houver.
+  classification:
+    type: string
+    nullable: true
+    description: >-
+      Classificação extensível da falha de RPC (ex.: `UNCLASSIFIED`, `REVERTED`, `TIMEOUT`) — só marca
+      causa quando o nó devolve indício explícito; caso contrário `UNCLASSIFIED`.
+  blockUsed:
+    type: string
+    nullable: true
+    description: "Bloco efetivamente usado: número em decimal ou `latest`; `null` se nem chegou a ser determinado."

@@ -1,0 +1,18 @@
+get:
+  tags:
+    - Blocks
+  operationId: resolveBlockByDate
+  summary: Converte uma data em número de bloco
+  description: >-
+    Combina os eventos já ingeridos (sem RPC) com bisseção por RPC, com teto de chamadas; sem RPC degrada
+    para o limite ingerido com `approximate = true`.
+  parameters:
+    - $ref: "../base/components/param/query/block-by-date-date.yaml"
+    - $ref: "../base/components/param/query/block-by-date-direction.yaml"
+  responses:
+    "200":
+      $ref: "../base/components/responses/resolved-block-response.yaml"
+    "400":
+      $ref: "../base/components/responses/error-response.yaml"
+    "422":
+      $ref: "../base/components/responses/error-response.yaml"

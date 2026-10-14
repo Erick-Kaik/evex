@@ -1,0 +1,10 @@
+name: replaceBlockscoutLegacy
+in: query
+required: false
+description: >-
+  Simula o plano como se as versões legadas (`BLOCKSCOUT` sem implementação, cadastradas antes da
+  DEC-105) fossem removidas. Use a MESMA flag no `POST history-import` e o `fingerprint` deste plano
+  em `expectedFingerprint`. As versões que serão apagadas vêm em `legacyVersionsToReplace`. Default `false`.
+schema:
+  type: boolean
+  default: false

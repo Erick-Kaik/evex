@@ -1,0 +1,16 @@
+type: object
+description: >-
+  Estado dos Modelos de Entidade usado no `{{model.*}}` de um preview/reenvio. O registro é acumulado
+  por chave e SEM histórico: o payload usa SEMPRE o estado atual; `stateAt` mostra quando ele foi
+  atualizado pela última vez.
+required:
+  - newerThanEvent
+properties:
+  stateAt:
+    type: string
+    format: date-time
+    nullable: true
+    description: Maior `updatedAt` dos registros de modelo lidos (`null` se o webhook não usa modelo/não há registro).
+  newerThanEvent:
+    type: boolean
+    description: "`true` quando `stateAt` é posterior ao processamento do evento (o registro avançou depois dele)."

@@ -25,7 +25,11 @@ class WarnLogDeduper(
     private val interval: Duration,
     private val now: () -> Instant = Instant::now,
 ) {
-    private val lastLoggedAt = ConcurrentHashMap<UUID, Instant>()
+    // Estado por chave (UUID ou String — mesmo mapa; os dois tipos nunca colidem): quando foi o último log
+    // emitido e quantas ocorrências foram suprimidas desde então (para o log agregado "repetida N vezes").
+    private data class State(val lastLoggedAt: Instant, val suppressed: Int)
+
+    private val states = ConcurrentHashMap<Any, State>()
 
     /**
      * `true` na 1ª ocorrência de [key], ou quando [interval] já passou desde o último log
@@ -34,17 +38,29 @@ class WarnLogDeduper(
      * poucos milissegundos nunca deixaria o intervalo "vencer" de verdade (cada chamada reiniciaria a
      * contagem a partir de si mesma, mesmo sem nunca ter logado).
      */
-    fun shouldLog(key: UUID): Boolean {
+    fun shouldLog(key: UUID): Boolean = acquire(key) != null
+
+    /** Mesma regra de [shouldLog] para chave textual (ex.: `contrato|método|código`) — chamadores por UUID não mudam. */
+    fun shouldLog(key: String): Boolean = acquire(key) != null
+
+    /**
+     * Para WARN **agregado por janela**: devolve `null` se o log desta chave está suprimido (dentro de
+     * [interval]); senão devolve quantas ocorrências a linha de log representa (1 + as suprimidas desde
+     * o último log) — o chamador escreve "repetida N vezes" em vez de N linhas.
+     */
+    fun occurrencesIfDue(key: String): Int? = acquire(key)
+
+    private fun acquire(key: Any): Int? {
         val current = now()
-        var due = false
-        lastLoggedAt.compute(key) { _, previous ->
-            if (previous == null || Duration.between(previous, current) >= interval) {
-                due = true
-                current
+        var occurrences: Int? = null
+        states.compute(key) { _, previous ->
+            if (previous == null || Duration.between(previous.lastLoggedAt, current) >= interval) {
+                occurrences = (previous?.suppressed ?: 0) + 1
+                State(current, 0)
             } else {
-                previous
+                previous.copy(suppressed = previous.suppressed + 1)
             }
         }
-        return due
+        return occurrences
     }
 }

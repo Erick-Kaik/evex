@@ -1,0 +1,22 @@
+type: object
+description: Resposta (202) do reenvio — as entregas criadas aparecem depois em `GET /v1/webhooks/{id}/deliveries`.
+required:
+  - accepted
+  - skipped
+properties:
+  accepted:
+    type: array
+    items:
+      $ref: "./webhook-resend-accepted.yaml"
+  skipped:
+    type: array
+    items:
+      $ref: "./webhook-resend-skipped.yaml"
+  modelState:
+    $ref: "./model-state.yaml"
+  enrichmentBlock:
+    $ref: "./resolved-enrichment-block.yaml"
+  warnings:
+    type: array
+    items:
+      type: string

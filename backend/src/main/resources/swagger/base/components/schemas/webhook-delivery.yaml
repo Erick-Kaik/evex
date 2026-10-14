@@ -40,3 +40,31 @@ properties:
     description: Log de todas as tentativas já realizadas pra esta entrega, em ordem cronológica.
     items:
       $ref: "./webhook-delivery-attempt.yaml"
+  origin:
+    type: string
+    nullable: true
+    description: >-
+      Origem da entrega — string extensível (valores iniciais `MATCH` = disparo normal, `RESEND` = reenvio
+      manual). Ausente/desconhecido = tratar como `MATCH`.
+  resend:
+    type: boolean
+    nullable: true
+    description: "Derivado de `origin`: `true` quando `origin != MATCH`."
+  enrichmentBlockMode:
+    type: string
+    nullable: true
+    description: Modo de bloco de enriquecimento (`null` = `EVENT_BLOCK`, comportamento normal).
+  enrichmentBlockNumber:
+    type: integer
+    format: int64
+    nullable: true
+    description: Bloco fixo de enriquecimento (modos `BLOCK_NUMBER`/`BLOCK_AT_DATE`).
+  modelStateAt:
+    type: string
+    format: date-time
+    nullable: true
+    description: Maior `updatedAt` dos registros de modelo lidos ao compor o payload.
+  targetUrlOverride:
+    type: string
+    nullable: true
+    description: URL de destino de teste REDIGIDA (somente esquema e host — sem caminho, query nem credenciais).

@@ -18,6 +18,10 @@ import java.util.UUID
  * tokenId). `valueParam` é sempre obrigatório: é o parâmetro que carrega o montante/delta em todos os
  * 4 behaviors.
  *
+ * [batch] (DEC-110): `true` quando [valueParam] (e [tokenIdParam], se informado) referenciam parâmetros
+ * array (ex.: `uint256[]`) — cada posição vira um lançamento independente, aplicado com o mesmo
+ * [behavior]. `false` (default) = parâmetros escalares.
+ *
  * Campos de backfill de saldo sob demanda (E14, DEC-066):
  * - [backfillWatermarkBlock]: bloco do cursor de ingestão no instante em que a config foi criada
  *   (`register()`), **imutável** depois. O backfill só reprojeta eventos com
@@ -43,4 +47,5 @@ data class BalanceMonitorConfig(
     val backfillWatermarkBlock: Long = -1,
     val backfillCursorBlock: Long = -1,
     val backfillCursorLogIndex: Long = -1,
+    val batch: Boolean = false,
 )

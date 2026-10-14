@@ -56,7 +56,7 @@ data class EnrichmentCall(
      * Um argumento por posição de entrada do método, na ordem declarada no Solidity. Cada item é
      * **literal**, `{{decodedParameters.x}}` (campo do evento que disparou o webhook) ou
      * `{{enriched.y}}` (saída de uma chamada anterior já resolvida na sequência) — mesma sintaxe de
-     * interpolação de [br.com.bbchain.evex.indexer.adapters.outbound.webhook.WebhookPayloadRenderer].
+     * interpolação de [br.com.bbchain.evex.indexer.application.webhook.WebhookPayloadRenderer].
      */
     val args: List<String>,
     /** 1 por saída do método que o usuário quer expor no payload — nem toda saída precisa ser mapeada. */

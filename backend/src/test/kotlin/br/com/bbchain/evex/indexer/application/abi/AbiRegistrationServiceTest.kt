@@ -22,8 +22,11 @@ import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
 import br.com.bbchain.evex.indexer.domain.contract.ContractStatus
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContract
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContractPort
+import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutContractInfo
 import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutPort
+import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutUnavailableException
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
+import io.mockk.CapturingSlot
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -88,6 +91,8 @@ class AbiRegistrationServiceTest {
             blockscout,
             interfaceDetectionService,
             builtinInterfaceTemplates,
+            AbiVersionWriter(contractAbis),
+            BlockscoutAbiResolver(blockscout),
         )
         every { abiCache.versionsFor(any()) } returns emptyList()
         every { abiCache.put(any(), any()) } returns Unit
@@ -234,14 +239,14 @@ class AbiRegistrationServiceTest {
             service.register(monitoredContract.address, null, AbiSource.UPLOAD_TEXT, null, 0L)
         }.isInstanceOf(br.com.bbchain.evex.indexer.domain.abi.InvalidAbiContentException::class.java)
 
-        verify(exactly = 0) { blockscout.getAbi(any()) }
+        verify(exactly = 0) { blockscout.getContract(any()) }
     }
 
     @Test
     fun `register with BLOCKSCOUT fetches the ABI from BlockscoutPort and ignores the abi field of the request`() {
         every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
         every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
-        every { blockscout.getAbi(monitoredContract.address) } returns transferAbi
+        every { blockscout.getContract(monitoredContract.address) } returns BlockscoutContractInfo("Token", transferAbi, null, emptyList())
         val storagePort: AbiStoragePort = mockk()
         every { storageResolver.defaultType } returns AbiStorageType.DATABASE
         every { storageResolver.resolve(AbiStorageType.DATABASE) } returns storagePort
@@ -260,7 +265,7 @@ class AbiRegistrationServiceTest {
     @Test
     fun `register with BLOCKSCOUT throws BlockscoutAbiNotFoundException when the contract is not verified`() {
         every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
-        every { blockscout.getAbi(monitoredContract.address) } returns null
+        every { blockscout.getContract(monitoredContract.address) } returns BlockscoutContractInfo("Token", null, null, emptyList())
 
         assertThatThrownBy {
             service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null, 0L)
@@ -330,6 +335,83 @@ class AbiRegistrationServiceTest {
         }.isInstanceOf(NoFullInterfaceMatchException::class.java)
     }
 
+    private fun stubRegisterHappyPath(): CapturingSlot<ContractAbi> {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
+        every { blockscout.getContract(monitoredContract.address) } returns BlockscoutContractInfo("Token", transferAbi, null, emptyList())
+        val storagePort: AbiStoragePort = mockk()
+        every { storageResolver.defaultType } returns AbiStorageType.DATABASE
+        every { storageResolver.resolve(AbiStorageType.DATABASE) } returns storagePort
+        every { storagePort.store(any()) } returns StorageLocation(abiContent = transferAbi, storagePath = null)
+        val savedSlot = slot<ContractAbi>()
+        every { contractAbis.save(capture(savedSlot)) } answers { savedSlot.captured }
+        return savedSlot
+    }
+
+    @Test
+    fun `register BLOCKSCOUT without validFromBlock uses the creation block from Blockscout`() {
+        stubRegisterHappyPath()
+        every { blockscout.getCreationBlock(monitoredContract.address) } returns 350938L
+
+        val result = service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null)
+
+        assertThat(result.validFromBlock).isEqualTo(350938L)
+    }
+
+    @Test
+    fun `register BLOCKSCOUT with explicit validFromBlock (even 0) respects it and never asks for the creation block`() {
+        stubRegisterHappyPath()
+
+        assertThat(service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null, 0L).validFromBlock).isEqualTo(0L)
+        verify(exactly = 0) { blockscout.getCreationBlock(any()) }
+    }
+
+    @Test
+    fun `register BLOCKSCOUT falls back to 0 when Blockscout has no creation block`() {
+        stubRegisterHappyPath()
+        every { blockscout.getCreationBlock(monitoredContract.address) } returns null
+
+        assertThat(service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null).validFromBlock).isEqualTo(0L)
+    }
+
+    @Test
+    fun `register BLOCKSCOUT falls back to 0 without failing when the creation block lookup fails`() {
+        stubRegisterHappyPath()
+        every { blockscout.getCreationBlock(monitoredContract.address) } throws BlockscoutUnavailableException("down")
+
+        assertThat(service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null).validFromBlock).isEqualTo(0L)
+    }
+
+    @Test
+    fun `register UPLOAD_TEXT without validFromBlock uses 0 and does not query Blockscout for the creation block`() {
+        stubRegisterHappyPath()
+
+        assertThat(service.register(monitoredContract.address, transferAbi, AbiSource.UPLOAD_TEXT, null).validFromBlock).isEqualTo(0L)
+        verify(exactly = 0) { blockscout.getCreationBlock(any()) }
+    }
+
+    @Test
+    fun `register BLOCKSCOUT with creation block not past the open version keeps the order error`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { blockscout.getContract(monitoredContract.address) } returns BlockscoutContractInfo("Token", transferAbi, null, emptyList())
+        every { blockscout.getCreationBlock(monitoredContract.address) } returns 100L
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns ContractAbi(
+            id = UUID.randomUUID(),
+            contractAddress = monitoredContract.address,
+            network = Network.TESTNET,
+            source = AbiSource.UPLOAD_TEXT,
+            storageType = AbiStorageType.DATABASE,
+            storageLocation = StorageLocation(abiContent = transferAbi, storagePath = null),
+            validFromBlock = 500,
+            validToBlock = null,
+            createdAt = Instant.now(),
+        )
+
+        assertThatThrownBy { service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null) }
+            .isInstanceOf(AbiVersionOrderException::class.java)
+        verify(exactly = 0) { contractAbis.save(any()) }
+    }
+
     @Test
     fun `listVersions throws ContractNotFoundException when the contract does not exist`() {
         every { contracts.findByAddress(any()) } returns null
@@ -357,5 +439,145 @@ class AbiRegistrationServiceTest {
         every { contractAbis.findAllByContractAddress(monitoredContract.address) } returns versions
 
         assertThat(service.listVersions(monitoredContract.address)).isEqualTo(versions)
+    }
+
+    // ---- DEC-105: registerAll + origem BLOCKSCOUT de proxy -------------------------------------
+
+    private val upgradedAbi = """[{"type":"event","name":"Upgraded","inputs":[{"name":"implementation","type":"address","indexed":true}]}]"""
+    private val implAddress = "0x00000000000000000000000000000000000000a1"
+
+    private fun stubStorage() {
+        val storagePort: AbiStoragePort = mockk()
+        every { storageResolver.defaultType } returns AbiStorageType.DATABASE
+        every { storageResolver.resolve(AbiStorageType.DATABASE) } returns storagePort
+        every { storagePort.store(any()) } answers { StorageLocation(abiContent = firstArg(), storagePath = null) }
+    }
+
+    @Test
+    fun `registerAll persists N versions chained, updates the cache once and starts exactly one redecode`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
+        stubStorage()
+        every { contractAbis.save(any()) } answers { firstArg() }
+
+        val result = service.registerAll(
+            monitoredContract.address,
+            listOf(
+                AbiVersionDraft(transferAbi, 0, implAddress),
+                AbiVersionDraft(upgradedAbi, 100, implAddress),
+                AbiVersionDraft(transferAbi, 250),
+            ),
+            AbiSource.BLOCKSCOUT,
+            null,
+        )
+
+        assertThat(result.versions.map { it.validFromBlock to it.validToBlock })
+            .containsExactly(0L to 99L, 100L to 249L, 250L to null)
+        assertThat(result.versions.map { it.implementationAddress }).containsExactly(implAddress, implAddress, null)
+        assertThat(result.redecodeStarted).isTrue()
+        verify(exactly = 1) { abiCache.put(monitoredContract.address, match { it.size == 3 }) }
+        verify(exactly = 1) { redecodeOrchestrator.tryStart(RedecodeFilter(contractAddress = monitoredContract.address)) }
+    }
+
+    @Test
+    fun `registerAll reports redecodeStarted=false when a redecode is already running`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
+        stubStorage()
+        every { contractAbis.save(any()) } answers { firstArg() }
+        every { redecodeOrchestrator.tryStart(any()) } returns false
+
+        val result = service.registerAll(monitoredContract.address, listOf(AbiVersionDraft(transferAbi, 0)), AbiSource.UPLOAD_TEXT, null)
+
+        assertThat(result.redecodeStarted).isFalse()
+    }
+
+    @Test
+    fun `registerAll rejects a non-increasing batch before touching storage, db, cache or redecode`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
+
+        assertThatThrownBy {
+            service.registerAll(
+                monitoredContract.address,
+                listOf(AbiVersionDraft(transferAbi, 100), AbiVersionDraft(transferAbi, 100)),
+                AbiSource.UPLOAD_TEXT,
+                null,
+            )
+        }.isInstanceOf(AbiVersionOrderException::class.java)
+
+        verify(exactly = 0) { storageResolver.resolve(any()) }
+        verify(exactly = 0) { contractAbis.save(any()) }
+        verify(exactly = 0) { abiCache.put(any(), any()) }
+        verify(exactly = 0) { redecodeOrchestrator.tryStart(any()) }
+    }
+
+    @Test
+    fun `registerAll with one invalid ABI fails the whole batch before storage`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+
+        assertThatThrownBy {
+            service.registerAll(
+                monitoredContract.address,
+                listOf(AbiVersionDraft(transferAbi, 0), AbiVersionDraft("not json", 10)),
+                AbiSource.UPLOAD_TEXT,
+                null,
+            )
+        }.isInstanceOf(br.com.bbchain.evex.indexer.domain.abi.InvalidAbiContentException::class.java)
+
+        verify(exactly = 0) { storageResolver.resolve(any()) }
+        verify(exactly = 0) { redecodeOrchestrator.tryStart(any()) }
+    }
+
+    @Test
+    fun `register BLOCKSCOUT of a proxy with one implementation composes the implementation ABI with the proxy events`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
+        every { blockscout.getContract(monitoredContract.address) } returns
+            BlockscoutContractInfo("Proxy", upgradedAbi, "eip1967", listOf(implAddress))
+        every { blockscout.getContract(implAddress) } returns BlockscoutContractInfo("Impl", transferAbi, null, emptyList())
+        val stored = slot<String>()
+        val storagePort: AbiStoragePort = mockk()
+        every { storageResolver.defaultType } returns AbiStorageType.DATABASE
+        every { storageResolver.resolve(AbiStorageType.DATABASE) } returns storagePort
+        every { storagePort.store(capture(stored)) } answers { StorageLocation(abiContent = firstArg(), storagePath = null) }
+        every { contractAbis.save(any()) } answers { firstArg() }
+
+        service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null, 0L)
+
+        assertThat(stored.captured).contains("Transfer").contains("Upgraded")
+    }
+
+    @Test
+    fun `register BLOCKSCOUT of a proxy whose implementation is not verified throws BlockscoutImplementationAbiNotFoundException citing it`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { blockscout.getContract(monitoredContract.address) } returns
+            BlockscoutContractInfo("Proxy", upgradedAbi, "eip1967", listOf(implAddress))
+        every { blockscout.getContract(implAddress) } returns BlockscoutContractInfo("Impl", null, null, emptyList())
+
+        assertThatThrownBy {
+            service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null, 0L)
+        }.isInstanceOf(br.com.bbchain.evex.indexer.domain.abi.BlockscoutImplementationAbiNotFoundException::class.java)
+            .hasMessageContaining(implAddress)
+
+        verify(exactly = 0) { contractAbis.save(any()) }
+    }
+
+    @Test
+    fun `register BLOCKSCOUT keeps the current behaviour when implementations size is not exactly one`() {
+        every { contracts.findByAddress(monitoredContract.address) } returns monitoredContract
+        every { contractAbis.findCurrentOpenVersion(monitoredContract.address) } returns null
+        every { blockscout.getContract(monitoredContract.address) } returns
+            BlockscoutContractInfo("Diamond", transferAbi, "eip2535", listOf(implAddress, "0x00000000000000000000000000000000000000a2"))
+        val storagePort: AbiStoragePort = mockk()
+        every { storageResolver.defaultType } returns AbiStorageType.DATABASE
+        every { storageResolver.resolve(AbiStorageType.DATABASE) } returns storagePort
+        every { storagePort.store(transferAbi) } returns StorageLocation(abiContent = transferAbi, storagePath = null)
+        every { contractAbis.save(any()) } answers { firstArg() }
+
+        service.register(monitoredContract.address, null, AbiSource.BLOCKSCOUT, null, 0L)
+
+        verify(exactly = 1) { blockscout.getContract(any()) }
+        verify { storagePort.store(transferAbi) }
     }
 }

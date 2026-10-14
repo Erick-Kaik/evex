@@ -66,7 +66,7 @@ describe('EntityModelFormPage (create)', () => {
     await user.click(screen.getByRole('combobox', { name: 'Nome do evento' }))
     await user.click(await screen.findByRole('option', { name: 'Transfer' }))
 
-    await user.click(screen.getByRole('combobox', { name: 'Parâmetro de correlação (identifica a entidade)' }))
+    await user.click(screen.getByRole('combobox', { name: 'Parâmetro da parte 1' }))
     await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'from (address)' }))
 
     await user.click(screen.getByRole('button', { name: /adicionar campo/i }))
@@ -84,8 +84,8 @@ describe('EntityModelFormPage (create)', () => {
         {
           contractAddress: CONTRACT.address,
           eventName: 'Transfer',
-          correlationParam: 'from',
-          fieldMappings: [{ decodedParam: 'value', modelField: 'valor' }],
+          correlationKey: [{ type: 'PARAM', arg: 'from' }],
+          fieldMappings: [{ decodedParam: 'value', modelField: 'valor', source: 'PARAM' }],
         },
       ],
     })

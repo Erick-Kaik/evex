@@ -10,18 +10,20 @@ import br.com.bbchain.evex.indexer.domain.abi.AbiSource
 import br.com.bbchain.evex.indexer.domain.abi.AbiStorageType
 import br.com.bbchain.evex.indexer.domain.abi.AbiVersionConflictException
 import br.com.bbchain.evex.indexer.domain.abi.AbiVersionOrderException
-import br.com.bbchain.evex.indexer.domain.abi.BlockscoutAbiNotFoundException
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbi
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbiPort
 import br.com.bbchain.evex.indexer.domain.abi.DetectionLevel
 import br.com.bbchain.evex.indexer.domain.abi.InvalidAbiContentException
 import br.com.bbchain.evex.indexer.domain.abi.NoFullInterfaceMatchException
 import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
+import br.com.bbchain.evex.indexer.domain.contract.MonitoredContract
 import br.com.bbchain.evex.indexer.domain.contract.MonitoredContractPort
 import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutPort
+import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutUnavailableException
 import br.com.bbchain.evex.indexer.domain.redecode.RedecodeFilter
 import java.time.Instant
 import java.util.UUID
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 
@@ -40,7 +42,11 @@ class AbiRegistrationService(
     private val blockscout: BlockscoutPort,
     private val interfaceDetectionService: InterfaceDetectionService,
     private val builtinInterfaceTemplates: BuiltinInterfaceTemplates,
+    private val versionWriter: AbiVersionWriter,
+    private val blockscoutAbiResolver: BlockscoutAbiResolver,
 ) {
+    private val log = LoggerFactory.getLogger(AbiRegistrationService::class.java)
+
     /**
      * 1) contrato precisa existir (404 se não); 2) resolve o conteúdo bruto da ABI conforme [source]
      * (E6: `UPLOAD_FILE`/`UPLOAD_TEXT` exigem o campo `abi`; `BLOCKSCOUT` busca no Blockscout
@@ -57,72 +63,142 @@ class AbiRegistrationService(
      * `AbiDecodingPort.decode()` já resolve internamente qual versão de ABI vale por bloco, DEC-007,
      * então filtrar só por endereço reprocessa corretamente qualquer lacuna histórica). Não bloqueia
      * esta chamada — `tryStart` só dispara o `@Async` e retorna na hora.
+     *
+     * Bloco inicial ([validFromBlock]): se informado, vale exatamente o valor (inclusive 0 — escolha
+     * explícita nunca é sobrescrita). Se `null` e [source] = `BLOCKSCOUT`, usa o bloco de criação do
+     * contrato cadastrado (para proxy, o do próprio proxy) via [BlockscoutPort.getCreationBlock]; sem dado
+     * ou com falha do Blockscout, cai em 0 (WARN só com o tipo da causa, sem derrubar o cadastro). Demais
+     * origens usam 0. É uma aproximação de versão única: para faixas de blocos por upgrade de proxy, o
+     * caminho correto é o import de histórico (`history-plan`/`history-import`). A regra de ordem contra a
+     * versão aberta segue inalterada (valor resolvido <= vigente => [AbiVersionOrderException]).
      */
     fun register(
         address: String,
         abi: String?,
         source: AbiSource,
         storage: AbiStorageType?,
-        validFromBlock: Long,
+        validFromBlock: Long? = null,
     ): ContractAbi {
         val normalizedAddress = address.lowercase()
         val contract = contracts.findByAddress(normalizedAddress) ?: throw ContractNotFoundException(normalizedAddress)
         val resolvedAbi = resolveAbiContent(normalizedAddress, abi, source)
-        val descriptors = abiParser.parse(resolvedAbi)
+        val resolvedFrom = validFromBlock ?: defaultValidFromBlock(normalizedAddress, source)
+        return registerResolved(
+            contract = contract,
+            drafts = listOf(AbiVersionDraft(resolvedAbi, resolvedFrom)),
+            source = source,
+            storage = storage,
+            replaceLegacy = false,
+        ).versions.single()
+    }
 
-        val cachedVersions = abiCache.versionsFor(normalizedAddress).toMutableList()
-        val openVersion = contractAbis.findCurrentOpenVersion(normalizedAddress)
-        if (openVersion != null) {
-            if (validFromBlock <= openVersion.validFromBlock) {
-                throw AbiVersionOrderException(normalizedAddress, validFromBlock, openVersion.validFromBlock)
+    private fun defaultValidFromBlock(address: String, source: AbiSource): Long {
+        if (source != AbiSource.BLOCKSCOUT) return 0L
+        return try {
+            blockscout.getCreationBlock(address) ?: 0L
+        } catch (ex: BlockscoutUnavailableException) {
+            log.warn("Bloco de criação indisponível no Blockscout ({}); usando validFromBlock=0", ex.javaClass.simpleName)
+            0L
+        }
+    }
+
+    /**
+     * Cadastro em lote (DEC-105): N versões em `validFromBlock` estritamente crescente, todas no mesmo
+     * commit (atômico), com o cache atualizado UMA vez e UM único redecode ao final. [source] vale para
+     * todas as versões do lote. Com [replaceBlockscoutLegacy], apaga antes (mesma transação) as versões
+     * legadas `BLOCKSCOUT` sem `implementation_address` (nunca `UPLOAD_*`).
+     */
+    fun registerAll(
+        address: String,
+        versions: List<AbiVersionDraft>,
+        source: AbiSource,
+        storage: AbiStorageType?,
+        replaceBlockscoutLegacy: Boolean = false,
+    ): AbiBatchRegistrationResult {
+        val normalizedAddress = address.lowercase()
+        val contract = contracts.findByAddress(normalizedAddress) ?: throw ContractNotFoundException(normalizedAddress)
+        return registerResolved(contract, versions, source, storage, replaceBlockscoutLegacy)
+    }
+
+    private fun registerResolved(
+        contract: MonitoredContract,
+        drafts: List<AbiVersionDraft>,
+        source: AbiSource,
+        storage: AbiStorageType?,
+        replaceLegacy: Boolean,
+    ): AbiBatchRegistrationResult {
+        val normalizedAddress = contract.address.lowercase()
+        if (drafts.isEmpty()) throw InvalidAbiContentException("Lote de versões de ABI vazio.")
+
+        // A) parseia todas antes de qualquer I/O de storage: uma ABI inválida derruba o lote inteiro.
+        val parsed = drafts.map { abiParser.parse(it.abiJson) }
+
+        // B) ordem estritamente crescente dentro do lote e contra a versão aberta (com replaceLegacy a
+        // versão aberta pode ser justamente a legada que será apagada: a checagem final fica no writer,
+        // dentro da transação, já sem as legadas).
+        drafts.zipWithNext().forEach { (a, b) ->
+            if (b.validFromBlock <= a.validFromBlock) {
+                throw AbiVersionOrderException(normalizedAddress, b.validFromBlock, a.validFromBlock)
             }
-            val closedToBlock = validFromBlock - 1
-            contractAbis.save(openVersion.copy(validToBlock = closedToBlock))
-            val cachedIndex = cachedVersions.indexOfFirst { it.abiId == openVersion.id }
-            if (cachedIndex >= 0) {
-                cachedVersions[cachedIndex] = cachedVersions[cachedIndex].copy(validToBlock = closedToBlock)
+        }
+        if (!replaceLegacy) {
+            contractAbis.findCurrentOpenVersion(normalizedAddress)?.let { open ->
+                if (drafts.first().validFromBlock <= open.validFromBlock) {
+                    throw AbiVersionOrderException(normalizedAddress, drafts.first().validFromBlock, open.validFromBlock)
+                }
             }
         }
 
+        // C) grava o conteúdo no storage (fora da transação; num rollback pode sobrar conteúdo órfão
+        // em storage LOCAL) e persiste o lote atomicamente.
         val storageType = storage ?: storageResolver.defaultType
-        val location = storageResolver.resolve(storageType).store(resolvedAbi)
-
-        val newAbi = ContractAbi(
-            id = UUID.randomUUID(),
-            contractAddress = normalizedAddress,
-            network = contract.network,
-            source = source,
-            storageType = storageType,
-            storageLocation = location,
-            validFromBlock = validFromBlock,
-            validToBlock = null,
-            createdAt = Instant.now(),
-        )
-        // DEC-022: a checagem de "existe versão aberta?" acima (findCurrentOpenVersion) não é atômica
-        // com este insert — 2 requisições concorrentes pro mesmo endereço podem ambas ler "sem versão
-        // aberta" e ambas tentar inserir aqui. A unique constraint parcial de banco
-        // (contract_abis_unique_open_version, V1__contract_abis_unique_open_version.sql) pega essa
-        // corrida; a 2ª chamada a bater aqui recebe DataIntegrityViolationException, traduzida pra
-        // AbiVersionConflictException (409) em vez de vazar o erro cru do banco.
-        val saved = try {
-            contractAbis.save(newAbi)
+        val storagePort = storageResolver.resolve(storageType)
+        val toSave = drafts.map { draft ->
+            ContractAbi(
+                id = UUID.randomUUID(),
+                contractAddress = normalizedAddress,
+                network = contract.network,
+                source = source,
+                storageType = storageType,
+                storageLocation = storagePort.store(draft.abiJson),
+                validFromBlock = draft.validFromBlock,
+                validToBlock = null,
+                createdAt = Instant.now(),
+                implementationAddress = draft.implementationAddress,
+            )
+        }
+        // DEC-022: a checagem de "existe versão aberta?" não é atômica com o insert — 2 requisições
+        // concorrentes pro mesmo endereço podem ambas ler "sem versão aberta". A unique constraint
+        // parcial (contract_abis_unique_open_version, V1) pega a corrida; a violação pode estourar só no
+        // commit (saída do bean transacional), por isso o catch fica aqui, no chamador.
+        val result = try {
+            versionWriter.appendAll(normalizedAddress, toSave, replaceLegacy)
         } catch (ex: DataIntegrityViolationException) {
             throw AbiVersionConflictException(normalizedAddress)
         }
 
-        cachedVersions.add(
-            CachedAbiVersion(
-                abiId = saved.id,
-                validFromBlock = saved.validFromBlock,
-                validToBlock = saved.validToBlock,
-                eventDescriptors = descriptors,
-            ),
-        )
+        // D) só após o commit: cache atualizado UMA vez com a lista final.
+        val cachedVersions = abiCache.versionsFor(normalizedAddress)
+            .filter { it.abiId !in result.deletedIds }
+            .map { cached ->
+                if (cached.abiId == result.closedPrevious?.id) cached.copy(validToBlock = result.closedPrevious.validToBlock) else cached
+            }
+            .toMutableList()
+        result.saved.forEachIndexed { index, saved ->
+            cachedVersions.add(
+                CachedAbiVersion(
+                    abiId = saved.id,
+                    validFromBlock = saved.validFromBlock,
+                    validToBlock = saved.validToBlock,
+                    eventDescriptors = parsed[index],
+                ),
+            )
+        }
         abiCache.put(normalizedAddress, cachedVersions)
 
-        redecodeOrchestrator.tryStart(RedecodeFilter(contractAddress = normalizedAddress))
-
-        return saved
+        // E) UM redecode, escopado por endereço (AbiDecodingPort resolve a versão por bloco, DEC-007).
+        val redecodeStarted = redecodeOrchestrator.tryStart(RedecodeFilter(contractAddress = normalizedAddress))
+        return AbiBatchRegistrationResult(versions = result.saved, redecodeStarted = redecodeStarted)
     }
 
     fun listVersions(address: String): List<ContractAbi> {
@@ -146,8 +222,7 @@ class AbiRegistrationService(
             abi?.takeIf { it.isNotBlank() }
                 ?: throw InvalidAbiContentException("Campo `abi` é obrigatório para source=$source.")
 
-        AbiSource.BLOCKSCOUT ->
-            blockscout.getAbi(address) ?: throw BlockscoutAbiNotFoundException(address)
+        AbiSource.BLOCKSCOUT -> blockscoutAbiResolver.resolveForRegistration(address)
 
         AbiSource.AUTO_DETECTED -> {
             val fullMatch = interfaceDetectionService.suggest(address)

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import {
   Box,
+  Chip,
   Paper,
   Stack,
   Table,
@@ -111,7 +112,10 @@ function MonitorRow({ config }: { config: BalanceMonitorConfig }) {
         <AddressCell address={config.contractAddress} kind="contract" />
       </TableCell>
       <TableCell>{config.eventName}</TableCell>
-      <TableCell>{config.behavior}</TableCell>
+      <TableCell>
+        {config.behavior}
+        {config.batch && <Chip size="small" color="info" label="Lote" sx={{ ml: 1 }} />}
+      </TableCell>
       <TableCell>
         <StatusToggle
           value={config.active}

@@ -10,6 +10,7 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.Network 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateBalanceMonitorPayload
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.UpdateBalanceMonitorStatusPayload
 import br.com.bbchain.evex.indexer.application.balance.BalanceBackfillOrchestrator
+import br.com.bbchain.evex.indexer.application.balance.BalanceMonitorConfigResult
 import br.com.bbchain.evex.indexer.application.balance.BalanceMonitorConfigService
 import br.com.bbchain.evex.indexer.domain.balance.BalanceBehavior
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfig
@@ -39,6 +40,7 @@ class BalanceMonitorsApiServiceImpl(
             toParam = createBalanceMonitorPayload.toParam,
             valueParam = createBalanceMonitorPayload.valueParam,
             tokenIdParam = createBalanceMonitorPayload.tokenIdParam,
+            batch = createBalanceMonitorPayload.batch ?: false,
         )
         return config.toDto()
     }
@@ -68,6 +70,7 @@ class BalanceMonitorsApiServiceImpl(
             toParam = updateBalanceMonitorPayload.toParam,
             valueParam = updateBalanceMonitorPayload.valueParam,
             tokenIdParam = updateBalanceMonitorPayload.tokenIdParam,
+            batch = updateBalanceMonitorPayload.batch ?: false,
         )
         return config.toDto()
     }
@@ -98,6 +101,9 @@ class BalanceMonitorsApiServiceImpl(
 
     private fun BalanceBehavior.toDto(): BalanceBehaviorDto = BalanceBehaviorDto.valueOf(this.name)
 
+    private fun BalanceMonitorConfigResult.toDto(): BalanceMonitorConfigDto =
+        config.toDto().copy(warnings = warnings.takeIf { it.isNotEmpty() }?.toMutableList())
+
     private fun BalanceMonitorConfig.toDto(): BalanceMonitorConfigDto = BalanceMonitorConfigDto(
         id = id,
         contractAddress = contractAddress,
@@ -109,6 +115,7 @@ class BalanceMonitorsApiServiceImpl(
         toParam = toParam,
         valueParam = valueParam,
         tokenIdParam = tokenIdParam,
+        batch = batch,
         active = active,
         createdAt = createdAt.atOffset(ZoneOffset.UTC),
     )

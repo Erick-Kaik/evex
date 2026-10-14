@@ -1721,3 +1721,657 @@ A aba já era condicional a `VITE_LOCALENV_CONTROL_URL` setada + health check do
 ### Consequências
 
 Nenhuma migração de dado ou mudança de contrato de API — mudança só de frontend + doc. Ambiente local derrubado (`down.sh`) ao final da sessão, como de costume em sessões de validação live.
+
+---
+
+## DEC-102 — `bundleEvexApi` quebrando fora do IntelliJ: `resolveNpx()` pegava Node 12 do `apt`, e o shebang do `npx` do nvm reexecutava o mesmo bug um nível abaixo
+
+Data: 2026-09-17
+
+Módulo: backend (`build.gradle.kts`)
+
+Autor: sessão principal
+
+### Contexto
+
+Usuário reportou `Task :bundleEvexApi FAILED` com `SyntaxError: Unexpected token '.'` no `nodeModule.enableCompileCache?.();` do `@redocly/cli`. `resolveNpx()` (ver DEC-017, que já documenta a razão de existir: nvm só é carregado em `~/.bashrc`, invisível a processos não-interativos como o Gradle daemon disparado pela IDE) checava primeiro o `PATH` do processo e só caía no fallback lendo `~/.nvm/versions/node/*/bin` se nada fosse encontrado no `PATH`. Isolado o problema: o Ubuntu deste ambiente tem um `nodejs` 12.22.9 instalado via `apt` (`/usr/bin/npx`/`/usr/bin/node`, dependência automática de outros pacotes do sistema, não algo instalado de propósito). Em processo não-interativo, o `PATH` via `/usr/bin` mas não os diretórios do nvm — `resolveNpx()` achava esse `npx` antigo primeiro e nunca chegava ao fallback certo (3 versões via nvm: v18.20.4/v20.20.0/v22.22.2, todas capazes de rodar o `cli.js` sem erro). Node 12 não entende a sintaxe de optional call (`?.()`) usada pelo `@redocly/cli` atual, daí o `SyntaxError`.
+
+Corrigido o primeiro sintoma invertendo a prioridade (nvm primeiro, `PATH` só como fallback) — mas isso revelou um **2º sintoma do mesmo problema, um nível abaixo**: `Cannot find module 'node:path'` ao rodar `npm/lib/cli.js` mesmo já apontando pro `npx` certo (v22.22.2). Causa: o script `npx` do nvm tem shebang `#!/usr/bin/env node` — `env node` resolve o interpretador de novo pelo `PATH` do processo **filho** que o `Exec` do Gradle cria, e esse `PATH` filho continuava sem o `bin/` do nvm (mesma ausência do processo pai). Resultado: mesmo escolhendo o arquivo `npx` certo, o "node" que de fato executava o `npx-cli.js` continuava sendo o `/usr/bin/node` (v12) resolvido pelo shebang — reproduzindo o `SyntaxError` original um passo adiante, na forma de um `require('node:path')` que o Node 12 não reconhece (esquema `node:` só suportado a partir do Node 14.18/16).
+
+### Decisão
+
+`resolveNpx()` passou a devolver o `File` (não só o `String` do caminho) pra dar acesso ao diretório onde o `npx` resolvido vive. A task `bundleEvexApi` agora prepende esse diretório ao `PATH` do processo filho do `Exec` (`environment("PATH", ...)`) antes de montar o `commandLine` — garantindo que o `env node` do shebang resolva pra a mesma instalação de Node cujo `npx` foi escolhido, em vez de cair de volta no `/usr/bin/node` do sistema.
+
+Alternativas descartadas: (a) rodar `node <caminho-do-npx-script>` em vez de executar o script diretamente — funciona, mas amarra a implementação ao formato interno do `npx` (script JS puro, não é garantido por todas as versões/plataformas do nvm) e é mais frágil que só ajustar `PATH`; (b) resolver e chamar `node`/`npm` diretamente sem passar por `npx` — mudança maior de escopo, descartada por não ser o problema relatado.
+
+### Consequências
+
+Fix genérico (qualquer script Node com shebang `env node` chamado via caminho absoluto por este `resolveNpx()`, não só o `npx` do Redocly, se beneficia do `PATH` corrigido). Não requer nenhuma mudança de ambiente do usuário (não precisa desinstalar o `nodejs` do `apt`, nem alterar `~/.bashrc`). Validado rodando `bundleEvexApi` com `PATH` restrito a `/usr/bin:/bin` (simulando o cenário não-interativo sem nvm) e depois pela IDE do usuário — build verde nos dois casos.
+
+---
+
+## DEC-103 — Padrão de logs no caminho de ingestão (busca na rede → janela/tick → persistência)
+
+Data: 2026-09-17
+
+Módulo: backend (`adapters/outbound/blockchain`)
+
+Autor: sessão principal
+
+### Contexto
+
+Pedido do usuário: conseguir ver o que está chegando da rede sem precisar debugar. Antes desta tarefa, `Web3jBlockchainClient` (quem de fato chama `eth_getLogs`) não tinha nenhum logger; `PollTickService.tick()` só logava em caso de erro (nunca o caminho feliz — janela calculada, nada pendente, auto-shrink); `IngestionBatchProcessor.ingestRange` já logava, mas em `DEBUG` incondicional (silencioso no nível padrão `INFO` de `application.yml`, mesmo quando eventos novos de fato chegavam).
+
+### Decisão
+
+Padrão adotado (consistente com o estilo já usado no resto do backend — SLF4J via `LoggerFactory.getLogger(Classe::class.java)`, mensagens parametrizadas `{}`, texto em português): **DEBUG para ruído de rotina** (tick sem nada pendente, request `eth_getLogs` disparado, janela sem log novo — tudo que acontece a cada tick mesmo com a rede ociosa) e **INFO/WARN só quando há algo que valha a pena ver no nível padrão** (logs efetivamente recebidos da rede, eventos novos persistidos, range recusado pelo nó disparando auto-shrink, falha de RPC). Aplicado em 3 pontos:
+
+- `Web3jBlockchainClient.getLogs`: `DEBUG` antes do request; depois, `INFO` com a contagem se `logs.isNotEmpty()`, `DEBUG` "nenhum log novo" caso contrário; `WARN`/`ERROR` nos 2 ramos de erro do `eth_getLogs` (range recusado vs. falha genérica), que antes só lançavam exceção sem logar nada neste ponto.
+- `PollTickService.tick()`/`processRange`: `DEBUG` pra "nada confirmado pendente" e "janela calculada"; `WARN` quando o auto-shrink divide um range recusado pelo nó (evento que antes só aparecia em `DEBUG` do processor de destino, sem contexto de que veio de um shrink).
+- `IngestionBatchProcessor.ingestRange`: a mensagem final virou condicional — `INFO` com contagem de eventos novos (incluindo quantos decodificaram com ABI vs. `decoded=false`) quando `toSave.isNotEmpty()`, `DEBUG` (mensagem antiga, mais enxuta) quando a janela não trouxe novidade.
+
+Alternativa descartada: logar tudo em `INFO` incondicionalmente — rejeitada porque o poll roda a cada `poll-interval-ms` (default 5s) e a rede fica ociosa a maior parte do tempo num ambiente de PoC/dev; um log a cada 5s sem nenhuma novidade real seria puro ruído. O corte escolhido (silêncio em `INFO` enquanto não há nada de fato novo; uma linha clara quando há) é o que atende literalmente o pedido — "ver o que está chegando", não "confirmar que o poller está vivo".
+
+Escopo desta tarefa foi deliberadamente **só o caminho de ingestão** (é onde o usuário sentiu a dor concreta — "principalmente na parte de pegando eventos da rede"), não uma varredura de todo o backend; o restante do sistema (redecode, backfill, webhook, saldo) já tem logger próprio com o mesmo estilo (`LoggerFactory` + `{}` parametrizado + português), suficiente como referência caso outro módulo precise do mesmo tratamento depois.
+
+### Consequências
+
+Nenhuma mudança de comportamento funcional, só logging — `./gradlew compileKotlin compileTestKotlin` limpo e os testes das 3 classes tocadas (`Web3jBlockchainClientTest`, `PollTickServiceTest`, `IngestionBatchProcessorTest`) verdes sem alteração (nenhum teste depende de texto de log). Nível de log continua controlado por `EVEX_LOG_LEVEL` (`application.yml`, default `INFO`) — quem precisar do detalhe de todo tick (mesmo ocioso) ainda pode setar `DEBUG`, mas não precisa mais disso só para ver eventos chegando.
+
+---
+
+## DEC-104 — Discovery do Blockscout indica proxy/implementação (`kind`, `proxyAddresses`, `implementationAddress`, `lastUpgradeBlock`, `warnings`) a partir de eventos `Upgraded` já ingeridos (fase 1)
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery`, `application/discovery`, `adapters/outbound/persistence`, contrato OpenAPI do discovery). Frontend adiado (ver "Pendências").
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (consulta/persistência) + `kotlin-backend-dev` (contrato/service/mapper), consolidado pela sessão principal.
+
+### Contexto
+
+`GET /v1/discovery/blockscout/contracts` devolvia só `{address, name}`. O Blockscout lista a **implementação** de um proxy UUPS (é ela que tem o fonte verificado), então o usuário cadastrava o endereço errado: os eventos são emitidos pelo **proxy** e o Evex atribui logs pelo endereço emissor (DEC-001). O `ERC1967Proxy` emite `Upgraded(address indexed implementation)` no construtor e a cada upgrade, e o Evex já guarda `rawTopics` de todo log ingerido — dá para inferir a relação proxy↔implementação sem RPC novo.
+
+### Decisão
+
+Cada item do discovery ganha campos **opcionais e aditivos** (`required` continua só `address`): `kind` (`PROXY` | `IMPLEMENTATION` | `STANDALONE`), `proxyAddresses`, `implementationAddress` (nullable), `lastUpgradeBlock` (int64, nullable) e `warnings`. Fonte da fase 1: **somente** eventos `Upgraded` já ingeridos; nenhuma chamada nova de RPC. Não bloqueia cadastro nem altera `POST /v1/contracts`.
+
+- **Porta nova `ProxyUpgradeLookupPort`** (`domain/discovery`), em vez de estender `BlockchainEventPort` (já com 9 métodos de 4 casos de uso e que devolve `BlockchainEvent`; aqui é uma projeção agregada específica do discovery). Dois métodos em lote: `findUpgradedLogsInvolving(addresses)` (endereço como emissor → PROXY, ou como implementação apontada → IMPLEMENTATION) e `findLatestUpgradedByProxy(proxies)` (último `Upgraded` de cada proxy, para saber a implementação **vigente**: proxy que migrou de X para Y não conta como proxy de X). **No máximo 2 queries por requisição**, independente do tamanho da lista (sem N+1); o 2º passo é pulado se o 1º não achou nada.
+- **Regra no domain puro:** `ProxyClassifier` (mesmo molde do `UupsDetector`, DEC-099), `UpgradedEvent` (`const val TOPIC0` literal + `topicFor` + `addressFromTopic`), `ContractKind`, `UpgradedLog`, `DiscoveredContract`. O `TOPIC0` é literal (domain sem Web3j) e um teste em `src/test` o confere contra `EventEncoder.encode(Event("Upgraded", [indexed Address]))`.
+- **Precedência:** PROXY (é emissor de algum `Upgraded`; `implementationAddress`/`lastUpgradeBlock` vêm do último log) > IMPLEMENTATION (algum proxy **vigente** aponta para ela) > STANDALONE.
+- **Honestidade sobre completude:** o cursor global (`IngestionCursorPort.current()`) não prova que o deploy do proxy foi ingerido (o Blockscout não informa o bloco de deploy). Por isso STANDALONE **nunca afirma "não é proxy"**: significa "nenhum proxy observado nos eventos ingeridos". Cursor atrás do bloco do `Upgraded` → aviso `Ingestão incompleta: ingestão só até o bloco N; o estado de proxy pode estar desatualizado.`; cursor `-1` → "Ingestão ainda não iniciou… não foi possível verificar". STANDALONE com cursor ≥ 0 não gera warning (evitar ruído em toda a lista); a limitação fica na description de `kind`.
+- **Normalização:** `address` sai exatamente como o Blockscout enviou (checksum); `proxyAddresses`/`implementationAddress` em lowercase (convenção do repo). `addressFromTopic` exige `0x` + 64 hex com 24 zeros à esquerda; senão `null`.
+- **Camada de entrada:** `BlockscoutDiscoveryService` orquestra (Blockscout → lookup em lote → cursor → classifier por item); `DiscoveryApiServiceImpl` continua fina, só mapeia. Consumidor deve tratar valor desconhecido de `kind` como `STANDALONE` (enum extensível por evolução do contrato). `lastUpgradeBlock` **inclui** o `Upgraded` emitido no deploy do proxy (documentado no yaml).
+
+### Performance (item 1 do pedido — medido)
+
+`blockchain_event` só tinha índices em `contract_address`/`block_number` e unique `(tx_hash, log_index)`; `topic0` é varchar sem índice e `raw_topics` é JSONB mapeado como `String` → consulta nativa com `raw_topics->>1`. Sem índice, cada GET faria seq scan na tabela da rede inteira. **Migration Flyway pontual `V6__blockchain_event_upgraded_partial_indexes.sql`** (padrão V2–V5, `CREATE INDEX IF NOT EXISTS`, via `PostSchemaFlywayMigrator`; índice parcial/de expressão não cabe em `@Index`): dois índices parciais com `WHERE topic0 = '<literal>'` — emissor `(contract_address, block_number DESC, log_index DESC)` e implementação `(lower(raw_topics->>1), block_number DESC, log_index DESC)`. `TOPIC0` é **interpolado como literal** na `@Query` (com bind, o plano genérico pode ignorar o índice parcial) e a expressão da query é idêntica à do índice. `EXPLAIN` com 30.000 logs não-`Upgraded` + 1 `Upgraded` (Postgres 16, após `ANALYZE`): **nenhum Seq Scan**; passo 2 usa `idx_blockchain_event_upgraded_emitter`; passo 1 faz Index Scan no índice parcial inteiro com filtro OR (não montou BitmapOr) — custo cresce com o nº total de `Upgraded` da rede, não com o tamanho de `blockchain_event`, suficiente porque `Upgraded` é raro. Custo na ingestão ≈ zero. O índice de implementação é praticamente redundante nessa escala; mantido por previsão de muitos proxies (candidato a remoção se se quiser simplicidade). O literal do topic0 se repete na migration (SQL não interpola); o teste de `EXPLAIN` cobre indiretamente: só usa o índice se os literais baterem.
+
+### Decisões operacionais
+
+- Queries nativas devolvem `List<Array<Any?>>` (não projection) para evitar problema de caixa nos aliases do Postgres; o adapter parseia o topic1 com `UpgradedEvent.addressFromTopic` e descarta linhas cujo topic1 não é endereço.
+- O adapter particiona a entrada em blocos de 10.000 endereços (limite de 32.767 parâmetros do Postgres) e deduplica.
+- `ProxyClassifier.classify` recebe as listas completas dos 2 passos + cursor e filtra por item.
+
+### Alternativas rejeitadas
+
+- Estender `BlockchainEventPort` (menor esforço, mas mistura projeção agregada de discovery com a porta de eventos).
+- Uma query por item da lista (N+1).
+- Ler o slot EIP-1967 via RPC (fase 2) já na fase 1 — fora do escopo pedido; ver avaliação abaixo.
+- Inferir por ABI/`UupsDetector` (DEC-099): compara seletor de função do ABI cadastrado, não relaciona endereços.
+- Constante `TOPIC0` calculada via Web3j no domain (violaria domain sem framework/lib de rede); literal + teste de conferência.
+- `kind` como string extensível (como `status`/`upgradeSource` da DEC-105) — **rejeitado por decisão do usuário (2026-10-08, revisão do `reviewer`, N3): `kind` permanece enum fechado (`PROXY|IMPLEMENTATION|STANDALONE`) no yaml**. Consequência aceita: adicionar um valor no futuro é mudança que exige atualizar os clientes gerados com enum estrito; a convenção "desconhecido/ausente = STANDALONE" vale só para o frontend atual.
+- Bloquear o cadastro quando o item é IMPLEMENTATION — o produto só avisa.
+- Warning em todo STANDALONE — ruído.
+
+### Riscos conhecidos
+
+Falso STANDALONE quando o poller não cobriu o deploy do proxy (mitigado só por texto/cursor); só `Upgraded(address)` é detectado (Beacon, Diamond e proxies custom sem esse evento ficam de fora); colisão com contrato não-proxy que emita o mesmo evento; `lastUpgradeBlock` inclui o `Upgraded` do deploy; sem cache na fase 1.
+
+### Avaliação da fase 2 (não implementada — aguarda confirmação)
+
+`eth_getStorageAt` no slot EIP-1967 (`0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`) em `BlockchainPort` (família de `hasCode`/`call`). Esforço baixo (~meio dia). Só `latest` (histórico exige archive). Sob demanda e **apenas para itens que a fase 1 deixou STANDALONE**, com cache curto e/ou batch JSON-RPC (`newBatch()` do Web3j), degradando para `null` se o nó recusar (try/catch próprio — `hasCode` hoje não faz). Resolve o lado **PROXY** (confirma proxy e implementação vigente mesmo sem `Upgraded` ingerido), mas **não** o lado IMPLEMENTATION (o storage só responde proxy→impl). Riscos: allowlist de métodos RPC / proxy autenticado no Besu real (não testado), proxies não-EIP-1967 ficam STANDALONE. Recomendação: vale como complemento, só se o falso STANDALONE aparecer na prática.
+
+### Testes
+
+`UpgradedEventTest` (5), `ProxyClassifierTest` (10), `JpaProxyUpgradeLookupAdapterTest` (7, Testcontainers + `EXPLAIN`), `BlockscoutDiscoveryServiceTest` (9, MockK: 1 proxy, 2 proxies caso ClassANBIMA, STANDALONE, item PROXY, poller atrás do `Upgraded`, cursor -1, 61 itens com 1 chamada por porta, Blockscout vazio e fora do ar), `DiscoveryApiTest` (HTTP; mantém `{address,name}` + campos novos).
+
+### Pendências
+
+Frontend (consumir `kind`/`warnings`, trocar o endereço pré-preenchido para o proxy no "Importar do Blockscout", modo mock) — adiado para uma única passada junto da DEC-105, a pedido do usuário. Validação ao vivo no QA depois que o poller alcançar os blocos dos 4 upgrades UUPS. Revisão final do `reviewer` (junto com a DEC-105).
+
+---
+
+## DEC-105 — Importação do histórico de versões de ABI de proxy UUPS a partir do Blockscout (`GET .../abi/history-plan` dry-run + `POST .../abi/history-import`) e correção da origem BLOCKSCOUT para proxy
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/abi`, `domain/discovery`, `application/abi`, `adapters/outbound/{discovery,persistence,abi}`, contrato OpenAPI). Frontend adiado para a etapa D (passada única junto da DEC-104).
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (fatia 1: infra) + `kotlin-backend-dev` (fatia 2: planner/serviço/contrato), consolidado pela sessão principal. Decisões D1–D8 confirmadas pelo usuário.
+
+### Contexto e evidência (Blockscout do QA, medido read-only em 4 proxies EIP-1967)
+
+- `GET /api/v2/smart-contracts/{proxy}` devolve a ABI do `ERC1967Proxy` (só `Upgraded`, zero funções da lógica) + só a implementação **atual** em `implementations`. Cadastrar via `AbiSource.BLOCKSCOUT` gravava, portanto, a **ABI errada**.
+- Implementação não verificada responde **HTTP 200** sem `abi` (só bytecode), não 404.
+- O histórico completo de upgrades sai de `/api?module=logs&action=getLogs&topic0=<Upgraded>` (compatível Etherscan), sem depender do poller do Evex. `/api/v2/addresses/{proxy}/logs` pagina em 50 e não filtra por topic — descartado.
+- Das 11 implementações dos 4 proxies, **só as 4 originais estão verificadas**; as 7 pós-upgrade não. Efeito prático no QA hoje: o import aplica a v1 e o restante vira `PENDING_NO_VERIFIED_ABI` até serem verificadas no Blockscout (ou cadastradas manualmente, guiado pelo `validFromBlock` do plano).
+- Havia mais upgrades que os 4 conhecidos (proxies com 3 `Upgraded`).
+
+### Decisão (D1–D8)
+
+- **D1 — Fonte do histórico `historySource=AUTO|INGESTED_ONLY|BLOCKSCOUT_ONLY`:** eventos ingeridos (`ProxyUpgradeLookupPort.findUpgradeHistory`, DEC-104) como primária + `getLogs` do Blockscout como complemento. Reconciliação por `(txHash, logIndex)` (ou `(blockNumber, implementationAddress)` sem logIndex); divergência → prevalece o ingerido + warning; Blockscout fora → `AUTO` degrada para só ingeridos + warning explícito (o `historySource` da resposta é o **efetivo**); `BLOCKSCOUT_ONLY` com Blockscout fora → 503. Cada item informa `upgradeSource` (`INGESTED|BLOCKSCOUT|BOTH`); cabeçalho informa `ingestedUntilBlock` (cursor) e `truncated` (`getLogs` ≥ ~1000).
+- **D2 — `POST /abi` com `source=BLOCKSCOUT` para proxy** (`proxyType` ≠ nulo/`unknown` e exatamente 1 implementação): grava a ABI da **implementação composta** com os eventos/erros do proxy ausentes nela (`ProxyAbiComposer`, para o próprio `Upgraded` continuar decodificando); implementação sem ABI verificada → **422** `BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND` (sem fallback silencioso para a ABI do proxy — esse era o bug). Não-proxy e `implementations.size != 1` (ex.: diamond) mantêm o comportamento anterior. **Mudança de comportamento intencional (correção de bug), não estritamente aditiva** — contrato HTTP (request/response) inalterado.
+- **D3 — `PENDING` no meio:** só o prefixo é aplicado; itens que seriam `APPLY`/`PENDING`/`CONFLICT` depois de um `PENDING`/`CONFLICT` viram `BLOCKED_AFTER_PENDING` (importar v3 antes de v2 fecharia a faixa de v1 e impediria cadastrar v2 manualmente, pois `register` exige `validFromBlock` crescente). Itens `SKIP_*` posteriores continuam `SKIP`. Lacunas (`allowGaps`) ficam para fase 2.
+- **D4 — Versão legada (ABI errada do proxy, `source=BLOCKSCOUT` sem `implementation_address`):** `CONFLICT_MANUAL` por padrão; flag opt-in `replaceBlockscoutLegacy` no `POST` remove da timeline do planner e apaga (`ContractAbiPort.deleteLegacyBlockscoutVersions`, na mesma transação do lote) **apenas** versões `BLOCKSCOUT` sem implementação — nunca `UPLOAD_*`/`AUTO_DETECTED`. Se nenhum item for `APPLY`, nada é apagado.
+- **D5 — ABIs idênticas em sequência:** mantém **uma linha por upgrade** (não mescla); sinalizado em `identicalToPrevious`. Mesclar quebraria o 1:1 upgrade↔linha que sustenta a idempotência e perderia a rastreabilidade de qual implementação vigorou quando.
+- **D6 — 1ª versão com `validFromBlock = 0`**, demais = bloco do `Upgraded`; `validTo = próximo.from − 1`, último aberto. Warning só quando o histórico pode estar incompleto (truncado, cursor `-1` ou Blockscout fora). Campo extra aditivo `upgradeBlockNumber` preserva o bloco real do 1º upgrade (o `validFromBlock` dele é 0).
+- **D7 — Idempotência por `implementation_address varchar(42) NULL`** em `contract_abis` via `ddl-auto` (sem Flyway, precedente DEC-097) + `implementationAddress` opcional no DTO `ContractAbi`. Marcador de origem reaproveita `AbiSource.BLOCKSCOUT` (sem novo valor de enum → contrato do `ContractAbi.source` e TS gerado intactos). Mesmo `from` + mesma implementação → `SKIP_ALREADY_IMPORTED`; mesmo `from` + conteúdo idêntico → `SKIP_IDENTICAL`; mesmo `from` + conteúdo diferente (manual) → `CONFLICT_MANUAL`; **nunca sobrescreve** versão manual.
+- **D8 — Dois endpoints** (`GET history-plan` seguro/idempotente + `POST history-import`, em 2 arquivos de path porque o `base.yaml` referencia um arquivo por path). O servidor **sempre recalcula** o plano; `expectedFingerprint` opcional (sha256 de `from|impl|status` por item) divergente → **409** `ABI_HISTORY_PLAN_CHANGED` (`AbiHistoryPlanMismatchException`) sem gravar nada. `status` e `upgradeSource` são **strings extensíveis** no contrato (consumidor trata valor desconhecido como não aplicável).
+
+### Armadilha do redecode — como foi resolvida
+
+`register()` não era transacional (cada `save` uma transação) e chamava `redecodeOrchestrator.tryStart` a cada versão (ignorado se já rodando; o runner pode parar antes de ver a última versão no cache). Novo `AbiRegistrationService.registerAll(address, List<AbiVersionDraft>, source, storage, replaceBlockscoutLegacy)`: resolve/parseia **todas** as ABIs antes de qualquer I/O; valida ordem estritamente crescente; grava via **bean separado** `AbiVersionWriter` (`@Transactional`, evita self-invocation) fechando a versão aberta e inserindo as N em **um commit só**; atualiza o `AbiCache` **uma vez, depois do commit**; dispara **um** `tryStart` e devolve `redecodeStarted` (`false` ⇒ usuário dispara `POST /v1/redecode`). `register` simples passa a delegar com lista de 1 sem mudar o comportamento observável. Blocos ainda não ingeridos são decodificados na própria ingestão pelo `AbiCache` por faixa (nada extra); o redecode final cobre o que já está no banco.
+
+### Onde mora
+
+`domain/abi`: `AbiDiff`, `AbiHistoryPlanner` (+ tipos; status como códigos string), `AbiHistoryPlanMismatchException`, `BlockscoutImplementationAbiNotFoundException` — **sem** Spring/JPA/Web3j/Jackson. `ProxyAbiComposer` usa Jackson → vive em `adapters/outbound/abi` (junto do `AbiParser`), não no domain (decisão da sessão principal sobre desvio da fatia 1). `application/abi`: `AbiHistoryImportService`, `BlockscoutAbiResolver` (`resolveForRegistration`, `abiOf`, `compose`, `composeOrNull` — este último devolve `null` sem exceção para o planner marcar `PENDING`), `AbiVersionWriter`, `AbiVersionDraft`. `domain/discovery`: `BlockscoutPort.getContract/getUpgradeHistory`, `UpgradeRecord`; `ProxyUpgradeLookupPort.findUpgradeHistory` (o índice parcial da V6, DEC-104, já serve). `ContractsApiServiceImpl`: 2 métodos finos.
+
+### Alternativas rejeitadas
+
+Só `getLogs` do Blockscout (ignora a ingestão do Evex); só eventos ingeridos (cursor atrás/ingestão iniciada após o deploy); `/addresses/{proxy}/logs` (paginado, sem filtro de topic); endpoint único com flag `dryRun` (mutação disfarçada de leitura); mesclar ABIs idênticas; novo valor em `AbiSource`; importar pulando `PENDING` (impede o cadastro manual posterior); fallback silencioso para a ABI do proxy; um redecode por versão.
+
+### Limitações e riscos conhecidos
+
+- **`AbiDiff`/`SKIP_IDENTICAL` não expandem tuplas** (`ParsedAbiEntry` só guarda `type` bruto `"tuple"`): versões que diferem só em componentes de tupla aparecem como idênticas. Corrigir exigiria mudar `AbiParser` (afeta o catálogo).
+- **Órfãos em storage `LOCAL`:** o conteúdo é gravado fora da transação; um rollback do lote pode deixar arquivo órfão (sem conflito de integridade; só lixo).
+- **Precisão por bloco:** num upgrade no meio de um bloco, logs anteriores na mesma tx usam a ABI nova (o cache/`RedecodeFilter` não têm `logIndex`). Dois upgrades no mesmo bloco: só o último vale, com warning.
+- **Peso do Blockscout** (~1 MB por contrato, no dry-run e de novo no apply); falha ao buscar ABI propaga 503 (não vira `PENDING`); só a falha no histórico de logs degrada em `AUTO`.
+- **Dívida hexagonal (DEC-076) — ampliada, errata da revisão (N1):** `AbiRegistrationService` já importava `AbiParser` de `adapters/outbound/abi`; o novo `BlockscoutAbiResolver` (application) importa também `ProxyAbiComposer` do mesmo pacote — **dois pontos agora, não um** (a frase original "não piorou" estava errada). Sugestão registrada: porta fina `AbiComposerPort` em `domain/abi`.
+- **Valor imediato no QA limitado** pela falta de verificação das implementações pós-upgrade no Blockscout (ver Contexto). **Implementações antigas sem ABI verificada** (cadastro manual pelo plano ou verificação no Blockscout): 7 implementações de upgrade nos 4 proxies (endereços informados fora do repositório).
+- Jackson omite campos nulos: `validToBlock`, `txHash`, `abiId`, `diffFromPrevious` podem estar ausentes (frontend trata ausência como `null`).
+
+### Testes
+
+`AbiDiffTest` (4), `ProxyAbiComposerTest` (4), `BlockscoutAbiResolverTest` (4), `BlockscoutClientTest` (12), `JpaProxyUpgradeLookupAdapterTest` (8), `JpaContractAbiAdapterTest` (9), `AbiRegistrationServiceTest` (22), `AbiRegistrationBatchIntegrationTest` (6, Testcontainers — prova rollback atômico, cache 1×, 1 `tryStart`), `AbiHistoryPlannerTest` (14), `AbiHistoryImportServiceTest` (12), `AbiHistoryApiTest` (5, Testcontainers: proxy com 3 upgrades, B e C de mesma ABI; dry-run com diff de 3 métodos; 409; import com faixas 0..299/300..499/500..aberta; `GET /v1/events` com cada evento decodificado só pela ABI da faixa certa; 2ª execução tudo `SKIP_ALREADY_IMPORTED`). Nota: o endpoint de versões é `GET /v1/contracts/{address}/abi` (não existe `/abi/versions`).
+
+### Pendências
+
+Frontend (etapa D, passada única com a DEC-104): ação "Importar histórico do Blockscout" no detalhe do contrato com dry-run + confirmação de apply; cliente TS regenerado; mock. Revisão final do `reviewer` (backend + frontend das duas DECs). Validação ao vivo no QA (dry-run real em um dos 4 UUPS) quando o ambiente permitir.
+
+### Errata pós-revisão do `reviewer` (2026-10-08)
+
+- **B1 (bloqueante, corrigido) — `replaceBlockscoutLegacy` (D4) inutilizável com fingerprint.** O `plan()` calculava sempre sem a flag: com versão legada o dry-run dava `CONFLICT_MANUAL` + `BLOCKED_AFTER_PENDING` (zero `APPLY`, apply desabilitado na UI) e, com a flag no `POST`, o plano recalculado mudava de status, o fingerprint divergia e voltava 409 sempre. Correção aditiva: `GET history-plan` ganhou o query param opcional `replaceBlockscoutLegacy` (default `false`); o dry-run com a flag mostra exatamente o plano que o `POST` com a mesma flag executa (mesmo fingerprint); o plano ganhou `legacyVersionsToReplace: [{abiId, validFromBlock}]` (fora do fingerprint; vazio sem a flag ou sem item `APPLY`, pois nada é apagado). O frontend passou a ter o opt-in no cabeçalho do dialog (entra na chave da query do plano), não mais só na confirmação. Testes novos cobrem o fluxo completo (plano sem flag → `CONFLICT_MANUAL`; com flag → `APPLY`; `POST` com fingerprint do plano sem flag → 409; com o do plano com flag → 200, legado apagado, versões novas gravadas).
+- **S4 (corrigido) — vazamento de URL:** `ResourceAccessException` do `RestClient` trazia a URL do ambiente no log e no corpo do 503. `BlockscoutUnavailableException` agora carrega só "Blockscout indisponível (<TipoDaExceção>)"; o log do serviço usa só o tipo da causa. Testes provam que a mensagem do 503 não contém a base-url.
+- **S5 (corrigido):** `POST /abi` documenta 409/422 (`BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND`)/503; os paths de histórico documentam 404/409/503 conforme aplicável.
+- **N2 (registrado, sem ação):** o aviso "ingestão incompleta" do `ProxyClassifier` (`cursor < upgradeBlock`) é quase inalcançável em produção, porque o cursor global avança junto com a ingestão; o caso real (poller atrás do deploy/upgrade) resulta em STANDALONE sem aviso (só cursor `-1` avisa). Declarado em `kind`; só a fase 2 (slot EIP-1967) resolve de fato.
+- **N3 (decisão do usuário):** `kind` permanece enum fechado (ver alternativas rejeitadas da DEC-104).
+- **Limitação de teste:** a preservação de `UPLOAD_*` pelo delete de legado é provada no `JpaContractAbiAdapterTest` (fatia 1), não no teste de API (o planner trata uma versão aberta posterior como `CONFLICT_MANUAL`).
+
+
+---
+
+## DEC-106 — `listVerifiedContracts` do Blockscout passa a paginar via `next_page_params` (o discovery só via a 1ª página)
+
+Data: 2026-10-08
+
+Módulo: backend (`adapters/outbound/discovery/BlockscoutClient`)
+
+Autor: `blockchain-integration`, consolidado pela sessão principal. Achado reportado pelo usuário ao chamar o discovery no QA.
+
+### Contexto
+
+`GET /v1/discovery/blockscout/contracts` devolvia só 50 itens, todos `STANDALONE`, sem os contratos novos nem os proxies. Medido no Blockscout do QA (read-only): `GET /api/v2/smart-contracts` devolve 50 itens por página com `next_page_params` (ex.: `smart_contract_id`, `items_count`), e o QA tem **74** contratos verificados em **2 páginas**; a 2ª página contém 9 `ERC1967Proxy`. O cliente fazia uma única chamada e ignorava `next_page_params` (defeito anterior à DEC-104, que só ficou evidente agora porque os proxies deixaram de ser opcionais para o produto).
+
+### Decisão
+
+Paginar seguindo `next_page_params`: todos os pares não nulos viram query params da próxima requisição (montados via `uriBuilder` + variáveis de template do `RestClient`, sem concatenar string), até o campo vir ausente/nulo/vazio. Proteções: teto `MAX_DISCOVERY_PAGES = 100` (atingido → `WARN` sem dado sensível e retorna o acumulado, sem lançar); detecção de laço (params já vistos → `WARN` e para); **falha em qualquer página → `BlockscoutUnavailableException`** (nunca lista parcial silenciosa), com só o path e o tipo da exceção (regra do S4: sem base-url); dedupe por endereço em minúsculas preservando a 1ª ocorrência e a ordem. Contrato `List<BlockscoutContractSummary>` e OpenAPI inalterados.
+
+### Alternativas rejeitadas
+
+Aumentar `page size` por parâmetro (o Blockscout v2 não expõe um limite configurável de forma portável); devolver lista parcial quando uma página falha (esconderia contratos justamente quando o usuário precisa deles); paginação infinita sem teto (risco em instância mal-comportada).
+
+### Efeito conhecido que continua valendo (N2/DEC-104)
+
+Com a lista completa, o `kind` só vira `PROXY`/`IMPLEMENTATION` quando os eventos `Upgraded` já foram ingeridos pelo poller; com o cursor ≥ 0 e o poller atrás, o item sai `STANDALONE` sem aviso. Complemento possível (não implementado, decisão do usuário): usar o `getLogs` do Blockscout também no discovery, ao custo de 1 chamada por item candidato (fase 2).
+
+### Testes
+
+`BlockscoutClientTest` +6: 2 páginas com params repassados exatamente; 3 páginas em ordem; laço de params; teto de 100 páginas sem lançar; falha 500 na página 2 → exceção sem URL; dedupe case-insensitive. Suíte do backend: 691/691.
+
+---
+
+## DEC-107 — Discovery classifica proxy/implementação também pelos logs `Upgraded` do Blockscout (1 chamada `getLogs` sem endereço), reconciliados com os eventos ingeridos
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery`, `application/discovery`, `adapters/outbound/discovery`, `config`). Sem mudança de contrato OpenAPI nem de frontend.
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (fatia 1: adapter/infra) + `kotlin-backend-dev` (fatia 2: domain/service), consolidado pela sessão principal. Decisões 1–8 do desenho confirmadas pelo usuário.
+
+### Contexto
+
+A DEC-104 classifica `kind` só com eventos `Upgraded` já ingeridos; com o poller atrás (ou ingestão iniciada após o deploy) os itens saem `STANDALONE` silenciosos (limitação N2). O usuário aprovou um complemento via `getLogs` do Blockscout. Medido no QA (read-only): `GET /api?module=logs&action=getLogs&topic0=<Upgraded>&fromBlock=0&toBlock=latest` **sem endereço** devolve todos os `Upgraded` da rede em **1 chamada** (214 logs, 193 proxies e 114 implementações distintos, ~1,1 s, ~100 KB), contra ~1 MB por contrato em `/api/v2/smart-contracts/{x}`. A API devolve em ordem **crescente** de bloco por padrão, `fromBlock` funciona como filtro, `sort=desc` não é respeitado e `page`/`offset` são **ignorados** (devolvem tudo) — por isso a paginação é por bloco.
+
+### Decisão
+
+- **Porta aditiva** `BlockscoutPort.getAllUpgradeLogs(): BlockscoutUpgradeHistory` (reusa o tipo da DEC-105); `BlockscoutUpgradeLog` ganha `proxyAddress: String? = null` (lowercase; só preenchido por esta chamada). Parser de log compartilhado com `getUpgradeHistory`. Sem `sort`/`page`/`offset`.
+- **Paginação por bloco:** página com ≥ 1000 resultados repete com `fromBlock` = maior bloco recebido (inclusivo), dedupe por `(txHash, logIndex)`; para com < 1000 (`truncated=false`); `truncated=true` se o bloco não avança (≥ 1000 num mesmo bloco) ou ao atingir `upgrade-logs-max-pages` (default 10). Falha em qualquer página → `BlockscoutUnavailableException` do **conjunto inteiro** (nunca parcial como se fosse completo).
+- **Cache** em memória **dentro do adapter** (porta pura): TTL `upgrade-logs-cache-ttl` (30 s; `0` desliga), só sucesso (completo/truncado), single-flight, `Clock` injetável, falha não cacheada; só `getAllUpgradeLogs` usa.
+- **Timeouts** no `RestClient` do Blockscout (todo o cliente): conexão 2 s, leitura **15 s** (não 10 s: `getContract` devolve ~1 MB). Antes não havia timeout algum (um Blockscout pendurado derrubava o discovery por tempo indeterminado).
+- **Domain puro:** `UpgradeReconciler` (extraído de `AbiHistoryImportService.reconcile`, que virou wrapper fino com o mesmo comportamento e textos — os testes da DEC-105 passaram sem alterar asserções), `UpgradeLogsCoverage {NOT_CONSULTED, COMPLETE, TRUNCATED, UNAVAILABLE}`, `UpgradedLog.source`, `DiscoveryUpgradeView.build` (mescla ingeridos + remotos; `latestByProxy` considera os remotos de todos os proxies envolvidos, de modo que "proxy migrou X→Y" funciona mesmo quando o upgrade novo só existe no Blockscout). `UpgradeSource` foi movido de `domain/abi` para `domain/discovery` (evita ciclo de pacote). **A regra do `ProxyClassifier` não mudou** (precedência PROXY > IMPLEMENTATION > STANDALONE); só os textos de `warnings`.
+- **Comportamento de falha:** `listVerifiedContracts` falha → 503 como antes (o remoto nem é chamado). `getAllUpgradeLogs` falha → captura, `WARN` só com o tipo da causa (regra S4), `coverage=UNAVAILABLE`, classifica só com ingeridos (200); nunca estado misto. Flag `indexer.blockscout.upgrade-logs-enabled` (default `true`) desligada → `NOT_CONSULTED` = comportamento exato da DEC-104 e o remoto nunca é chamado.
+- **Custo por requisição:** ≤ 2 queries ao banco + 1 chamada ao Blockscout (via adapter, com cache), independente do nº de itens (teste com 61 itens).
+- **Config** (`indexer.blockscout.*`): `upgrade-logs-enabled`, `upgrade-logs-cache-ttl`, `upgrade-logs-max-pages`, `connect-timeout`, `read-timeout` (documentadas no `application.yml`).
+
+### Warnings (PT-BR) por cenário
+
+- PROXY/IMPLEMENTATION com evidência só `BLOCKSCOUT`: "Classificação baseada nos logs do Blockscout; este upgrade (bloco N) ainda não consta nos eventos ingeridos pelo Evex (ingestão até o bloco M)." (com cursor −1: "(a ingestão ainda não iniciou)."; com cursor ≥ N: sem o parêntese). Evidência `BOTH`/`INGESTED`: sem aviso novo (vale o da DEC-104).
+- STANDALONE: `COMPLETE` → sem aviso (nem o de cursor −1: a verificação foi pelo Blockscout; continua **sem** afirmar "não é proxy" — Beacon/Diamond/proxy custom/Blockscout defasado); `TRUNCATED` → "Lista de upgrades do Blockscout truncada; a classificação pode estar incompleta."; `UNAVAILABLE` → "Complemento do Blockscout indisponível; classificação feita apenas com eventos ingeridos (pode estar incompleta)."
+- `TRUNCATED` acrescenta o aviso a **todos** os itens; `UNAVAILABLE` só aos `STANDALONE`.
+- IMPLEMENTATION que já migrou (sem proxy vigente), com `COMPLETE`/`TRUNCATED`: "…nos eventos ingeridos nem nos logs do Blockscout".
+
+### Efeito sobre a limitação N2 (DEC-104)
+
+O caso real (poller atrás do deploy/upgrade) deixa de sair `STANDALONE` silencioso: passa a sair `PROXY`/`IMPLEMENTATION` corretos com o aviso de fonte Blockscout. O `STANDALONE` silencioso só sobra com `NOT_CONSULTED` (flag off) ou `UNAVAILABLE` (que agora avisa).
+
+### Alternativas rejeitadas
+
+1 `getLogs` por candidato (N chamadas externas); `/api/v2/smart-contracts/{x}.implementations` por item (~1 MB cada, só proxy→impl atual); `eth_getStorageAt` no slot EIP-1967 (fase 2 da DEC-104: 1 RPC por item, só `latest`, só lado PROXY, depende de allowlist do Besu — segue como complemento futuro só se ainda aparecer falso `STANDALONE` em proxies sem evento `Upgraded`); `kindSource` no contrato (decisão do usuário: só warnings; se o frontend quiser selo, adiciona-se depois como string extensível); `page`/`offset`/`sort` (não respeitados pelo Blockscout do QA); cache distribuído/banco (exagero: uma instância por rede); substituir a fonte ingerida pelo Blockscout (viola "ingerido prevalece", DEC-105 D1).
+
+### Limitações e riscos
+
+- Defasagem de até o TTL (30 s) para um upgrade novo; colisão com contrato não-proxy que emita o mesmo evento (já aceito na DEC-104); Beacon/Diamond/proxy sem `Upgraded(address)` seguem `STANDALONE`.
+- Na `DiscoveryUpgradeView` o passo do banco devolve `UpgradedLog` sem `txHash`: o match com o remoto é por `(proxy, bloco, logIndex)` (ou `(proxy, bloco)` se o logIndex remoto é nulo); implementação divergente → prevalece o ingerido **sem aviso** (a `Divergence` com aviso só existe no fluxo de histórico).
+- **TD:** o construtor `@Autowired` do `BlockscoutClient` usa `@Value("#{true}") applyConfiguredTimeouts` para ligar os timeouts sem quebrar os testes `MockRestServiceServer` (que dependem dos defaults do construtor primário). Funciona, mas é hacky; corrigir direito pede reorganizar os construtores ou um bean de `RequestFactory` — registrado como débito. Os timeouts aplicados num `RestClient` real não têm teste (só os defaults das propriedades).
+- Cenários de teto de páginas e de página cheia sem avanço foram simulados com mocks, não validados contra um Blockscout real.
+
+### Testes
+
+Fatia 1: +10 em `BlockscoutClientTest` (parse do emissor, "No logs found", paginação por bloco com dedupe da fronteira, página cheia sem avanço, teto, 500 e falha na página 2 sem base-url, cache TTL/expiração/falha não cacheada/`ttl=0`, `proxyAddress` nulo em `getUpgradeHistory`, defaults das propriedades). Fatia 2: +24 (`UpgradeReconcilerTest`, `DiscoveryUpgradeViewTest`, casos novos em `ProxyClassifierTest`, `BlockscoutDiscoveryServiceTest`, `DiscoveryApiTest`). Suíte do backend: **725/725**.
+
+### Revisão do `reviewer` (2026-10-08) — aprovada com ressalvas, sem achado bloqueante (DEC-106 + DEC-107)
+
+Backend 725/725 reconfirmado do zero. Domain sem Spring/JPA/Web3j/Jackson, `DiscoveryApiServiceImpl` inalterada, sem ciclo de pacote, ≤ 2 queries + 1 chamada ao Blockscout, nenhum segredo/URL/endereço real, mensagens de erro/log sem base-url.
+
+- **N1 (corrigido):** o hack `@Value("#{true}")` funciona em produção (o Spring escolhe o construtor `@Autowired`; os timeouts são aplicados no bean real), mas o `HttpClient.newBuilder()` cru segue redirecionamentos como `NEVER` — um Blockscout atrás de redirect http→https ou de barra final viraria 503 em todos os endpoints do cliente (regressão sutil). Corrigido com `.followRedirects(HttpClient.Redirect.NORMAL)` em `BlockscoutClient`. **TD mantido:** trocar o hack por `ClientHttpRequestFactoryBuilder`/`HttpClientSettings` (que também herdaria `spring.http.client.*`, SSL bundle e proxy do Boot) e adicionar teste que prove que o bean de produção recebeu os timeouts.
+- **N2 (aceito, declarado):** o teto de 100 páginas em `listVerifiedContracts` devolve lista parcial com `WARN` (≈ 5.000 contratos; improvável). Contradiz "nunca parcial silencioso" aplicado às falhas; mantido por ser o teto de segurança contra instância mal-comportada.
+- **N3 (aceito, declarado):** divergência de implementação na mesma posição prevalece o ingerido **sem aviso** no discovery (o aviso de divergência só existe no fluxo de histórico, DEC-105).
+- **Sugestões abertas:** S1 — o cache segura o lock durante toda a I/O (pior caso: 10 páginas × ~17 s bloqueia outras requisições de discovery em cache frio; considerar teto de páginas menor ou `Future` compartilhado com timeout); S2 — a flag `upgrade-logs-enabled` tem duas fontes (`BlockscoutProperties` e `@Value` no service; unificar injetando as properties); S3 — dedupe `(txHash, logIndex)` com `logIndex` nulo pode colapsar logs distintos da mesma tx (só com Blockscout sem `logIndex`); S4 — `AbiHistoryImportService` ainda loga `ex.message` ao ler ABI local (não envolve URL; inconsistência com a regra S4); N5 — o guia não cita a paginação da DEC-106.
+
+
+---
+
+## DEC-108 — Item `PROXY` do discovery ganha nome derivado da implementação ("<Nome> (Proxy)")
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery/ProxyDisplayName`, `ProxyClassifier`, `application/discovery/BlockscoutDiscoveryService`). Sem mudança de contrato OpenAPI nem de frontend.
+
+Autor: `kotlin-backend-dev`, consolidado pela sessão principal. Pedido do usuário após validar a DEC-107 no QA.
+
+### Contexto
+
+O Blockscout nomeia todo proxy verificado como `ERC1967Proxy`; no discovery os itens `kind=PROXY` ficavam indistinguíveis (9 itens com o mesmo nome). O usuário quer ver o contrato lógico, ex.: `ANBIMACoin (Proxy)`.
+
+### Decisão
+
+Para itens `PROXY`, `name` = `"<NomeDaImplementação> (Proxy)"`, onde o nome vem da implementação **mais recente do histórico daquele proxy que esteja na lista de verificados** (histórico ordenado por `(bloco, logIndex)` decrescente; match de endereço case-insensitive; `name` não vazio). Não basta a implementação **atual**: na prática ela costuma não estar verificada/listada (só as originais estão), mas uma anterior do mesmo proxy está (ex.: o proxy do `YieldCurveOracle` aponta para uma implementação não verificada, cujo histórico inclui a original verificada → `YieldCurveOracle (Proxy)`).
+
+- Função pura `ProxyDisplayName.derive(originalName, proxyHistory, listedNames)` no domain (sem Spring/JPA/Web3j/Jackson); `ProxyClassifier.classify` ganhou o parâmetro opcional `listedNames: Map<String, String?> = emptyMap()` e aplica a regra **só no ramo PROXY**. Classificação e warnings não mudaram; `IMPLEMENTATION`/`STANDALONE` intactos; `address` sai exatamente como veio do Blockscout.
+- **Mantém o `name` original** (sem inventar sufixo) quando nenhuma implementação do histórico está listada, o histórico é vazio, ou todos os nomes listados são nulos/em branco. Também mantém o original se o nome derivado termina com "Proxy" (case-insensitive; decisão do agente para cobrir implementação listada com nome genérico — não procura implementações mais antigas nesse caso). Idempotente: nome que já termina com "(Proxy)" não duplica o sufixo.
+- O `involving` do `DiscoveryUpgradeView` já traz o histórico completo de um proxy listado (ingeridos ∪ Blockscout): nenhuma consulta nova (≤ 2 queries ao banco + 1 chamada ao Blockscout).
+
+### Alternativas rejeitadas
+
+Campo novo no contrato (ex.: `displayName`) mantendo o `name` original — rejeitado por ora para não ampliar o contrato (o `name` do Blockscout para proxy é inútil); usar só a implementação atual (falha justamente nos casos reais, com a atual não verificada); consultar o Blockscout por proxy para obter o nome (≈ 1 MB por contrato).
+
+### Consequência conhecida
+
+Quem cadastra um contrato a partir do item PROXY recebe o nome derivado pré-preenchido (`ANBIMACoin (Proxy)`), que passa a ser o nome do contrato monitorado. Os ~45 proxies da `ClassANBIMA` não são itens próprios da lista (o Blockscout só lista os verificados individualmente): aparecem em `proxyAddresses` do item `IMPLEMENTATION`.
+
+### Testes
+
+`ProxyDisplayNameTest` (10), +1 em `BlockscoutDiscoveryServiceTest`, +1 em `DiscoveryApiTest`. Backend 737/737. Frontend não tocado (o item PROXY do mock já tem nome próprio, `TokenProxy`).
+
+---
+
+## DEC-109 — `POST /v1/contracts/{address}/abi` com `source=BLOCKSCOUT` e sem `validFromBlock` usa o bloco de criação do contrato (não mais sempre 0)
+
+Data: 2026-10-08
+
+Módulo: backend (`domain/discovery/BlockscoutPort`, `adapters/outbound/discovery/BlockscoutClient`, `application/abi/AbiRegistrationService`, `adapters/inbound/api/ContractsApiServiceImpl`, `register-abi-payload.yaml`) + 1 ajuste de texto no frontend.
+
+Autor: `blockchain-integration`, consolidado pela sessão principal. Pedido do usuário ao testar o cadastro de ABI por Blockscout (a faixa vinha sempre de 0).
+
+### Contexto
+
+O cadastro ignorava a origem do dado: `ContractsApiServiceImpl` aplicava `validFromBlock ?: 0L` para qualquer `source` — uma **regra de negócio dentro da camada que deve ser só de mapeamento**. O Blockscout expõe o bloco de criação em 2 chamadas leves (medido no QA, read-only): `GET /api/v2/addresses/{address}` → `creation_transaction_hash`; `GET /api/v2/transactions/{hash}` → `block_number` (ou `block`). `/api/v2/smart-contracts/{address}` não traz bloco.
+
+### Decisão
+
+- `BlockscoutPort.getCreationBlock(address): Long?` (aditivo): `null` = sem dado (404, sem hash de criação, tx sem bloco); falha de rede/5xx → `BlockscoutUnavailableException` (só path + tipo da exceção, sem base-url — regra S4).
+- `AbiRegistrationService.register(..., validFromBlock: Long? = null)`: **informado → vale exatamente o valor** (inclusive 0; nunca sobrescreve escolha explícita e o Blockscout nem é consultado); nulo e `BLOCKSCOUT` → `getCreationBlock(address) ?: 0L` (se lançar `BlockscoutUnavailableException`: cai em 0 com `WARN` só com o tipo da causa — o cadastro da ABI **não** falha por causa disso); nulo e outras origens (`UPLOAD_*`) → 0 como antes, sem consultar o Blockscout. A consulta do bloco ocorre depois de resolver a ABI (a falha por Blockscout não configurado continua igual). A regra de ordem contra a versão aberta não mudou: se o valor resolvido for ≤ ao da versão aberta, o mesmo `AbiVersionOrderException` de antes.
+- `ContractsApiServiceImpl` voltou a ser fina (passa o `validFromBlock` nullable adiante, sem `?: 0L`).
+- **Mudança de contrato (só semântica, aditiva na prática):** `register-abi-payload.yaml` tinha `default: 0` no `validFromBlock`, que o generator transformava em `var validFromBlock: Long? = 0L` — omitir o campo virava 0 já na desserialização e o `null` nunca chegaria ao service. Removido **só o `default: 0`**; tipo e `required` inalterados; descrição atualizada ("Se omitido: origem BLOCKSCOUT usa o bloco de criação do contrato no Blockscout (0 se indisponível); demais origens usam 0"). Clientes antigos que omitem o campo continuam funcionando (para as origens não-Blockscout o resultado é o mesmo 0).
+- Frontend: o formulário já enviava `undefined` quando o campo fica vazio (a feature funciona pela UI); só o rótulo "(opcional, default 0)" ficou impreciso e virou "(opcional)" + `helperText` explicando o comportamento por origem.
+
+### Limite conhecido
+
+Para **proxy**, o bloco é o de criação do **próprio proxy** (o endereço cadastrado): é o início correto da faixa, mas uma única versão com a ABI da implementação atual continua sendo uma **aproximação** (eventos de implementações anteriores foram emitidos com outras ABIs). Para faixas por upgrade o caminho correto é o import de histórico (DEC-105). Documentado no KDoc e no guia.
+
+### Alternativas rejeitadas
+
+Manter o `?: 0L` no ApiServiceImpl e só ajustar o valor lá (regra de negócio na camada fina); falhar o cadastro se o Blockscout não responder (a ABI já foi resolvida; o bloco é refinamento, 0 é seguro: nenhum log existe antes da criação); usar o bloco do último `Upgraded` para proxy (deixaria sem ABI os eventos anteriores).
+
+### Testes
+
+`BlockscoutClientTest` +6, `AbiRegistrationServiceTest` +6, `ContractAbiCreationBlockApiTest` +3 (POST BLOCKSCOUT sem `validFromBlock` devolve o bloco de criação mockado; `0` explícito respeitado e `getCreationBlock` não chamado; `UPLOAD_TEXT` sem valor fica em 0). Backend 752/752; frontend `src/features/contracts` 45/45, `tsc -b` e lint limpos.
+
+---
+
+## DEC-110 — Saldo com parâmetros em array (eventos em lote): flag opcional `batch` na config de saldo + expansor puro, sem behavior novo
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/balance`, `application/balance`, `adapters/outbound/persistence`, contrato OpenAPI de balance-monitor, migration `V7`). Frontend na etapa D (única passada, com a DEC-111). Epic E32.
+
+Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev` (implementação), consolidado pela sessão principal. Decisões do usuário confirmadas (opção C; descarte atômico; validação contra **todas** as versões de ABI).
+
+### Princípio do produto (vale para toda a E32)
+
+O Evex é um indexador **genérico e configurável**: nenhuma regra, nome, endereço ou formato de projeto específico entra no código (fixtures neutras: ERC-1155 genérico, endereços fictícios); limitação de um contrato específico se resolve com **mecanismo geral de configuração + limite documentado**, nunca com atalho nem pedindo alteração de contrato externo; strings extensíveis no lugar de enums fechados; sem soluções com N cadastros manuais por org/cliente.
+
+### Contexto
+
+`BalanceBehaviorStrategy` (CREDIT/DEBIT/TRANSFER/DELTA) lê `fromParam`/`toParam`/`valueParam`/`tokenIdParam` como **escalares**. Eventos em lote (ex.: `TransferBatch` do ERC-1155, `uint256[] ids`/`uint256[] values`) não eram suportados: `toBalanceAmount` lança com `List`, `applySafely` captura, WARN deduplicado e **o evento ficava `decoded=true` sem saldo projetado**; com `tokenIdParam` apontando para array e valor escalar, `readTokenId` gerava o tokenId lixo `"[2, 3]"`. Fatos medidos: `uint256[]` decodifica como `List<BigInteger>`, mas relido do JSONB os elementos voltam `Integer`/`Long`/`BigInteger` **misturados**; o saldo é acumulador puro por `(wallet, contract, tokenId, network)` (sem ledger por evento); a idempotência é por evento (`(tx_hash, log_index)` na ingestão, `decoded=false→true` no redecode, cursor do backfill).
+
+### Decisão
+
+- **Flag opcional `batch: boolean` (default `false`)** na config de saldo (create/update/resposta), reusando `valueParam`/`tokenIdParam` como arrays (sem `idsParam`/`valuesParam`). **O enum `BalanceBehavior` fica intacto**; vale para os 4 behaviors e para qualquer evento em lote de qualquer contrato. No `PUT`, `batch` omitido = `false`.
+- **`BatchEventExpander` puro no domain:** 1 evento em lote → N eventos escalares (valor e tokenId são listas de mesmo tamanho; os demais parâmetros são replicados em cada posição); conversão **elemento a elemento** via `toBigIntegerOrNull` (Int/Long/BigInteger/String). `BatchEventInvalidException` se tamanhos diferem, o parâmetro-chave não é lista ou há elemento não numérico; **lista vazia = no-op legítimo**.
+- **Projeção:** `applySafely` → `computeDeltas`: com `batch=true` expande e chama a **mesma strategy** em cada posição (as 4 strategies não mudam); exceção inválida cai no `catch` existente e **descarta o evento inteiro (atomicidade)** com WARN deduplicado por `config.id` (`WarnLogDeduper`), sem derrubar o lote. Endereço zero por posição (`TransferBehavior` já ignora mint/burn). Ids repetidos somam (`applyDeltas` já agrega). Ingestão ao vivo, redecode e backfill passam todos por `applySafely` ⇒ **mesmo saldo**. Com `batch=false`, valor/tokenId que chegam como lista **não geram mais tokenId lixo**: descarte com WARN que sugere `batch=true`.
+- **Validação no create/update contra o ABI (ajuste do usuário):** considera **TODAS as versões de ABI** do contrato (proxy upgradável pode ter assinaturas diferentes por faixa de blocos, DEC-007), via `ContractEventCatalogService.catalogFor`. Sem ABI cadastrada, contrato ainda não monitorado ou evento inexistente em todas as versões ⇒ **não valida** (retrocompat). Versão "compatível": `batch=true` ⇒ `valueParam` e `tokenIdParam` são arrays numéricos (`^u?int\d*\[\d*]$`); `batch=false` ⇒ nenhum termina em `]`; parâmetro ausente numa versão é neutro. **400 (`INVALID_BALANCE_MONITOR_CONFIG`) somente se NENHUMA versão for compatível; se só algumas, aceita e devolve aviso PT-BR** (um por config, listando as faixas incompatíveis, ex. `0..99`, `100..atual`) no novo campo opcional **`warnings: string[]`** do schema de resposta (só `POST`/`PUT` preenchem; `GET`/listagem não trazem). Validação só no create/update: configs já gravadas, leitura e projeção não são afetadas.
+- **Persistência:** coluna `batch boolean NOT NULL DEFAULT false` + Flyway pontual `V7__balance_monitor_batch_flag.sql` (`ADD COLUMN IF NOT EXISTS`, padrão V2/DEC-041/066: o `ddl-auto` não adiciona `NOT NULL` em tabela com linhas; em banco novo o Hibernate cria a coluna e a V7 vira no-op). `BalanceMonitorsApiServiceImpl` continua fina.
+
+### Alternativas rejeitadas
+
+Behavior novo `TRANSFER_BATCH` (enum fechado: valor novo quebra clientes com enum estrito, mesma consequência aceita para `kind`/N3 da DEC-104); detecção implícita de lista em `TRANSFER` (ambígua); `idsParam`/`valuesParam` redundantes; aplicar parcialmente um lote inválido (viola atomicidade); ledger por posição/sub-índice no array (o saldo é acumulador e a idempotência vem por evento); validar só a ABI vigente (proxy com assinaturas diferentes por faixa); reprojeção automática ao editar para `batch=true`.
+
+### Limites documentados (guia §5.1)
+
+- ERC-1155 precisa de **2 configs por contrato**: `TransferSingle` (escalar) e `TransferBatch` (`batch=true`).
+- Editar para `batch=true` **não reprojeta** o histórico (o `update` não reseta o cursor): para histórico, config nova + backfill. Eventos `TransferBatch` já ingeridos como `decoded=true` sem saldo só são reprojetados pelo backfill, não pelo redecode.
+- **Precisão de ids > 2^53:** `decodedParameters` na API de eventos é número JSON e perde precisão em clientes JS (DEC-062/063); o saldo e o `tokenId` da API de saldo já saem como string.
+- `AbiParser` não suporta tuplas/structs em eventos (`InvalidAbiContentException`); fora do escopo.
+
+### Testes
+
+`BatchEventExpanderTest` (10), `BalanceProjectionServiceTest` (+9: mint/transferência/burn em lote, CREDIT/DEBIT/DELTA, descarte atômico com WARN deduplicado, `batch=false` com lista, vazio, ids repetidos, 2^256−1, backfill expande), `BalanceMonitorConfigServiceTest` (+10: compatível, nenhuma versão compatível → 400, `address[]`, `batch=false` com array → 400, só algumas versões → aceita + aviso, sem ABI, contrato não monitorado, evento inexistente, PUT omitido), `BalanceBatchAcceptanceTest` (2, Testcontainers: log real de `TransferBatch` ABI-codificado e decodificado pelo decoder real; saldo **idêntico** entre ingestão ao vivo, **redecode** e **backfill**; backfill não duplica; round-trip JSONB com elementos mistos; contrato da API), `BalanceMonitorBatchMigrationTest` (V7 em banco com linhas, idempotente), +1 round-trip no adapter, +1 `JpaAssetBalanceAdapterTest` (ids repetidos; 2^256−1 cabe em `numeric(78,0)`). Backend **787/787**.
+
+**Não executado:** `e2e/tests/10-balance-batch.spec.ts` (spec só de API com o `mintBatch` do `TestERC1155` do `local-env`, escrito e **não executado nem tipado**: não há scaffold/Hardhat/`node_modules` neste ambiente). Frontend/mock/cliente TS: etapa D.
+
+---
+
+## DEC-111 — Chave de correlação configurável do Modelo de Entidade (`correlationKey`) e fonte `source` no mapeamento de campo, com `CorrelationKeyResolver` como fonte única
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/model`, `application/model`, `application/webhook` — só `resolveModelPlaceholders` —, `adapters/outbound/persistence/JpaEntityModelAdapter`, contrato OpenAPI do Modelo de Entidade). **Sem migration e sem coluna nova.** Frontend na etapa D (única passada, com a DEC-110). Epic E32.
+
+Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev` (implementação), consolidado pela sessão principal. Decisões do usuário confirmadas (incluir `LITERAL`; tipo desconhecido = 400 no cadastro; mapper tolerante; reprojeção opt-in fora da primeira entrega; acréscimo do `source` no mapeamento de campo). Princípio do produto: ver DEC-110.
+
+### Contexto
+
+`EntityModelRecord` é único por `(modelId, correlationValue, network)` e `correlationValue = parameters[contributor.correlationParam].toString()`: **um único parâmetro por contribuinte**, sem noção de emissor, transação ou bloco. Quando o mesmo identificador se repete em contratos diferentes (ex.: um id local a cada contrato emissor), um modelo correlacionado só pelo id mistura entidades distintas. A mesma derivação de chave estava **duplicada** em `EntityModelProjectionService` e em `WebhookMatchingService.resolveModelPlaceholders` (`{{model.*}}`). Limites do mundo real: eventos que não carregam a chave de ligação não correlacionam entre contratos — isso é um limite **genérico** a documentar, não algo que o Evex resolve com atalho nem exigindo mudança de contrato externo.
+
+### Decisão
+
+- **Chave configurável, aditiva e opcional:** cada `ModelContributor` ganha `correlationKey: List<CorrelationKeyPart(type: String, arg: String?)>` (**tipo string extensível**, não enum). Tipos iniciais: `PARAM` (`arg` = parâmetro decodificado), `EMITTER_ADDRESS` (contrato emissor do log, lowercase), `TX_HASH`, `BLOCK_NUMBER`, `LITERAL` (`arg` = constante). `LITERAL` foi incluído porque é a única forma de unir eventos que não carregam chave alguma. `BLOCK_TIMESTAMP` **não** é tipo de parte da chave (só fonte de campo).
+- **Retrocompat total:** `correlationParam` continua válido (agora anulável). **Precedência:** `correlationKey` não vazia vence; nula/vazia ⇒ usa `correlationParam`. O atalho legado segue o **caminho literal `valor.toString()`** (sem lowercase de endereço nem rejeição de lista), para **não mudar chaves já gravadas**; teste de **equivalência** (Int, Long, BigInteger pequeno e 2^200, String numérica, String não numérica, endereço) prova que Int/Long/BigInteger/"42" geram a mesma chave. Partes `PARAM` explícitas aplicam a normalização canônica (divergência intencional em strings de endereço com maiúsculas; não ocorre com Web3j, que entrega lowercase). Modelos existentes mantêm a mesma chave e o mesmo comportamento.
+- **`CorrelationKeyResolver` no domain (Kotlin puro) = ÚNICA fonte da chave**, com registros `Map<String, KeyPartEvaluator>` por tipo (sem `when` espalhado; porta aberta para um futuro avaliador por enriquecimento). Usado por `EntityModelProjectionService` **e** pelo `{{model.*}}` do webhook (derivação duplicada eliminada): evento → chave pelo mesmo resolver → registro; um evento de contribuinte diferente do que criou o registro o enxerga quando a chave coincide, senão os placeholders do modelo saem `null` (como já era).
+- **Normalização determinística (partes `PARAM`):** números (Int/Long/BigInteger/String numérica) → decimal canônico; endereços lowercase; strings como estão; lista/Map/struct/vazio/nulo ⇒ **parte ausente**. **Parte ausente, nula ou tipo desconhecido em execução ⇒ o evento NÃO correlaciona** (nenhum registro escrito, nunca chave parcial) com WARN deduplicado por `model.id`.
+- **Montagem:** 1 parte = valor puro, sem escape (idêntico ao legado); 2+ partes = valores com escape (`\` → `\\`, `|` → `\|`) unidos por `|`.
+- **`source` no mapeamento de campo (acréscimo do usuário):** `ModelFieldMapping.source: String` opcional, código extensível, **default `PARAM`** (comportamento atual); valores iniciais `PARAM`, `EMITTER_ADDRESS`, `TX_HASH`, `BLOCK_NUMBER`, `BLOCK_TIMESTAMP`. Permite, por exemplo, um registro chaveado por `TX_HASH` que guarda também o endereço emissor de cada evento. `decodedParam` passou a opcional/anulável (obrigatório só para `source = PARAM`; relaxamento aditivo). Fonte desconhecida/ausente ⇒ campo omitido com WARN deduplicado, **sem derrubar o evento nem o lote**; `PARAM` com parâmetro ausente mantém o legado (valor nulo). **`BLOCK_TIMESTAMP`:** `BlockchainEvent.blockTimestamp` existe mas é `Instant?` (preenchido de forma síncrona na ingestão pelo `IngestionBatchProcessor`, memoizado por bloco do lote — **não existe backfill de timestamp separado**, corrigido em 2026-10-09; o tipo é `Instant?` por contrato defensivo, mas em eventos ingeridos pelo poller ele sempre existe); valor em ISO-8601 (`Instant.toString()`); nulo ⇒ campo omitido com WARN; **nenhuma RPC na projeção**.
+- **Validação no create/update (400, PT-BR, `InvalidEntityModelException`):** tipo ou `source` desconhecido; `arg` ausente em `PARAM`/`LITERAL`; `PARAM` com `arg` fora do evento; sem chave nenhuma; **aridade** (nº de partes) diferente entre contribuintes do mesmo modelo. Com `correlationKey` presente o `correlationParam` legado não é validado contra o evento. Modelos já gravados não são revalidados na leitura/projeção.
+- **Persistência:** `contributors` é JSONB ⇒ só ganha a chave `correlationKey` (linhas antigas leem com default nulo) e `source` nos mappings (default `PARAM`); **sem coluna nova, sem mudar a unique `(model_id, correlation_value, network)`, sem migration**; mapper Jackson do adapter com `FAIL_ON_UNKNOWN_PROPERTIES = false` (JSONB interno; o rollback para a versão com o mapper novo continua lendo).
+
+### Alternativas rejeitadas
+
+Um modelo por org/cliente como solução do produto (N cadastros manuais crescendo por org; fica só como **nota** no guia); enum fixo `correlationScope` (fechado, não cobre chave composta nem TX); correlação composta por lista de parâmetros apenas (não cobre emissor nem transação); serializar listas/structs na chave; aceitar e ignorar tipo desconhecido no cadastro (um modelo que nunca correlaciona em silêncio); reprojeção automática ao editar a chave; tabela de alias `txHash → chave`; pedir mudança de contrato externo; atalho específico de projeto; RPC/`eth_call` dentro da projeção.
+
+### Limites documentados (guia §14)
+
+- `EMITTER_ADDRESS` só correlaciona eventos do **mesmo emissor**; correlação **entre contratos diferentes** exige partes que avaliem igual nos dois contribuintes (um `PARAM` que contenha o endereço, `TX_HASH` ou `LITERAL`). **Eventos que não carregam a chave não correlacionam entre contratos.**
+- **Mudar a chave de um modelo já populado cria registros novos e deixa os antigos órfãos** (sem reprojeção histórica de modelo nesta entrega).
+- `BLOCK_TIMESTAMP` depende de o timestamp já estar gravado no evento.
+- Versões anteriores à DEC-111 que ainda usem o mapper sem tolerância não leem linhas com `correlationKey` (rollback de versão).
+
+### Evolução futura (só registrada, não implementada)
+
+- **Reprojeção opt-in de modelo** (`POST /v1/entity-models/{id}/reproject`, nos moldes do backfill DEC-066, marca d'água + cursor): esforço M-G, prioridade média, fecharia também o buraco de eventos anteriores à criação do modelo e os órfãos.
+- **Contribuinte definido por assinatura de evento/interface (`topic0`)** em vez de endereço fixo: esforço M; exige ABI registrada por emissor para decodificar.
+- **Parte de chave resolvida por enriquecimento (`eth_call` no bloco do evento):** esforço G; hoje `evaluate` é síncrono e sem I/O e a E19 decidiu não fazer RPC dentro da ingestão; o tipo string e o `KeyPartEvaluator` por tipo deixam espaço para um avaliador `ENRICHMENT`.
+- "Duplicar modelo" na UI: esforço P, prioridade baixa.
+
+### Testes
+
+`CorrelationKeyResolverTest` (equivalência legado; mesmo id em 2 contratos com `[EMITTER_ADDRESS, PARAM(id)]` ⇒ chaves distintas; composta com escape de `|` e `\`; `TX_HASH` entre contratos ⇒ mesma chave; `LITERAL`; `BLOCK_NUMBER`; ausente/nula/lista ⇒ não correlaciona; tipo desconhecido em execução ⇒ ausente + WARN; precedência; `source`), `EntityModelCorrelationKeyTest` (Testcontainers com adapters JPA reais: projeção e webhook; dois contratos/mesmo id ⇒ registros distintos, modelo legado colide num só; `TX_HASH` funde campos de contratos diferentes; registro por `TX_HASH` que guarda o endereço emissor; reprojeção idempotente; `{{model.*}}` pelo mesmo resolver), `EntityModelServiceCorrelationKeyTest` (validações), `JpaEntityModelCorrelationKeyJsonbTest` (JSONB legado, com propriedades desconhecidas e ida e volta), `EntityModelsCorrelationKeyApiTest` (API: 400 para tipo desconhecido/`arg` faltando/aridade; só `correlationParam` continua aceito). Nenhuma asserção de teste existente foi alterada. Backend **820/820**.
+
+---
+
+## DEC-112 — Frontend da E32: `batch` nos 3 modos do saldo, construtor de chave de correlação e `source` no Modelo de Entidade; resultado da revisão única
+
+Data: 2026-10-09
+
+Módulo: frontend (`features/balances`, `features/models`, `components/contractCatalog.ts`, `ParamBindingCanvas.tsx`, mocks) + docs. Epic E32 (DEC-110 e DEC-111).
+
+Autor: `frontend-dev`, consolidado pela sessão principal.
+
+### Decisões operacionais da UI
+
+- **Saldo, guiado:** o `batch` é sugerido ao **escolher o evento** (quando os parâmetros numéricos do evento são só arrays), não ao escolher o parâmetro — o filtro estrito (sem Lote só escalares) impediria escolher um array antes. O usuário pode desmarcar e a escolha dele prevalece. Com Lote marcado os selects de montante/tokenId listam só **arrays numéricos**; sem Lote, só escalares. Marcar/desmarcar limpa a escolha que ficou incompatível. Ao editar, o formulário também lê os tipos do catálogo (antes os selects do guiado ficavam desabilitados até reescolher o evento).
+- **Saldo, visual:** slots ganham o sufixo "(array)" com Lote marcado; vincular um array ao montante sugere o Lote (o slot numérico aceita escalar ou array para a sugestão poder disparar). **Manual:** checkbox simples (sem validação de tipos: não há catálogo).
+- **Validação de tipo × Lote é não bloqueante** (Alert amarelo): o backend é a garantia final. O body **sempre** leva `batch` (true/false). Chip "Lote" no detalhe e na listagem. `warnings` do POST/PUT chegam ao detalhe pelo `state` do router (Alert "Configuração salva com avisos"); 400 pelo `ApiErrorAlert`. Texto de ajuda nos 3 modos: 2 configs por contrato ERC-1155, editar para `batch=true` não reprojeta o histórico, evento inválido é descartado inteiro com WARN.
+- **`contractCatalog.ts`/`ParamBindingCanvas.tsx`:** novos kinds `numericScalar`/`numericArray`; o kind `numeric` e a regex `NUMERIC_TYPE` ficam **intactos** (o webhook não regrediu).
+- **Modelo de Entidade:** o editor tem **um único modo** (selects/builders); não existem guiado/visual/manual nele, então não foram criados modos novos. `CorrelationKeyBuilder` por contribuinte: partes com adicionar/remover/subir/descer (sem arrastar), select de tipo (PARAM com select dos parâmetros do evento; LITERAL com texto; demais sem `arg`), pré-visualização (`EMITTER_ADDRESS | PARAM(id)`), **tipo desconhecido tolerado e preservado** como texto cru. **Modelo legado** (só `correlationParam`): exibido como uma parte PARAM com nota; **se a chave não for tocada, o body mantém `correlationParam` e não leva `correlationKey`** (sem migrar silenciosamente); se for alterada, envia `correlationKey` e omite `correlationParam`. Validação no formulário: ≥ 1 parte, `arg` em PARAM/LITERAL, mesma aridade entre contribuintes (Salvar desabilitado). Alerta de **órfãos** ao editar a chave de contribuinte existente. Mapeamento de campo com `source` (select; `decodedParam` só para PARAM; trocar de fonte o descarta; fonte desconhecida como texto cru; nota sobre `BLOCK_TIMESTAMP`). Contribuinte novo nasce com `correlationKey: [PARAM(vazio)]`; trocar o evento zera os `arg` de PARAM mantendo a forma. O mapeamento novo envia `source: 'PARAM'` explícito.
+- **Mocks:** novo contrato ERC-1155 genérico (versão escalar até o bloco 99 e `uint256[]` a partir do 100), configs de saldo em lote, POST/PUT com `warnings` e 400 `INVALID_BALANCE_MONITOR_CONFIG`; o mock **não tinha nenhum handler de modelos de entidade** — criados list/create/get/put/status com 3 modelos (chave composta, `TX_HASH` com fontes não-PARAM, e um **legado**) e validações 400 espelhadas. **Correção:** o handler de update de saldo estava como `PATCH` e o cliente usa `PUT` (`updateBalanceMonitor`); o `PATCH` real é só o `/status`.
+
+### Revisão do `reviewer` (2026-10-09) — aprovada com ressalvas, sem achado bloqueante
+
+Backend 820/820 e frontend 160/160 (34 arquivos; `tsc -b`/lint/build limpos) reconfirmados do zero. Confirmado: fonte única do `CorrelationKeyResolver`, legado com a mesma chave, atomicidade do saldo em lote, saldo idêntico entre ao vivo/redecode/backfill com decoder real, mapper tolerante, webhook sem regressão, cliente gerado não editado à mão, domain sem Spring/JPA/Web3j/Jackson, ApiServiceImpl finas, nenhum segredo/URL/endereço real e **nenhuma menção ao projeto de origem em código/testes/mocks/e2e novos** (princípio do produto).
+
+- **N1 (corrigido):** a seção E32 do roadmap citava o projeto de origem; neutralizada.
+- **N2 (corrigido):** status da E32 desatualizado; atualizado com a Etapa D e esta revisão.
+- **N3 (aceito, registrar no changelog da API):** `ModelContributor.correlationParam` e `ModelFieldMapping.decodedParam` deixaram de ser obrigatórios e viraram `nullable` — relaxamento **aditivo** para requests, mas esses schemas também são usados em **respostas**: no cliente TS regenerado o campo vira opcional (quebra tipagem de quem o lê como `string`), e modelos novos com `correlationKey` e sem `correlationParam` o omitem (pode quebrar clientes estritos). O frontend foi adaptado (`effectiveKeyParts`).
+- **S1 (corrigido):** array vazio legítimo gerava WARN espúrio em `applySafely` ("não gerou nenhum delta"), contradizendo a documentação (vazio = no-op). `computeDeltas` agora devolve `ComputedDeltas(deltas, emptyBatch)` e o WARN é suprimido quando o lote veio legitimamente vazio; o teste existente do array vazio foi estendido para provar a ausência de WARN e de `applyDeltas`.
+- **S2 (aceito):** os `warnings` de create/update chegam ao detalhe pelo `state` do router e somem num reload — aceitável, o aviso aparece uma vez ao salvar.
+- **S3 (aceito):** o teste de equivalência do legado compara `toString` e a parte `PARAM`, não executa o código pré-mudança; a leitura do diff cobre a lacuna.
+
+### Não executado / fora do escopo
+
+- `e2e/tests/10-balance-batch.spec.ts` (escrito, plausível por leitura — helpers existentes e `mintBatch([2,3])` do `local-env` — mas **não executado nem tipado**: sem Hardhat/`node_modules` neste ambiente) e os specs Playwright existentes.
+- Sem "duplicar modelo" nem reprojeção de modelo (DEC-111, evolução futura); sem reordenar partes por arrastar.
+
+---
+
+## DEC-113 — Contrato de pré-visualização, reenvio e seleção de eventos de webhook (`preview`, `resend`, `matching-events`, `blocks/by-date`, `capabilities`) sem mexer em dados
+
+Data: 2026-10-09
+
+Módulo: backend (`application/webhook`, `adapters/inbound/api`, `adapters/outbound/persistence`, migration `V8`, contrato OpenAPI). Frontend na Etapa C (única passada). Epic E33.
+
+Autor: `hexagonal-architect` (desenho) + `blockchain-integration` (fatia 1) + `kotlin-backend-dev` (fatias 2, 3a, 3b), consolidado pela sessão principal. Decisões D1–D8 do desenho confirmadas pelo usuário. Princípio do produto: ver DEC-110 (genérico e configurável; nada de projeto específico; códigos extensíveis; `/v1` só aditivo).
+
+### Contexto
+
+Para testar um webhook com um evento já processado era preciso editar o banco (`decoded=false` + redecode), o que **reprojeta saldos e modelos** e não serve para uso real. Fatos do código: a entrega nasce em `WebhookMatchingService.matchSafely` (só chamada pela ingestão e pelo redecode); a Fase 2 (`{{enriched.*}}`) roda no **disparo, a cada tentativa**; **não existe unique por (webhook, evento)** (o reenvio não precisa contornar idempotência, só de guarda contra duplo clique); a entrega não guardava o payload final enviado.
+
+### Decisão
+
+- **Endpoints aditivos (OpenAPI-first, `ApiServiceImpl` finas):**
+  - `GET /v1/webhooks/{id}/matching-events` — endpoint **dedicado** (D1), paginação por cursor `block:logIndex`, filtro por data **ou** bloco; resposta reaproveita o schema `Event` e traz `nextCursor`, `scanned`, `scanTruncated` (teto `max-scan` = 5000) e `warnings`. Os filtros do webhook são funções **em memória** (`WebhookFilterCondition`), por isso um filtro `webhookId` em `/v1/events` foi rejeitado (sem total honesto por offset, semântica dupla). Pré-filtro SQL por contrato/evento/rede/janela.
+  - `POST /v1/webhooks/{id}/preview` — 1 a 5 eventos, `enrichmentBlock{mode, blockNumber?, blockDate?}`, `diagnose?`; **não grava nada**. Resposta por evento: `matches` (+ `notMatchingReason`), `payload` final, `modelState`, `enrichment{blockUsed, calls[], unresolvedTokens, failuresSummary, diagnoses?}`, `warnings`; mais `failuresSummary` agregado da requisição. Evento que não casa é renderizado mesmo assim.
+  - `POST /v1/webhooks/{id}/resend` (202) — até 50 `eventIds` **ou** um `range`; resposta `accepted[{eventId, deliveryId}]`, `skipped[{eventId, reason}]`, `modelState`, `enrichmentBlock`, `warnings`.
+  - `GET /v1/blocks/by-date?date&direction=FLOOR|CEILING` e `GET /v1/capabilities` (flags/limites efetivos para a UI: `webhookUrlOverrideEnabled`, `webhookResendMaxEventsPerRequest`, `webhookPreviewMaxEvents`, `webhookResendMaxPendingResends`, `webhookResendMaxPerMinutePerWebhook`, `webhookMaxRequestsPerMinutePerInstance`).
+  - **Valores como string extensível** (nenhum enum fechado novo): `mode` (`EVENT_BLOCK` padrão, `LATEST`, `BLOCK_NUMBER`, `BLOCK_AT_DATE`), `status` da chamada (`OK`/`ERROR`), `reason` do skip (`NOT_MATCHING`, `ALREADY_PENDING`, `EVENT_NOT_DECODED`, `EVENT_NOT_FOUND`, `PAYLOAD_RENDER_FAILED`), `classification`, `code`, `verdict`, `source`, `origin`. O consumidor trata valor desconhecido como "não aplicável".
+  - Erros (`ApiError`): 400 `TOO_MANY_EVENTS`, `INVALID_ENRICHMENT_BLOCK_MODE`, `INVALID_CURSOR`, `INVALID_DIRECTION`, `URL_OVERRIDE_DISABLED`, `URL_NOT_ALLOWED`, `VALIDATION_ERROR`; 404 `WEBHOOK_CONFIG_NOT_FOUND`; **409 `WEBHOOK_INACTIVE`** (reenvio de webhook inativo, salvo com `overrideUrl` válido — D7; preview sempre liberado); 422 `BLOCK_RESOLUTION_FAILED`; 429 `RATE_LIMITED`/`RESEND_QUEUE_FULL` com `Retry-After`. Os limites de lista não entram como `maxItems` no yaml (geraria `VALIDATION_ERROR` em vez de `TOO_MANY_EVENTS` e o teto é configurável): só documentados.
+- **Fila e histórico reaproveitados:** o reenvio usa o MESMO `WebhookDeliveryPort.enqueue`, e o `WebhookDispatchJob` processa; retry, backoff e estados PENDING/DELIVERED/FAILED não mudam. A Fase 1 (casamento, render, `{{model.*}}` via `CorrelationKeyResolver`) foi extraída para o `WebhookPayloadComposer` (application), usado por disparo normal, preview e reenvio; `WebhookPayloadRenderer` movido de `adapters` para `application/webhook` (D8). `findDue` ordena disparos normais **antes** de reenvios (`CASE WHEN origin='MATCH' …, createdAt`) para um reenvio lento não atrasar o tempo real.
+- **Dados (migration `V8`, `ADD COLUMN IF NOT EXISTS`, padrão V4/DEC-041):** `webhook_deliveries` += `origin` (varchar `DEFAULT 'MATCH'`; `resend` do DTO é **derivado**, sem coluna própria), `enrichment_block_mode`, `enrichment_block_number`, `target_url_override`, `model_state_at`; `webhook_delivery_attempts` += `enrichment_results` JSONB, `enrichment_block_used` (varchar(32): número ou `latest`), `sent_payload` (gravado **sempre**, D5, também no disparo normal); índices `(webhook_config_id, blockchain_event_id)` e `(block_timestamp, block_number)`. Os resultados ficam na **tentativa** (a Fase 2 roda a cada tentativa) e aparecem em "ver tentativas". Leitura tolerante do JSONB.
+- **Efeito colateral zero:** o preview usa só portas de leitura, `@Transactional(readOnly = true)`, com testes de snapshot das tabelas e `verify(exactly = 0)` em enqueue/save/send/recordAttempt; o reenvio escreve **só em `webhook_deliveries`** (sem `updateAll`, sem projeção de saldo/modelo, `decoded` intacto), provado por snapshot.
+- **Retry de reenvio:** `EVENT_BLOCK` re-resolve por evento; `BLOCK_NUMBER` e `BLOCK_AT_DATE` ficam **congelados** no enqueue (a data é resolvida por FLOOR e vira número); `LATEST` é **re-resolvido a cada tentativa** (D6), com o bloco usado gravado por tentativa. Entregas antigas sem modo = `EVENT_BLOCK` = comportamento anterior idêntico.
+
+### Alternativas rejeitadas
+
+Filtro `webhookId` em `GET /v1/events`; coluna `resend` redundante a `origin`; resultados do enriquecimento só na entrega (a Fase 2 roda por tentativa); reenvio via `decoded=false`/redecode (reprojeta saldo/modelo); fila paralela só para reenvio (duplica retry/backoff); reconstituir o modelo "na época" por reprojeção; enums fechados; `maxItems` no yaml.
+
+### Limites
+
+O limiter e a fila de reenvio são **por instância** (zeram no restart). `warnings` de `matching-events` usam código + contagem (ex.: `DATE_FILTER_EXCLUDES_EVENTS_WITHOUT_TIMESTAMP:<n>`), a UI traduz.
+
+### Testes
+
+Backend 820 → **1067/1067** na E33 (fatias: +84, +31, +42, +90): migration V8 com linhas existentes; round-trip dos campos novos; `findDue` com ordenação; paginação por cursor; preview sem escrita (snapshot de tabelas); reenvio sem alterar `decoded`/saldo/modelo; `WebhookResendApiTest` (Testcontainers, 19), `WebhookPreviewMatchingApiTest` (14).
+
+---
+
+## DEC-114 — Enriquecimento tipado por chamada: erro estruturado (`BlockchainCallException`), resultado por chamada (`EnrichmentCallOutcome`), resolução de método por nome + aridade, `CallBlock`
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/blockchain`, `domain/enrichment`, `domain/abi`, `adapters/outbound/blockchain/Web3jBlockchainClient`, `application/webhook/WebhookEnrichmentResolver`, `application/enrichment/EnrichmentProfileService`, `application/common/WarnLogDeduper`). Epic E33.
+
+Autor: `blockchain-integration`, consolidado pela sessão principal. Evidência real do usuário: 4 `EnrichmentCall` de 3 contratos falharam no **mesmo bloco recente** com `code=-32603 'Internal error'`, inclusive views triviais, e a causa só aparecia no `WARN` (nunca no registro da entrega).
+
+### Decisão
+
+- **Erro preservado, causa não afirmada.** `BlockchainCallException(code, rpcMessage, data, classification)` guarda `code`, `message` e **`data` brutos** do erro JSON-RPC (o `data` era descartado). `classification` é string extensível derivada **só de indício explícito**: `REVERTED` (`execution reverted`), `TIMEOUT`, `IO`, `NODE_ERROR` (`-32603`/`-32000` genéricos), `STATE_UNAVAILABLE_SUSPECTED` **apenas** com mensagem explícita (`missing trie node`, `state not available`, `world state`, `pruned`). **Um `-32603` genérico nunca vira "sem estado histórico"** (o bloco do caso real é recente). Falha de transporte vira `TIMEOUT`/`IO` sem URL na mensagem (regra S4).
+- **`CallBlock`** (`Number(n)` | `Latest`) em `BlockchainPort.call(..., block)`; a assinatura antiga com `Long` vira overload que delega. Valida `args.size == inputTypes.size` no adaptador (antes o `zip` truncava em silêncio).
+- **Timeouts** no cliente Web3j (`indexer.blockchain.connect-timeout=5s`, `read-timeout=15s`; antes dependia do default do OkHttp: 10 s lidos no source, não validado em execução com o Web3j 6).
+- **Resultado por chamada:** `EnrichmentCallOutcome` (`Success{outputs, blockUsed}` | `Failure{code, message, rpcCode, rpcData, classification, blockUsed}`), `EnrichmentFailureCodes` string extensível (`METHOD_NOT_FOUND`, `METHOD_AMBIGUOUS`, `ABI_NOT_FOUND`, `CONTRACT_NOT_REGISTERED`, `ARG_UNRESOLVED`, `BLOCK_UNRESOLVED`, `ENCODING_ERROR`, `RPC_ERROR`, `UNEXPECTED_ERROR`, `SKIPPED_DEPENDENCY`, `SKIPPED_AFTER_REPEATED_FAILURE`). `WebhookEnrichmentResolver.resolveDetailed(...)` devolve o relatório por chamada, preserva o encadeamento (`{{enriched.x}}` de uma chamada que falhou ⇒ dependentes `SKIPPED_DEPENDENCY` com causa) e **`resolve()` continua wrapper com o mesmo retorno** — o payload mantém `null` na falha (**DEC-057 mantida**).
+- **Modo de bloco como estratégia:** `Map<String, EnrichmentBlockStrategy>` (`EVENT_BLOCK`, `LATEST`, `BLOCK_NUMBER`, `BLOCK_AT_DATE`; extensível, sem `when` espalhado). **Qual ABI vale:** `EVENT_BLOCK`/`BLOCK_NUMBER`/`BLOCK_AT_DATE` usam a versão vigente **no bloco da chamada**; `LATEST` usa a versão **aberta** (proxy upgradável, DEC-007).
+- **Resolução por nome + aridade** (função pura em `domain/abi`): aridade que não bate = `METHOD_NOT_FOUND` com as assinaturas disponíveis (o antigo truncamento silencioso era um bug); duas sobrecargas distintas de mesma aridade = `METHOD_AMBIGUOUS`; o `methodName` aceita **assinatura canônica** (`get(address)`) para desambiguar (o `eth_call` usa sempre o nome simples). No cadastro do perfil a checagem é por versão de ABI: ambiguidade em qualquer versão rejeita; método/aridade ausente só rejeita se nenhuma versão resolver (não bloqueia método introduzido por upgrade).
+- **Memoização** por (contrato, método, args, bloco), **inclusive de falhas**, numa execução (`EnrichmentExecutionContext`, não thread-safe; um por requisição de preview; um por ciclo no disparo normal — D9); ABI/método memoizados por (endereço, bloco) (eram 4 acessos ao banco por chamada). **Circuit-breaker** (`SKIPPED_AFTER_REPEATED_FAILURE`, limiar 3 falhas idênticas por (contrato, assinatura, bloco)) **só em preview/reenvio**, nunca no disparo normal. **WARN agregado** por janela (`WarnLogDeduper` ganhou chave string; a API por UUID intacta; sem mensagem do nó nem URL no WARN — a mensagem completa vai em DEBUG e no relatório).
+- **Diagnóstico opcional** (`diagnose=true`): reexecuta a mesma chamada em `LATEST` e no bloco do evento e roda uma **sonda** (`probeStateAt`, `eth_getCode` no bloco, nunca lança por erro de RPC). Veredito `FAILS_EVERYWHERE` | `FAILS_ONLY_AT_BLOCK` | `OK_AT_LATEST_ONLY` | `INCONCLUSIVE`, **sempre rotulado como indício**; falha de transporte em qualquer tentativa de referência ⇒ `INCONCLUSIVE`.
+
+### Alternativas rejeitadas
+
+Afirmar "nó sem estado histórico" a partir de um `-32603` genérico; esconder o erro bruto atrás de uma mensagem "amigável"; devolver `null` sem causa (como era); escolher o primeiro método com o nome; enum fechado de códigos de falha; ativar circuit-breaker no disparo normal (mudaria comportamento de produção); um WARN por chamada.
+
+### Não verificado
+
+Formatos reais de erro de Besu/Hardhat/geth (as palavras-chave do classificador e os selectors `0x08c379a0`/`0x4e487b71` são heurística sem nó real); timeouts contra socket real (só com Web3j mockado); `eth_call` que devolve `"0x"` por contrato sem código no bloco decodifica para lista vazia sem erro (comportamento mantido; candidato a classificar).
+
+### Testes
+
++84 (aridade, classificador de erro, estratégias de bloco, `resolveDetailed`, memoização, circuit-breaker, WARN agregado, wiring Spring sem Docker). 5 stubs de `call(..., 42)` em `WebhookEnrichmentResolverTest` trocados por `CallBlock.Number(42)` (nenhuma asserção alterada).
+
+---
+
+## DEC-115 — Data → bloco: `BlockResolutionService` (bracket nos eventos ingeridos + bisseção por RPC) e `GET /v1/blocks/by-date`
+
+Data: 2026-10-09
+
+Módulo: backend (`application/block`, `domain/block`, `adapters/outbound/persistence/JpaBlockTimestampLookupAdapter`). Epic E33.
+
+Autor: `blockchain-integration` + `kotlin-backend-dev`, consolidado pela sessão principal.
+
+### Decisão
+
+- **Estratégia combinada:** bracket nos eventos ingeridos (`BlockTimestampLookupPort.findBlockBracket(instant)`; `lower` = bloco de maior timestamp `<= data`, empate pelo maior número; `upper` = de menor timestamp `>= data`, empate pelo menor; eventos com `blockTimestamp` nulo são ignorados; índice `(block_timestamp, block_number)`) + **bisseção por RPC** (`BlockchainPort.getBlockTimestamp`) com teto de 32 chamadas (`indexer.blocks.max-rpc-calls`; o teto conta TODAS as chamadas, inclusive `currentBlockNumber` e gênesis/topo; cobre cadeias de até ~2^29 blocos). Um bloco ingerido com `ts == data` não é confiável sozinho (blocos posteriores podem ter o mesmo timestamp) e vai a RPC. Resultado `{blockNumber?, blockTimestamp?, source: INGESTED|RPC|COMBINED, approximate, warnings[]}`; sem RPC degrada para o ingerido com `approximate=true`.
+- **Bordas:** FLOOR antes do gênesis ⇒ `null` + `DATE_BEFORE_GENESIS`; CEILING antes do gênesis ⇒ bloco 0 + aviso; FLOOR depois do topo ⇒ **o topo** + `DATE_AFTER_LATEST` (é o piso correto); CEILING depois do topo ⇒ `null` + `DATE_AFTER_LATEST`; orçamento esgotado ⇒ aproximado + `RPC_BUDGET_EXHAUSTED`. No `BLOCK_AT_DATE` do enriquecimento usa-se **FLOOR** (estado do último bloco até aquela data) e o número é congelado no enqueue.
+- **Porta separada** `BlockTimestampLookupPort` (em vez de método em `BlockchainEventPort`): evita quebrar mocks/fakes e respeita ISP (decisão da fatia 1, divergência registrada do desenho).
+
+### Limites registrados
+
+Resolução aproximada (bloco com `timestamp >= data` ou o anterior, conforme a direção); **só eventos ingeridos têm timestamp** (`blockTimestamp` é preenchido de forma síncrona na ingestão e **não existe backfill de timestamp** — correção do texto da DEC-111); filtro por data em `matching-events` ignora eventos sem timestamp e avisa a contagem; timestamps assumidos não decrescentes (Besu IBFT2/QBFT); fuso: `Instant` UTC no backend, a UI envia ISO-8601 com offset; nó sem estado histórico não afeta esta parte (`eth_getBlockByNumber` funciona), só o `eth_call` posterior.
+
+### Alternativas rejeitadas
+
+Só RPC (20–25 chamadas por consulta); só ingeridos (resolução limitada aos blocos com evento); novo método em `BlockchainEventPort`.
+
+### Testes
+
+`BlockResolutionServiceTest` (bracket, bisseção ≤ 32 chamadas verificado no fake, antes do gênesis/depois do topo, timestamps repetidos, sem RPC ⇒ `approximate`, FLOOR vs CEILING), `JpaBlockTimestampLookupAdapterTest` (empates, nulos ignorados, fora do intervalo).
+
+---
+
+## DEC-116 — URL de teste no reenvio (`overrideUrl`) e proteção contra abuso: política de destino contra SSRF, desligada por padrão, limites em memória
+
+Data: 2026-10-09
+
+Módulo: backend (`domain/webhook/OutboundUrlPolicy`, `HostResolverPort`, `application/webhook/WebhookResendService`, `ResendRateLimiter`, `WebhookDispatchJob`, `adapters/outbound/webhook`). Epic E33.
+
+Autor: `hexagonal-architect` (desenho) + `kotlin-backend-dev`, consolidado pela sessão principal. D2–D4 confirmadas pelo usuário. O produto não tem autenticação na PoC, então um endpoint que faz `POST` para uma URL arbitrária é um vetor de SSRF.
+
+### Decisão
+
+- **`overrideUrl` vem DESLIGADO** (`indexer.webhook.resend.allow-url-override=false`, env `EVEX_WEBHOOK_RESEND_ALLOW_URL_OVERRIDE`). `overrideUrl` com a capacidade desligada ⇒ 400 `URL_OVERRIDE_DISABLED`. Ligado, passa pela `OutboundUrlPolicy` (domain puro; DNS atrás do `HostResolverPort` para ser simulável): só `http`/`https`; **sem userinfo**; portas numa allowlist (`allowed-ports`, padrão 80/443); **DNS resolvido no servidor e bloqueado se QUALQUER endereço resolvido** for loopback, link-local (inclui metadata `169.254.169.254`), RFC1918, CGNAT `100.64/10`, ULA `fc00::/7`, unspecified, multicast, `0/8`, `192.0.0/24`, `198.18/15`, `240/4`, `fec0::/10`, IPv4-compatível/IPv4-mapeado/NAT64/6to4, e literais IP nessas faixas; formas decimal/octal/hex de IP caem em `INVALID_URL`; falha de resolução ⇒ bloqueado. **Allowlist explícita para laboratório** (`url-allowlist`, vazia por padrão): host com match exato dispensa a checagem de IP; um CIDR libera só os endereços que cobre (host com um IP dentro e outro fora continua bloqueado). Violação ⇒ 400 `URL_NOT_ALLOWED` com mensagem **genérica** (não ecoa URL nem IP).
+- **Sem redirects:** um 3xx com `Location` não é seguido no override (provado contra servidor HTTP local). **Revalidação imediatamente antes de cada envio** (se a política mudar ou a capacidade for desligada depois do enqueue ⇒ tentativa `FAILED` com `OVERRIDE_URL_BLOCKED`, sem `POST`).
+- **Fecha o SSRF de leitura:** em entrega com override o `responseBody` **não é gravado nem exposto** (o `httpStatus` é mantido) e erros de transporte viram códigos genéricos (`OVERRIDE_TIMEOUT`, `OVERRIDE_CONNECT_FAILED`, `OVERRIDE_UNREACHABLE`, `OVERRIDE_INVALID_URL`, `OVERRIDE_URL_BLOCKED`) sem mensagem de rede detalhada. A URL completa fica só no banco (`target_url_override`); o DTO devolve só `esquema://host[:porta]` (redigida).
+- **Limites de abuso (sem autenticação):** 50 eventos por reenvio e 5 por pré-visualização (configuráveis); limiter **em memória** (janela deslizante, `Clock` injetável, thread-safe): 10 reenvios/min por webhook e 30 requisições/min por instância (resend e preview; preview só conta na instância) ⇒ 429 `RATE_LIMITED`; teto de **500 reenvios pendentes** (tudo-ou-nada: `pending + planejados > 500` ⇒ 429 `RESEND_QUEUE_FULL` sem enfileirar nada) com `Retry-After`. Aplicados no **application**, não no controller. Ordem das validações no reenvio: 404 → rate limit → `eventIds` XOR `range`/vazio/teto → `overrideUrl` → 409 inativo → modo de bloco → coleta/composição → teto de fila → enqueue (o rate limit vem **antes** de validar a URL para o DNS não virar oráculo).
+- **D4 (ponto de extensão, sem enforcement):** `indexer.webhook.url-policy.mode` (`OFF`|`WARN`|`ENFORCE`, padrão `OFF`) fica como propriedade documentada para aplicar a mesma política à URL **cadastrada**; **nenhum código a lê ainda**.
+
+### Risco residual aceito (D3)
+
+**DNS rebinding:** o TOCTOU entre a resolução e a conexão não é fechado (a revalidação antes do envio reduz, não elimina); a URL já cadastrada tem o mesmo risco hoje. Limiter e fila são por instância e zeram no restart. Documentado no guia (§15).
+
+### Alternativas rejeitadas
+
+Aceitar qualquer URL; só validar o esquema (como a URL cadastrada hoje); gravar/expor o corpo da resposta no override (SSRF de leitura); seguir redirects; permitir sempre (sem flag de capacidade); aplicar enforcement à URL cadastrada nesta entrega (mudança de comportamento de produção fora do pedido); rate limit no controller; autenticação (fora do escopo da PoC).
+
+### Não implementado / não verificado
+
+Timeout menor para override (3 s, desenho §7.7) e limite de tamanho de payload: **não implementados** (o override usa o timeout normal de 5 s; um destino lento ainda ocupa o job single-thread — mitigado só pela ordenação do `findDue`); DNS real e redes reais (testes com resolvedor simulado e faixas de documentação).
+
+### Testes
+
+`OutboundUrlPolicyTest` (loopback/privado/link-local/metadata/CGNAT/ULA/IPv4-mapeado/literais; vários IPs com um bloqueado; allowlist de host e CIDR; porta fora da allowlist; userinfo; esquema não-http), `ResendRateLimiterTest` (janela com `Clock` fake), `WebhookDispatchJobResendTest`, `WebhookHttpClientTest` (+3: 3xx não seguido, `errorCode`, `TIMEOUT`), `WebhookResendApiTest` (19: `URL_OVERRIDE_DISABLED`, `URL_NOT_ALLOWED`, 409, 429 com `Retry-After`).
+
+---
+
+## DEC-117 — Estado do Modelo de Entidade no reenvio e na pré-visualização = registro ATUAL (com aviso visível)
+
+Data: 2026-10-09
+
+Módulo: backend (`application/webhook/WebhookPayloadComposer`, `WebhookPreviewService`, `WebhookResendService`, `EntityModelRecordPort.findLatestUpdatedAt`). Epic E33.
+
+Autor: `hexagonal-architect` + `kotlin-backend-dev`, consolidado pela sessão principal.
+
+### Decisão
+
+O `{{model.*}}` de um preview/reenvio usa o registro do Modelo de Entidade **como está agora**: `EntityModelRecord` não guarda histórico (só `updatedAt`), então **não há como reconstituir o estado da época do evento** sem reprojeção histórica (rejeitada). Para o usuário não ser surpreendido, a resposta traz `modelState{stateAt, newerThanEvent}` e o aviso `MODEL_STATE_NEWER_THAN_EVENT`; `stateAt` = maior `updatedAt` dos registros do modelo do webhook (via `findLatestUpdatedAt(modelKeys)`, leitura pura); a entrega de reenvio grava `model_state_at`. `newerThanEvent` só vale com `blockTimestamp` presente (sem timestamp = `false`). O composer devolve só as `modelKeys` (o disparo normal não ganha nenhuma consulta nova). O reenvio **não** reprojeta o modelo.
+
+### Alternativas rejeitadas
+
+Reconstituir o modelo "na época" reprojetando eventos até aquele bloco (altera dados e custa caro; contraria "sem mexer em dados"); tabela de histórico de registros (fora do escopo); esconder a diferença.
+
+### Limite
+
+Para o payload refletir o modelo da época é preciso um histórico de registros — evolução futura junto com a reprojeção opt-in de modelo (DEC-111).
+
+---
+
+## Errata da revisão da E33 (DEC-113 a DEC-117), 2026-10-09 — aprovada com ressalvas, sem achado bloqueante
+
+Backend **1068/1068** e frontend **201/201** (39 arquivos; `tsc -b`/lint/build/`test:types` limpos) reconfirmados do zero pelo `reviewer`. Confirmado: efeito colateral zero do preview e do reenvio (snapshot das tabelas certas, incluindo md5 de `decoded`/`decoded_parameters` e do `data` dos registros de modelo), nenhum bypass de SSRF fora do risco aceito (DNS rebinding), `-32603` genérico nunca vira `STATE_UNAVAILABLE_SUSPECTED`, disparo normal intacto (única asserção alterada: `recordAttempt(…, null, null, payload)` por causa do D5), contrato 100% aditivo sem enum fechado nem `maxItems`, e nenhuma menção ao projeto de origem nas linhas adicionadas. Correção feita pela sessão principal durante a revisão: `SecurityConfig` passou a **expor o `Retry-After` via CORS** (`exposedHeaders`), senão o navegador não leria o cabeçalho do 429 (teste em `CorsConfigTest`).
+
+- **N1 (corrigido):** race entre `existsPendingResend` e `enqueue` — dois reenvios simultâneos do mesmo (webhook, evento) criavam 2 entregas para o sistema externo. Corrigido com **índice único parcial** `uq_webhook_deliveries_pending_resend` em `webhook_deliveries (webhook_config_id, blockchain_event_id) WHERE status='PENDING' AND origin <> 'MATCH'` (final da V8, `CREATE UNIQUE INDEX IF NOT EXISTS`; não declarado na entidade, pois índice parcial não cabe em `@Index`, como na V6/DEC-104) + nova porta `WebhookDeliveryPort.enqueueResendIfAbsent(delivery): WebhookDelivery?` implementada com `INSERT … ON CONFLICT (…) WHERE <mesmo predicado> DO NOTHING` e retorno de linhas afetadas — perder a corrida é **resultado normal, não exceção** (nenhuma `DataIntegrityViolationException`, a transação não vira rollback-only, o teto de fila continua tudo-ou-nada; `REQUIRES_NEW` foi descartado porque cada enqueue commitaria sozinho) — e `null` vira `skipped ALREADY_PENDING`; `existsPendingResend` permanece como caminho rápido; `enqueue` do disparo `MATCH` inalterado. Testes: `WebhookResendConcurrencyTest` (6 threads com `CountDownLatch` reenviam o mesmo evento ⇒ 1 PENDING e 5 `ALREADY_PENDING`; DELIVERED/FAILED permitem novo reenvio; `MATCH` coexistem; lote com duplicata segue com os demais), repetido 4× sem falha; `WebhookResendMigrationTest` (reaplica a V8 sobre linhas legadas e confere o índice UNIQUE com o predicado). Total final do backend: **1074/1074**. Entregas `MATCH` e reenvios já concluídos não são afetados.
+- **S2 (corrigido):** `overrideUrl` presente-mas-em-branco passa a ser 400 `VALIDATION_ERROR` (antes virava "ausente" e, com webhook inativo, 409).
+- **N2 (aceito, a dimensionar):** `sent_payload TEXT` é gravado em **toda** tentativa (D5, inclusive no disparo normal), sem limite nem retenção: o banco cresce com payload × tentativas. O limite de tamanho de payload (DEC-116) e uma política de retenção ficam como evolução; operar com retenção/limpeza de tentativas antigas é recomendado.
+- **N3 (aceito):** `findDue` serve disparos normais antes de reenvios; com backlog contínuo ≥ `dispatchBatchSize` os reenvios podem esperar indefinidamente (aceitável na PoC; nota no guia).
+- **N4 (aceito, a otimizar):** o preview (`readOnly`) mantém a conexão do banco durante os `eth_call` (até 5 eventos × N chamadas × timeout 15 s) e o reenvio faz DNS/composição dentro da transação; previews concorrentes podem esgotar o pool do Hikari. Evolução: tirar o RPC da transação.
+- **N5 (aceito, registrar):** `indexer.blockchain.read-timeout=15s` vale para **todo** o cliente do nó (antes o default do OkHttp era 10 s) — inclusive `getLogs` da ingestão (timeout mais tolerante).
+- **N6 (aceito, é a D9 confirmada):** a memoização passou a valer também no disparo normal **dentro de um ciclo** do `WebhookDispatchJob`: uma falha de `eth_call` memoizada vale para todas as entregas do mesmo ciclo (mesma chamada, mesmo bloco); antes cada entrega tentava de novo. O retry continua no ciclo seguinte.
+- **N7 (aceito):** `useRetryWait` (`useWebhookResend.ts`) usa `useEffect` **só para um timer local** (contagem do `Retry-After`), sem fetch — não viola a regra "sem `useEffect` para chamadas de API", mas é uma segunda exceção além do SSE e deve constar em `frontend/CLAUDE.md`.
+- **N8 (corrigido):** status da E33 no roadmap atualizado.
+- **S1 (aceito):** `RANGE_TRUNCATED` pode aparecer quando a página fecha exatamente no fim dos dados (documentado no KDoc). **S3 (aceito):** host IDN (não ASCII) é rejeitado como `INVALID_URL` (seguro; sem conversão para punycode). **S4 (documentar):** o `HttpURLConnection` por trás do `SimpleClientHttpRequestFactory` respeita propriedades de proxy do sistema (`http.proxyHost`): com proxy global a política valida o IP final, mas a conexão sai pelo proxy.
+
+### Não executado
+
+e2e Playwright (inclusive `07-webhooks.spec.ts`, que por leitura só depende de "Entregas" e "Nenhuma entrega registrada ainda.", ambos preservados), `npm run dev:mock` no navegador, qualquer nó Besu/Hardhat/DNS real.
+
+### Decisões operacionais do frontend (Etapa C)
+
+Um único painel serve "Pré-visualizar" e "Reenviar" (3 passos); a seção de entregas foi **extraída** de `WebhookFormPage.tsx` para `WebhookDeliveriesSection.tsx` (ganhou a coluna "Origem"); mudar o filtro limpa seleção e resultados (a busca só roda em "Buscar"); "selecionar todos" marca os carregados e passar do limite não bloqueia a seleção (avisa e desabilita a ação); `range` só aparece com filtro de data/bloco aplicado; limites vêm de `GET /v1/capabilities` com fallback conservador 5/50; o `Retry-After` tem fallback para "em N segundo(s)" da mensagem quando o cabeçalho não é legível; `?urlOverride=1` na URL do modo mock liga a capability de URL de teste; sem teste isolado do `MatchingEventsSelector` (coberto pelo teste do diálogo).
+

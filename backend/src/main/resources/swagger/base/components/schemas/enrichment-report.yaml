@@ -1,0 +1,29 @@
+type: object
+description: Relatório do enriquecimento de um evento (preview) — uma entrada por chamada, em ordem de execução.
+required:
+  - calls
+  - unresolvedTokens
+properties:
+  blockUsed:
+    type: string
+    nullable: true
+    description: Bloco usado — número em decimal, `latest`, ou `null` quando varia por chamada/não aplicável.
+  calls:
+    type: array
+    items:
+      $ref: "./enrichment-call-result.yaml"
+  unresolvedTokens:
+    type: array
+    description: Tokens `{{enriched.*}}` do payload que nenhuma chamada produziu (inclui typo de placeholder).
+    items:
+      type: string
+  failuresSummary:
+    type: array
+    items:
+      $ref: "./enrichment-failure-summary.yaml"
+  diagnoses:
+    type: array
+    nullable: true
+    description: Presente só quando o preview foi pedido com `diagnose = true`.
+    items:
+      $ref: "./enrichment-diagnosis.yaml"

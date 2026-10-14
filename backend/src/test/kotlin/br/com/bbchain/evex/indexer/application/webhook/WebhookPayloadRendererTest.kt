@@ -1,4 +1,4 @@
-package br.com.bbchain.evex.indexer.adapters.outbound.webhook
+package br.com.bbchain.evex.indexer.application.webhook
 
 import br.com.bbchain.evex.indexer.domain.common.Network
 import br.com.bbchain.evex.indexer.domain.event.BlockchainEvent

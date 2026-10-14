@@ -1,28 +1,42 @@
 package br.com.bbchain.evex.indexer.adapters.inbound.api
 
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.ApiError
+import br.com.bbchain.evex.indexer.domain.abi.AbiHistoryPlanMismatchException
 import br.com.bbchain.evex.indexer.domain.abi.AbiVersionConflictException
 import br.com.bbchain.evex.indexer.domain.abi.AbiVersionOrderException
 import br.com.bbchain.evex.indexer.domain.abi.BlockscoutAbiNotFoundException
+import br.com.bbchain.evex.indexer.domain.abi.BlockscoutImplementationAbiNotFoundException
 import br.com.bbchain.evex.indexer.domain.abi.InvalidAbiContentException
 import br.com.bbchain.evex.indexer.domain.abi.NoFullInterfaceMatchException
 import br.com.bbchain.evex.indexer.domain.balance.BalanceMonitorConfigNotFoundException
+import br.com.bbchain.evex.indexer.domain.block.BlockResolutionFailedException
+import br.com.bbchain.evex.indexer.domain.block.InvalidBlockDirectionException
 import br.com.bbchain.evex.indexer.domain.balance.InvalidBalanceMonitorConfigException
+import br.com.bbchain.evex.indexer.domain.common.NotImplementedYetException
 import br.com.bbchain.evex.indexer.domain.contract.ContractAlreadyExistsException
 import br.com.bbchain.evex.indexer.domain.contract.ContractNotFoundException
 import br.com.bbchain.evex.indexer.domain.contract.LineageNetworkMismatchException
 import br.com.bbchain.evex.indexer.domain.discovery.BlockscoutUnavailableException
 import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentProfileNotFoundException
+import br.com.bbchain.evex.indexer.domain.enrichment.InvalidEnrichmentBlockSpecException
 import br.com.bbchain.evex.indexer.domain.enrichment.InvalidEnrichmentProfileException
+import br.com.bbchain.evex.indexer.domain.event.InvalidEventCursorException
 import br.com.bbchain.evex.indexer.domain.model.EntityModelNotFoundException
 import br.com.bbchain.evex.indexer.domain.model.InvalidEntityModelException
 import br.com.bbchain.evex.indexer.domain.wallet.WalletAlreadyExistsException
 import br.com.bbchain.evex.indexer.domain.wallet.WalletNotFoundException
 import br.com.bbchain.evex.indexer.domain.webhook.InvalidWebhookConfigException
+import br.com.bbchain.evex.indexer.domain.webhook.InvalidWebhookRequestException
+import br.com.bbchain.evex.indexer.domain.webhook.RateLimitExceededException
+import br.com.bbchain.evex.indexer.domain.webhook.TooManyEventsException
+import br.com.bbchain.evex.indexer.domain.webhook.UrlNotAllowedException
+import br.com.bbchain.evex.indexer.domain.webhook.UrlOverrideDisabledException
+import br.com.bbchain.evex.indexer.domain.webhook.WebhookInactiveException
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfigNotFoundException
 import jakarta.validation.ConstraintViolationException
 import java.time.OffsetDateTime
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -98,11 +112,29 @@ class ApiExceptionHandler {
             ApiError(code = "ABI_VERSION_CONFLICT", message = ex.message ?: "Conflito de versão de ABI", timestamp = OffsetDateTime.now()),
         )
 
+    /** `POST /v1/contracts/{address}/abi/history-import` com `expectedFingerprint` diferente do plano recalculado (DEC-105). */
+    @ExceptionHandler(AbiHistoryPlanMismatchException::class)
+    fun handleAbiHistoryPlanMismatch(ex: AbiHistoryPlanMismatchException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ApiError(code = "ABI_HISTORY_PLAN_CHANGED", message = ex.message ?: "O plano de importação mudou", timestamp = OffsetDateTime.now()),
+        )
+
     /** `POST /v1/contracts/{address}/abi` com `source=BLOCKSCOUT` sem ABI verificada pro endereço no Blockscout. */
     @ExceptionHandler(BlockscoutAbiNotFoundException::class)
     fun handleBlockscoutAbiNotFound(ex: BlockscoutAbiNotFoundException): ResponseEntity<ApiError> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(
             ApiError(code = "BLOCKSCOUT_ABI_NOT_FOUND", message = ex.message ?: "ABI não encontrada no Blockscout", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `POST /v1/contracts/{address}/abi` com `source=BLOCKSCOUT` de proxy cuja implementação não tem ABI verificada (DEC-105). */
+    @ExceptionHandler(BlockscoutImplementationAbiNotFoundException::class)
+    fun handleBlockscoutImplementationAbiNotFound(ex: BlockscoutImplementationAbiNotFoundException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ApiError(
+                code = "BLOCKSCOUT_IMPLEMENTATION_ABI_NOT_FOUND",
+                message = ex.message ?: "Implementação do proxy sem ABI verificada no Blockscout",
+                timestamp = OffsetDateTime.now(),
+            ),
         )
 
     /** `POST /v1/contracts/{address}/abi` com `source=AUTO_DETECTED` sem nenhum match de nível FULL. */
@@ -192,6 +224,83 @@ class ApiExceptionHandler {
     fun handleEntityModelNotFound(ex: EntityModelNotFoundException): ResponseEntity<ApiError> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(
             ApiError(code = "ENTITY_MODEL_NOT_FOUND", message = ex.message ?: "Modelo de entidade não encontrado", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Preview/reenvio com mais eventos que o teto configurado (E33) — nada é processado. */
+    @ExceptionHandler(TooManyEventsException::class)
+    fun handleTooManyEvents(ex: TooManyEventsException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "TOO_MANY_EVENTS", message = ex.message ?: "Eventos demais na requisição", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Preview/reenvio semanticamente inválido (lista de eventos vazia etc.) — E33. */
+    @ExceptionHandler(InvalidWebhookRequestException::class)
+    fun handleInvalidWebhookRequest(ex: InvalidWebhookRequestException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "VALIDATION_ERROR", message = ex.message ?: "Requisição inválida", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Modo de bloco de enriquecimento desconhecido ou spec inválida para o modo (E33) — inclui `UnknownEnrichmentBlockModeException`. */
+    @ExceptionHandler(InvalidEnrichmentBlockSpecException::class)
+    fun handleInvalidEnrichmentBlockSpec(ex: InvalidEnrichmentBlockSpecException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "INVALID_ENRICHMENT_BLOCK_MODE", message = ex.message ?: "Modo de bloco de enriquecimento inválido", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Data não convertível em bloco (ex.: anterior ao gênesis) — E33. */
+    @ExceptionHandler(BlockResolutionFailedException::class)
+    fun handleBlockResolutionFailed(ex: BlockResolutionFailedException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+            ApiError(code = "BLOCK_RESOLUTION_FAILED", message = ex.message ?: "Não foi possível resolver o bloco", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `direction` de `GET /v1/blocks/by-date` desconhecida — E33. */
+    @ExceptionHandler(InvalidBlockDirectionException::class)
+    fun handleInvalidBlockDirection(ex: InvalidBlockDirectionException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "INVALID_DIRECTION", message = ex.message ?: "direction inválida", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `cursor` de `matching-events` fora do formato esperado — E33. */
+    @ExceptionHandler(InvalidEventCursorException::class)
+    fun handleInvalidEventCursor(ex: InvalidEventCursorException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "INVALID_CURSOR", message = ex.message ?: "Cursor inválido", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Reenvio de webhook pausado sem `overrideUrl` válida (E33) — 409. */
+    @ExceptionHandler(WebhookInactiveException::class)
+    fun handleWebhookInactive(ex: WebhookInactiveException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ApiError(code = "WEBHOOK_INACTIVE", message = ex.message ?: "Webhook inativo", timestamp = OffsetDateTime.now()),
+        )
+
+    /** `overrideUrl` com a capacidade desligada (padrão) — E33/DEC-116. */
+    @ExceptionHandler(UrlOverrideDisabledException::class)
+    fun handleUrlOverrideDisabled(ex: UrlOverrideDisabledException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "URL_OVERRIDE_DISABLED", message = ex.message ?: "overrideUrl desabilitada", timestamp = OffsetDateTime.now()),
+        )
+
+    /** URL de destino rejeitada pela política de SSRF — mensagem genérica, nunca ecoa URL/IP (E33/DEC-116). */
+    @ExceptionHandler(UrlNotAllowedException::class)
+    fun handleUrlNotAllowed(ex: UrlNotAllowedException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiError(code = "URL_NOT_ALLOWED", message = ex.message ?: "URL de destino não permitida", timestamp = OffsetDateTime.now()),
+        )
+
+    /** Limite de taxa/fila (`RATE_LIMITED`, `RESEND_QUEUE_FULL`) — 429 com `Retry-After` em segundos (E33/DEC-116). */
+    @ExceptionHandler(RateLimitExceededException::class)
+    fun handleRateLimitExceeded(ex: RateLimitExceededException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, ex.retryAfterSeconds.toString())
+            .body(ApiError(code = ex.code, message = ex.message ?: "Limite excedido", timestamp = OffsetDateTime.now()))
+
+    /** Operação declarada no contrato mas ainda sem implementação (andaime da E33) — 501 com o [ApiError] padrão. */
+    @ExceptionHandler(NotImplementedYetException::class)
+    fun handleNotImplementedYet(ex: NotImplementedYetException): ResponseEntity<ApiError> =
+        ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(
+            ApiError(code = "NOT_IMPLEMENTED", message = ex.message ?: "Operação ainda não implementada", timestamp = OffsetDateTime.now()),
         )
 
     /** `@Valid @RequestBody` inválido (ex.: POST /v1/contracts com campo obrigatório ausente). */

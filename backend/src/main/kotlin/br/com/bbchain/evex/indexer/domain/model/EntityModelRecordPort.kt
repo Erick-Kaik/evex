@@ -1,6 +1,7 @@
 package br.com.bbchain.evex.indexer.domain.model
 
 import br.com.bbchain.evex.indexer.domain.common.Network
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -29,4 +30,15 @@ interface EntityModelRecordPort {
 
     /** O registro acumulado até agora, se já houver ao menos 1 contribuinte processado. */
     fun findRecord(modelId: UUID, correlationValue: String, network: Network): EntityModelRecord?
+
+    /**
+     * Maior `updatedAt` entre os registros de [keys] que existem (`null` se nenhum) — leitura pura, usada
+     * pra informar o "estado do modelo" de um preview/reenvio (E33). Implementação padrão compõe
+     * [findRecord]; adapters podem sobrescrever com uma consulta única.
+     */
+    fun findLatestUpdatedAt(keys: Collection<EntityModelRecordKey>): Instant? =
+        keys.mapNotNull { findRecord(it.modelId, it.correlationValue, it.network)?.updatedAt }.maxOrNull()
 }
+
+/** Chave natural de um [EntityModelRecord]. */
+data class EntityModelRecordKey(val modelId: UUID, val correlationValue: String, val network: Network)

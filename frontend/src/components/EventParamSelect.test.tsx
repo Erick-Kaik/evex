@@ -49,6 +49,15 @@ describe('EventParamSelect', () => {
     expect(options).toEqual(['value (uint256)', 'count (int128)', 'flags (uint8[])'])
   })
 
+  it('kind="numericScalar" só escalares e kind="numericArray" só arrays numéricos', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<Harness kind="numericScalar" />)
+    expect(await openOptions(user)).toEqual(['value (uint256)', 'count (int128)'])
+    unmount()
+    render(<Harness kind="numericArray" />)
+    expect(await openOptions(user)).toEqual(['flags (uint8[])'])
+  })
+
   it('kind="any" lista todos os inputs', async () => {
     const user = userEvent.setup()
     render(<Harness kind="any" />)

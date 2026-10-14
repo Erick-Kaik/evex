@@ -38,6 +38,8 @@ class SecurityConfig {
             allowedOrigins = props.allowedOrigins
             allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
             allowedHeaders = listOf("*")
+            // E33: o 429 (RATE_LIMITED / RESEND_QUEUE_FULL) traz Retry-After; sem expô-lo o navegador não o lê.
+            exposedHeaders = listOf("Retry-After")
         }
         return UrlBasedCorsConfigurationSource().apply {
             registerCorsConfiguration("/v1/**", configuration)

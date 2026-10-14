@@ -1,0 +1,20 @@
+type: object
+description: >-
+  Pré-visualização (dry-run) do payload que um webhook enviaria — SEM POST e SEM gravação de nada.
+  Limite de `eventIds`: 1 a `previewMaxEvents` (ver `GET /v1/capabilities`, default 5); excedente = 400
+  `TOO_MANY_EVENTS`.
+required:
+  - eventIds
+properties:
+  eventIds:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      format: uuid
+  enrichmentBlock:
+    $ref: "./enrichment-block-spec.yaml"
+  diagnose:
+    type: boolean
+    default: false
+    description: Reexecuta as chamadas que falharam em `LATEST` e no bloco do evento e devolve `diagnoses`.

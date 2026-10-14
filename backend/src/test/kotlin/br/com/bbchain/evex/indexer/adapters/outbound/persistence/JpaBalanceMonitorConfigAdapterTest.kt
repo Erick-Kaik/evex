@@ -103,4 +103,16 @@ class JpaBalanceMonitorConfigAdapterTest : AbstractIntegrationTest() {
 
         assertThat(page.totalElements).isGreaterThanOrEqualTo(2)
     }
+
+    @Test
+    fun `batch flag round-trips and defaults to false`() {
+        val scalar = newConfig(randomAddress())
+        val batch = newConfig(randomAddress()).copy(batch = true, tokenIdParam = "ids", valueParam = "values")
+
+        adapter.save(scalar)
+        adapter.save(batch)
+
+        assertThat(adapter.findById(scalar.id)!!.batch).isFalse()
+        assertThat(adapter.findById(batch.id)!!.batch).isTrue()
+    }
 }

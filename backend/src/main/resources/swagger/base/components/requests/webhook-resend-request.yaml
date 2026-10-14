@@ -1,0 +1,6 @@
+required: true
+description: Eventos (ou intervalo) e opções do reenvio.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-resend-payload.yaml"

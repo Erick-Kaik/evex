@@ -1,0 +1,12 @@
+type: object
+description: Evento enfileirado para reenvio.
+required:
+  - eventId
+  - deliveryId
+properties:
+  eventId:
+    type: string
+    format: uuid
+  deliveryId:
+    type: string
+    format: uuid

@@ -13,8 +13,17 @@ import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookD
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookDeliveryAttempt as WebhookDeliveryAttemptDto
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookDeliveryPage
 import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookDeliveryStatus as WebhookDeliveryStatusDto
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookMatchingEventPage
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookPreviewPayload
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookPreviewResult
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookResendPayload
+import br.com.bbchain.evex.indexer.adapters.inbound.api.generated.model.WebhookResendResult
 import br.com.bbchain.evex.indexer.application.webhook.WebhookConfigService
+import br.com.bbchain.evex.indexer.application.webhook.WebhookMatchingEventsService
+import br.com.bbchain.evex.indexer.application.webhook.WebhookPreviewService
+import br.com.bbchain.evex.indexer.application.webhook.WebhookResendService
 import br.com.bbchain.evex.indexer.domain.common.Network
+import br.com.bbchain.evex.indexer.domain.enrichment.EnrichmentBlockSpec
 import br.com.bbchain.evex.indexer.domain.webhook.FilterOperator
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookConfig
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDelivery
@@ -22,6 +31,7 @@ import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryAttempt
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryPort
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookDeliveryStatus
 import br.com.bbchain.evex.indexer.domain.webhook.WebhookFilterCondition
+import br.com.bbchain.evex.indexer.domain.webhook.redactUrl
 import java.time.ZoneOffset
 import java.util.UUID
 import org.springframework.stereotype.Service
@@ -36,6 +46,9 @@ import org.springframework.stereotype.Service
 class WebhooksApiServiceImpl(
     private val webhookConfigService: WebhookConfigService,
     private val deliveries: WebhookDeliveryPort,
+    private val previewService: WebhookPreviewService,
+    private val matchingEventsService: WebhookMatchingEventsService,
+    private val resendService: WebhookResendService,
 ) : WebhooksApiService {
 
     override fun createWebhook(createWebhookPayload: CreateWebhookPayload): WebhookConfigDto {
@@ -97,6 +110,44 @@ class WebhooksApiServiceImpl(
         )
     }
 
+    // ---- E33 ----
+
+    override fun listWebhookMatchingEvents(
+        id: UUID,
+        fromBlock: kotlin.Long?,
+        toBlock: kotlin.Long?,
+        fromDate: java.time.OffsetDateTime?,
+        toDate: java.time.OffsetDateTime?,
+        cursor: kotlin.String?,
+        size: kotlin.Int,
+    ): WebhookMatchingEventPage = matchingEventsService.listMatchingEvents(
+        webhookId = id,
+        fromBlock = fromBlock,
+        toBlock = toBlock,
+        fromDate = fromDate?.toInstant(),
+        toDate = toDate?.toInstant(),
+        cursor = cursor,
+        size = size,
+    ).toDto()
+
+    override fun previewWebhook(id: UUID, webhookPreviewPayload: WebhookPreviewPayload): WebhookPreviewResult =
+        previewService.preview(
+            webhookId = id,
+            eventIds = webhookPreviewPayload.eventIds,
+            enrichmentBlock = webhookPreviewPayload.enrichmentBlock?.toDomain() ?: EnrichmentBlockSpec.EventBlock,
+            diagnose = webhookPreviewPayload.diagnose ?: false,
+        ).toDto()
+
+    // 202 declarado no contrato (webhook-resend.yaml): as entregas são criadas PENDING e processadas pelo job.
+    override fun resendWebhook(id: UUID, webhookResendPayload: WebhookResendPayload): WebhookResendResult =
+        resendService.resend(
+            webhookId = id,
+            eventIds = webhookResendPayload.eventIds,
+            range = webhookResendPayload.range?.toDomain(),
+            enrichmentBlock = webhookResendPayload.enrichmentBlock?.toDomain() ?: EnrichmentBlockSpec.EventBlock,
+            overrideUrl = webhookResendPayload.overrideUrl?.toString(),
+        ).toDto()
+
     private fun NetworkDto.toDomain(): Network = Network.valueOf(this.name)
 
     private fun Network.toDto(): NetworkDto = NetworkDto.valueOf(this.name)
@@ -142,6 +193,9 @@ class WebhooksApiServiceImpl(
         httpStatus = httpStatus,
         responseBody = responseBody,
         errorMessage = errorMessage,
+        enrichmentResults = enrichmentResults?.map { it.toDto() }?.toMutableList(),
+        enrichmentBlockUsed = enrichmentBlockUsed,
+        sentPayload = sentPayload,
     )
 
     private fun WebhookDelivery.toDto(): WebhookDeliveryDto = WebhookDeliveryDto(
@@ -154,5 +208,11 @@ class WebhooksApiServiceImpl(
         nextAttemptAt = nextAttemptAt?.atOffset(ZoneOffset.UTC),
         createdAt = createdAt.atOffset(ZoneOffset.UTC),
         attempts = deliveries.findAttempts(id).map { it.toDto() }.toMutableList(),
+        origin = origin,
+        resend = resend,
+        enrichmentBlockMode = enrichmentBlockMode,
+        enrichmentBlockNumber = enrichmentBlockNumber,
+        modelStateAt = modelStateAt?.atOffset(ZoneOffset.UTC),
+        targetUrlOverride = redactUrl(targetUrlOverride),
     )
 }

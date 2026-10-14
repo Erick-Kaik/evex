@@ -185,4 +185,66 @@ class EnrichmentProfileServiceTest {
         calls = listOf(call()),
         createdAt = Instant.now(),
     )
+
+    // --- nome + aridade (E33 fatia 1) -----------------------------------------------------------
+
+    private val overloadedAbi = """
+        [
+          {"type":"function","name":"balanceOf","stateMutability":"view","inputs":[{"name":"owner","type":"address"}],"outputs":[{"name":"b","type":"uint256"}]},
+          {"type":"function","name":"balanceOf","stateMutability":"view","inputs":[{"name":"owner","type":"address"},{"name":"id","type":"uint256"}],"outputs":[{"name":"b","type":"uint256"},{"name":"c","type":"uint256"}]},
+          {"type":"function","name":"get","stateMutability":"view","inputs":[{"name":"a","type":"uint256"}],"outputs":[{"name":"b","type":"uint256"}]},
+          {"type":"function","name":"get","stateMutability":"view","inputs":[{"name":"a","type":"address"}],"outputs":[{"name":"b","type":"uint256"}]}
+        ]
+    """.trimIndent()
+
+    private fun stubAbiContent(content: String) {
+        every { contracts.findByAddress(targetAddress) } returns monitoredContract
+        every { contractAbis.findAllByContractAddress(targetAddress) } returns listOf(abi)
+        every { abiContentReader.read(abi) } returns content
+        every { profiles.save(any()) } answers { firstArg() }
+    }
+
+    private fun callWith(methodName: String, argCount: Int, outputs: List<EnrichmentOutputMapping> = listOf(EnrichmentOutputMapping(0, "x"))) =
+        EnrichmentCall(targetAddress, methodName, List(argCount) { "1" }, outputs)
+
+    @Test
+    fun `register picks the overload by arity - outputIndex is validated against that overload`() {
+        stubAbiContent(overloadedAbi)
+
+        // balanceOf com 2 args tem 2 saídas: outputIndex 1 é válido; com 1 arg (1 saída) não é.
+        service.register("p", null, Network.TESTNET, listOf(callWith("balanceOf", 2, listOf(EnrichmentOutputMapping(1, "c")))))
+        assertThatThrownBy {
+            service.register("p", null, Network.TESTNET, listOf(callWith("balanceOf", 1, listOf(EnrichmentOutputMapping(1, "c")))))
+        }.isInstanceOf(InvalidEnrichmentProfileException::class.java)
+    }
+
+    @Test
+    fun `register fails clearly when no overload has the argument count (no more silent truncation)`() {
+        stubAbiContent(balanceOfAbi)
+
+        assertThatThrownBy { service.register("p", null, Network.TESTNET, listOf(callWith("balanceOf", 3))) }
+            .isInstanceOf(InvalidEnrichmentProfileException::class.java)
+            .hasMessageContaining("balanceOf")
+            .hasMessageContaining("3 argumento")
+            .hasMessageContaining("balanceOf(address)")
+    }
+
+    @Test
+    fun `register rejects an ambiguous overload and accepts the canonical signature`() {
+        stubAbiContent(overloadedAbi)
+
+        assertThatThrownBy { service.register("p", null, Network.TESTNET, listOf(callWith("get", 1))) }
+            .isInstanceOf(InvalidEnrichmentProfileException::class.java)
+            .hasMessageContaining("ambíguo")
+            .hasMessageContaining("get(uint256)")
+        service.register("p", null, Network.TESTNET, listOf(callWith("get(address)", 1)))
+    }
+
+    @Test
+    fun `a single overload whose arity matches stays valid (backwards compatible)`() {
+        stubAbiContent(balanceOfAbi)
+
+        service.register("p", null, Network.TESTNET, listOf(callWith("balanceOf", 1)))
+    }
 }
+

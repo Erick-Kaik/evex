@@ -1,0 +1,5 @@
+description: Capacidades desta instância.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/capabilities.yaml"

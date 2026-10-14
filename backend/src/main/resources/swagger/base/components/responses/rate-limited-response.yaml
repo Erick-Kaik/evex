@@ -1,0 +1,13 @@
+description: >-
+  Limite de taxa/fila excedido (`RATE_LIMITED` ou `RESEND_QUEUE_FULL`). O cabeçalho `Retry-After`
+  informa, em segundos, quando tentar de novo.
+headers:
+  Retry-After:
+    description: Segundos até a próxima tentativa permitida.
+    schema:
+      type: integer
+      format: int32
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/api-error.yaml"

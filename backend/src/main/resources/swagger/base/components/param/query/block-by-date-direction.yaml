@@ -1,0 +1,9 @@
+name: direction
+in: query
+required: false
+description: >-
+  Sentido da conversão (string extensível): `FLOOR` (padrão — último bloco com timestamp <= data) ou
+  `CEILING` (primeiro bloco com timestamp >= data).
+schema:
+  type: string
+  default: FLOOR

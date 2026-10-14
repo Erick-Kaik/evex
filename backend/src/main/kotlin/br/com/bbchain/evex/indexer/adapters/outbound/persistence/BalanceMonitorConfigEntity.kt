@@ -60,6 +60,10 @@ class BalanceMonitorConfigEntity(
     val backfillCursorBlock: Long = -1,
     @Column(name = "backfill_cursor_log_index", nullable = false)
     val backfillCursorLogIndex: Long = -1,
+    // DEC-110 — flag `batch`. Migration V7 (`ADD COLUMN IF NOT EXISTS ... DEFAULT false`) cobre bancos
+    // preexistentes com linhas (o ddl-auto não adiciona coluna NOT NULL sem default).
+    @Column(name = "batch", nullable = false)
+    val batch: Boolean = false,
     @Transient
     private val new: Boolean = false,
 ) : Persistable<UUID> {

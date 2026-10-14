@@ -1,0 +1,5 @@
+description: Página por cursor de eventos que casam com o webhook.
+content:
+  application/json:
+    schema:
+      $ref: "../schemas/webhook-matching-event-page.yaml"

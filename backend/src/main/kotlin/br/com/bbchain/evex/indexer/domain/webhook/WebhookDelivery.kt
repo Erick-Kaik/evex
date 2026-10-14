@@ -44,4 +44,17 @@ data class WebhookDelivery(
     val createdAt: Instant,
     val blockNumber: Long? = null,
     val decodedParameters: Map<String, Any?>? = null,
-)
+    /** Origem (código extensível, ver [WebhookDeliveryOrigin]) — `MATCH` = disparo normal (E33). */
+    val origin: String = WebhookDeliveryOrigin.MATCH,
+    /** Modo de bloco de enriquecimento (`null` = `EVENT_BLOCK`, comportamento normal) — só em reenvio (E33). */
+    val enrichmentBlockMode: String? = null,
+    /** Bloco fixo de enriquecimento (modos `BLOCK_NUMBER`/`BLOCK_AT_DATE`, congelado no enqueue). */
+    val enrichmentBlockNumber: Long? = null,
+    /** URL de destino de teste (COMPLETA — o retry precisa dela; a API só expõe a versão redigida). */
+    val targetUrlOverride: String? = null,
+    /** Maior `updatedAt` dos registros de Modelo de Entidade lidos ao compor o payload. */
+    val modelStateAt: Instant? = null,
+) {
+    /** Derivado de [origin]: a coluna é a única fonte. */
+    val resend: Boolean get() = WebhookDeliveryOrigin.isResend(origin)
+}

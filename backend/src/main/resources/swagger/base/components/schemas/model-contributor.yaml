@@ -6,7 +6,6 @@ description: >-
 required:
   - contractAddress
   - eventName
-  - correlationParam
   - fieldMappings
 properties:
   contractAddress:
@@ -20,7 +19,27 @@ properties:
   correlationParam:
     type: string
     minLength: 1
-    description: Nome do parâmetro decodificado deste evento que identifica a entidade.
+    nullable: true
+    description: >-
+      Atalho legado da chave de correlação: nome do parâmetro decodificado deste evento que identifica a
+      entidade (equivale a `correlationKey: [{type: PARAM, arg: <nome>}]`). Opcional desde a DEC-111;
+      quando `correlationKey` também é informada, `correlationKey` tem precedência. Pelo menos um dos
+      dois é obrigatório.
+  correlationKey:
+    type: array
+    nullable: true
+    description: >-
+      Chave de correlação composta: lista ordenada de partes. A chave final é a concatenação determinística
+      das partes avaliadas (1 parte = valor puro; 2+ partes = valores com `\` e `|` escapados, unidos por
+      `|`). Dois eventos só caem no mesmo registro se as chaves finais forem IGUAIS; por isso todos os
+      contribuintes do mesmo modelo precisam ter o mesmo número de partes (os tipos podem diferir).
+      Eventos com parte ausente/nula não correlacionam (nenhum registro é escrito). Limite: eventos que
+      não carregam a chave não correlacionam entre contratos (`EMITTER_ADDRESS` só une eventos do MESMO
+      emissor; para unir contratos diferentes use partes que avaliem igual nos dois, como um parâmetro
+      com o endereço, `TX_HASH` ou `LITERAL`). Mudar a chave de um modelo já populado deixa os registros
+      antigos órfãos (não há reprojeção histórica).
+    items:
+      $ref: "./model-correlation-key-part.yaml"
   fieldMappings:
     type: array
     minItems: 1

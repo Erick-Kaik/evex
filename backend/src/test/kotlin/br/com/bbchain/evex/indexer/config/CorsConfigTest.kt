@@ -56,6 +56,13 @@ class CorsConfigTest(
     }
 
     @Test
+    fun `Retry-After is exposed to the browser on cross-origin responses (E33, 429 handling in the UI)`() {
+        mockMvc.perform(get("/v1/contracts").header("Origin", allowedOrigin))
+            .andExpect(status().isOk)
+            .andExpect(header().string("Access-Control-Expose-Headers", containsString("Retry-After")))
+    }
+
+    @Test
     fun `a request without an Origin header (not a CORS request) is never blocked by the CORS filter`() {
         mockMvc.perform(get("/v1/contracts")).andExpect(status().isOk)
     }

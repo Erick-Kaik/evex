@@ -1,0 +1,28 @@
+type: object
+description: Resultado do preview para um evento.
+required:
+  - eventId
+  - matches
+properties:
+  eventId:
+    type: string
+    format: uuid
+  matches:
+    type: boolean
+    description: "`false` = o evento não casa com a config (o payload ainda é renderizado, para testar o template)."
+  notMatchingReason:
+    type: string
+    nullable: true
+    description: "Código extensível (ex.: `CONTRACT_MISMATCH`, `EVENT_NAME_MISMATCH`, `FILTER_NOT_MET`, `EVENT_NOT_DECODED`, `EVENT_NOT_FOUND`)."
+  payload:
+    type: string
+    nullable: true
+    description: JSON final como seria enviado (após `{{model.*}}` e `{{enriched.*}}`); `null` se não renderizável.
+  modelState:
+    $ref: "./model-state.yaml"
+  enrichment:
+    $ref: "./enrichment-report.yaml"
+  warnings:
+    type: array
+    items:
+      type: string

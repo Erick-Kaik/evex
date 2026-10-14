@@ -101,27 +101,43 @@ val bundledSpecFile = layout.buildDirectory.file("swagger-bundle/evex-api.bundle
  * sincronizando um projeto WSL — não passam por shell interativo) simplesmente não veem `npx` no PATH.
  * Ver docs/decisions.md para o diagnóstico completo.
  *
- * Resolução: 1) PATH do processo (funciona se Node estiver instalado globalmente, fora do nvm);
- * 2) fallback lendo o filesystem direto (cada versão do nvm tem seu próprio `npx` sob
+ * Resolução: 1) fallback lendo o filesystem direto (cada versão do nvm tem seu próprio `npx` sob
  * `~/.nvm/versions/node/<versão>/bin/`) — não depende de shell nenhum, só do JVM enxergar o
- * filesystem, então funciona igual não importa quem chamou o Gradle.
+ * filesystem, então funciona igual não importa quem chamou o Gradle;
+ * 2) PATH do processo, só se não houver nenhuma instalação via nvm (Node instalado globalmente,
+ * fora do nvm).
+ *
+ * O nvm vem primeiro de propósito: distribuições Ubuntu trazem consigo um `nodejs`/`npx` bem antigo
+ * em `/usr/bin` (dependência automática de outros pacotes apt, não algo que alguém instalou de
+ * propósito) — se o PATH do processo expõe `/usr/bin` mas não os diretórios do nvm (mesmo cenário de
+ * processo não-interativo descrito acima), a ordem antiga escolhia esse Node do sistema em vez do
+ * Node do nvm, e versões antigas o bastante (ex.: Node 12 do `apt`) não entendem sintaxe ESM moderna
+ * usada por dependências como `@redocly/cli`, quebrando `bundleEvexApi` com
+ * `SyntaxError: Unexpected token '.'`. Ver docs/decisions.md para o diagnóstico completo.
+ *
+ * Resolver o caminho certo não basta: o script `npx` do nvm tem shebang `#!/usr/bin/env node`, e
+ * `env node` resolve o interpretador de novo pelo `PATH` do processo **filho** — que, no mesmo
+ * cenário não-interativo, continua sem o `bin/` do nvm. Sem tratar isso, o processo filho reexecuta o
+ * mesmo bug um nível abaixo (acha `/usr/bin/node`, Node 12, e quebra com
+ * `Cannot find module 'node:path'`). Por isso `bundleEvexApi` precisa prepender o diretório do `npx`
+ * resolvido ao `PATH` do processo filho — ver uso de `resolveNpx()` abaixo.
  */
-fun resolveNpx(): String {
-    val pathEnv = System.getenv("PATH").orEmpty()
-    val onPath = pathEnv.split(File.pathSeparator)
-        .map { File(it, "npx") }
-        .firstOrNull { it.canExecute() }
-    if (onPath != null) return onPath.absolutePath
-
+fun resolveNpx(): File {
     val nvmRoot = File(System.getProperty("user.home"), ".nvm/versions/node")
     val nvmNpx = nvmRoot.listFiles { f -> f.isDirectory }
         ?.sortedDescending()
         ?.map { File(it, "bin/npx") }
         ?.firstOrNull { it.canExecute() }
-    if (nvmNpx != null) return nvmNpx.absolutePath
+    if (nvmNpx != null) return nvmNpx
+
+    val pathEnv = System.getenv("PATH").orEmpty()
+    val onPath = pathEnv.split(File.pathSeparator)
+        .map { File(it, "npx") }
+        .firstOrNull { it.canExecute() }
+    if (onPath != null) return onPath
 
     throw GradleException(
-        "npx não encontrado (nem no PATH, nem em ~/.nvm/versions/node/*/bin). " +
+        "npx não encontrado (nem em ~/.nvm/versions/node/*/bin, nem no PATH). " +
             "Instale Node.js (https://nodejs.org) ou nvm (https://github.com/nvm-sh/nvm) e rode de novo.",
     )
 }
@@ -133,8 +149,10 @@ val bundleEvexApi by tasks.registering(Exec::class) {
     outputs.file(bundledSpecFile)
     doFirst {
         bundledSpecFile.get().asFile.parentFile.mkdirs()
+        val npx = resolveNpx()
+        environment("PATH", "${npx.parentFile.absolutePath}${File.pathSeparator}${System.getenv("PATH").orEmpty()}")
         commandLine(
-            resolveNpx(), "--yes", "@redocly/cli", "bundle",
+            npx.absolutePath, "--yes", "@redocly/cli", "bundle",
             "$swaggerSourceDir/base/base.yaml",
             "--output", bundledSpecFile.get().asFile.absolutePath,
         )

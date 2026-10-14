@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Box, MenuItem, Stack, TextField, Typography } from '@mui/material'
+import { Alert, Box, Checkbox, Chip, FormControlLabel, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import Button from '@mui/material/Button'
 import { BalanceBehavior } from '../../api/api'
 import type { ContractEventInput, CreateBalanceMonitorPayload, Network } from '../../api/api'
@@ -12,6 +12,7 @@ import { EventPicker } from '../../components/EventPicker'
 import { EventParamSelect } from '../../components/EventParamSelect'
 import { ParamBindingCanvas } from '../../components/ParamBindingCanvas'
 import type { ParamBindingSlot } from '../../components/ParamBindingCanvas'
+import { isArrayType, isNumericArrayType, useContractEventCatalog } from '../../components/contractCatalog'
 import { FormModeToggle } from '../../components/FormModeToggle'
 import { readFormMode } from '../../components/formMode'
 import type { FormMode } from '../../components/formMode'
@@ -80,6 +81,9 @@ export function BalanceMonitorForm({
   const [toParam, setToParam] = useState(initialValues?.toParam ?? '')
   const [valueParam, setValueParam] = useState(initialValues?.valueParam ?? '')
   const [tokenIdParam, setTokenIdParam] = useState(initialValues?.tokenIdParam ?? '')
+  // `batch` (DEC-110): sugerido automaticamente a partir dos tipos do ABI até o usuário mexer no checkbox.
+  const [batch, setBatch] = useState(initialValues?.batch ?? false)
+  const [batchTouched, setBatchTouched] = useState(false)
 
   const isTransfer = behavior === BalanceBehavior.Transfer
   const isGuided = formMode === 'guided'
@@ -90,18 +94,36 @@ export function BalanceMonitorForm({
   const effectiveAddress = usesContractRef ? (contractRef?.address ?? '') : contractAddress
   const effectiveNetwork: Network | '' = usesContractRef ? (contractRef?.network ?? '') : network
 
+  // Tipos Solidity dos parâmetros: dos `inputs` do evento escolhido (ou, na edição, do catálogo do
+  // contrato). No modo manual o contrato é texto livre — sem catálogo, sem validação de tipo no front.
+  const catalog = useContractEventCatalog(usesContractRef ? effectiveAddress || undefined : undefined)
+  const activeInputs = eventInputs.length > 0 ? eventInputs : (catalog.inputsByEvent.get(eventName) ?? [])
+  const typeOf = (paramName: string): string | undefined =>
+    paramName ? activeInputs.find((input) => input.name === paramName)?.type : undefined
+
+  // Slots numéricos aceitam escalar ou array: o `batch` é inferido ao vincular (ver `suggestBatchFromBind`).
+  const arraySuffix = batch ? ' (array)' : ''
   const canvasSlots: ParamBindingSlot[] = isTransfer
     ? [
         { key: 'from', label: 'Origem (from)', kind: 'address', value: fromParam },
         { key: 'to', label: 'Destino (to)', kind: 'address', value: toParam },
-        { key: 'value', label: 'Montante', kind: 'numeric', value: valueParam },
-        { key: 'tokenId', label: 'Token ID (opcional)', kind: 'numeric', value: tokenIdParam },
+        { key: 'value', label: `Montante${arraySuffix}`, kind: 'numeric', value: valueParam },
+        { key: 'tokenId', label: `Token ID (opcional)${arraySuffix}`, kind: 'numeric', value: tokenIdParam },
       ]
     : [
         { key: 'wallet', label: 'Carteira', kind: 'address', value: walletParam },
-        { key: 'value', label: 'Montante/delta', kind: 'numeric', value: valueParam },
-        { key: 'tokenId', label: 'Token ID (opcional)', kind: 'numeric', value: tokenIdParam },
+        { key: 'value', label: `Montante/delta${arraySuffix}`, kind: 'numeric', value: valueParam },
+        { key: 'tokenId', label: `Token ID (opcional)${arraySuffix}`, kind: 'numeric', value: tokenIdParam },
       ]
+
+  /** Visual: vincular um array numérico a montante/tokenId sugere `batch=true` (se o usuário ainda não decidiu). */
+  function suggestBatchFromBind(slotKey: string, paramName: string) {
+    if (batchTouched || !paramName) return
+    const type = typeOf(paramName)
+    if (type === undefined) return
+    if (slotKey === 'value') setBatch(isNumericArrayType(type))
+    else if (slotKey === 'tokenId' && isNumericArrayType(type)) setBatch(true)
+  }
 
   function handleCanvasBind(slotKey: string, paramName: string | null) {
     const next = paramName ?? ''
@@ -110,6 +132,41 @@ export function BalanceMonitorForm({
     else if (slotKey === 'wallet') setWalletParam(next)
     else if (slotKey === 'value') setValueParam(next)
     else if (slotKey === 'tokenId') setTokenIdParam(next)
+    suggestBatchFromBind(slotKey, next)
+  }
+
+  function handleBatchToggle(next: boolean) {
+    setBatch(next)
+    setBatchTouched(true)
+    // No guiado o select só lista o tipo compatível: descarta escolhas que deixaram de valer.
+    if (isGuided) {
+      const mismatch = (name: string) => {
+        const type = typeOf(name)
+        return type !== undefined && isNumericArrayType(type) !== next
+      }
+      if (mismatch(valueParam)) setValueParam('')
+      if (mismatch(tokenIdParam)) setTokenIdParam('')
+    }
+  }
+
+  // Validação de tipos (só quando os tipos são conhecidos). Não bloqueia o envio: o backend é a
+  // garantia final (400 se NENHUMA versão de ABI for compatível; aviso se só algumas).
+  const batchTypeIssues: string[] = []
+  for (const [label, name] of [
+    ['montante/delta', valueParam],
+    ['tokenId', tokenIdParam],
+  ] as const) {
+    const type = typeOf(name)
+    if (type === undefined) continue
+    if (batch && !isNumericArrayType(type)) {
+      batchTypeIssues.push(
+        `O parâmetro de ${label} "${name}" (${type}) não é um array numérico; com "Lote" ativado ele precisa ser um array (ex.: uint256[]).`,
+      )
+    } else if (!batch && isArrayType(type)) {
+      batchTypeIssues.push(
+        `O parâmetro de ${label} "${name}" (${type}) é um array; marque "Lote" ou escolha um parâmetro escalar.`,
+      )
+    }
   }
 
   function handleContractRefChange(next: ContractRef | null) {
@@ -127,6 +184,12 @@ export function BalanceMonitorForm({
   function handleEventChange(name: string, inputs: ContractEventInput[]) {
     setEventName(name)
     setEventInputs(inputs)
+    // Sugere `batch` quando o evento só oferece arrays numéricos (ex.: TransferBatch); o usuário pode desmarcar.
+    if (!batchTouched) {
+      const hasArray = inputs.some((input) => isNumericArrayType(input.type))
+      const hasScalar = inputs.some((input) => /^u?int\d*$/.test(input.type))
+      setBatch(hasArray && !hasScalar)
+    }
     setWalletParam('')
     setFromParam('')
     setToParam('')
@@ -150,6 +213,7 @@ export function BalanceMonitorForm({
       toParam: isTransfer ? toParam : undefined,
       valueParam,
       tokenIdParam: tokenIdParam || undefined,
+      batch,
     })
   }
 
@@ -170,6 +234,12 @@ export function BalanceMonitorForm({
         )}
         <LabeledField label="Parâmetro do montante/delta" mode="view" value={valueParam} />
         <LabeledField label="Parâmetro do tokenId (opcional)" mode="view" value={tokenIdParam} />
+        <Box>
+          <Typography variant="caption" color="text.secondary" component="div">
+            Lote (batch)
+          </Typography>
+          {batch ? <Chip size="small" color="info" label="Lote" /> : <Typography variant="body2">Não</Typography>}
+        </Box>
       </Box>
     )
   }
@@ -238,7 +308,7 @@ export function BalanceMonitorForm({
             <>
               <EventParamSelect
                 kind="address"
-                inputs={eventInputs}
+                inputs={activeInputs}
                 value={fromParam}
                 onChange={setFromParam}
                 label="Parâmetro de origem (from)"
@@ -246,7 +316,7 @@ export function BalanceMonitorForm({
               />
               <EventParamSelect
                 kind="address"
-                inputs={eventInputs}
+                inputs={activeInputs}
                 value={toParam}
                 onChange={setToParam}
                 label="Parâmetro de destino (to)"
@@ -256,7 +326,7 @@ export function BalanceMonitorForm({
           ) : (
             <EventParamSelect
               kind="address"
-              inputs={eventInputs}
+              inputs={activeInputs}
               value={walletParam}
               onChange={setWalletParam}
               label="Parâmetro da carteira"
@@ -264,23 +334,23 @@ export function BalanceMonitorForm({
             />
           )}
           <EventParamSelect
-            kind="numeric"
-            inputs={eventInputs}
+            kind={batch ? 'numericArray' : 'numericScalar'}
+            inputs={activeInputs}
             value={valueParam}
             onChange={setValueParam}
-            label="Parâmetro do montante/delta"
+            label={`Parâmetro do montante/delta${arraySuffix}`}
             required
           />
           <EventParamSelect
-            kind="numeric"
-            inputs={eventInputs}
+            kind={batch ? 'numericArray' : 'numericScalar'}
+            inputs={activeInputs}
             value={tokenIdParam}
             onChange={setTokenIdParam}
-            label="Parâmetro do tokenId (opcional)"
+            label={`Parâmetro do tokenId (opcional)${arraySuffix}`}
           />
         </>
       ) : isVisual ? (
-        <ParamBindingCanvas params={eventInputs} slots={canvasSlots} onBind={handleCanvasBind} />
+        <ParamBindingCanvas params={activeInputs} slots={canvasSlots} onBind={handleCanvasBind} />
       ) : (
         <>
           {isTransfer ? (
@@ -324,6 +394,25 @@ export function BalanceMonitorForm({
           />
         </>
       )}
+
+      <Box>
+        <FormControlLabel
+          control={<Checkbox checked={batch} onChange={(event) => handleBatchToggle(event.target.checked)} />}
+          label="Lote (batch)"
+        />
+        <Typography variant="caption" color="text.secondary" component="div">
+          Marque para eventos que emitem arrays (ex.: TransferBatch do ERC-1155): montante e tokenId são arrays e
+          cada posição vira um lançamento. ERC-1155 precisa de 2 configurações por contrato — uma para o evento
+          escalar (TransferSingle) e outra, com Lote, para o evento em lote. Editar para Lote não reprojeta o
+          histórico: crie uma configuração nova e rode o reprocessamento. Evento inválido (arrays de tamanhos
+          diferentes ou valor não numérico) é descartado inteiro, com WARN no log.
+        </Typography>
+      </Box>
+      {batchTypeIssues.map((issue) => (
+        <Alert key={issue} severity="warning">
+          {issue}
+        </Alert>
+      ))}
 
       {isError && <ApiErrorAlert error={error} />}
       {isSuccess && successMessage && (

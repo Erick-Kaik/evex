@@ -1,0 +1,28 @@
+type: object
+description: Falhas de enriquecimento agregadas por (contrato, método, bloco, código) — evita N linhas idênticas na UI.
+required:
+  - contract
+  - method
+  - count
+  - code
+properties:
+  contract:
+    type: string
+  method:
+    type: string
+  block:
+    type: string
+    nullable: true
+    description: Número em decimal ou `latest`.
+  count:
+    type: integer
+    format: int32
+  code:
+    type: string
+  rpcCode:
+    type: integer
+    format: int32
+    nullable: true
+  message:
+    type: string
+    nullable: true

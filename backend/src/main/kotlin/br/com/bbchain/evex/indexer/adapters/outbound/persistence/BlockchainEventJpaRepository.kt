@@ -1,5 +1,6 @@
 package br.com.bbchain.evex.indexer.adapters.outbound.persistence
 
+import br.com.bbchain.evex.indexer.domain.discovery.UpgradedEvent
 import java.time.Instant
 import java.util.UUID
 import org.springframework.data.domain.Page
@@ -16,6 +17,29 @@ import org.springframework.data.repository.query.Param
  */
 interface BlockchainEventJpaRepository : JpaRepository<BlockchainEventEntity, UUID>, JpaSpecificationExecutor<BlockchainEventEntity> {
     fun existsByTxHashAndLogIndex(txHash: String, logIndex: Long): Boolean
+
+    /**
+     * E33: bloco de MAIOR timestamp `<= :instant` (empate: maior número) — usa `idx_blockchain_event_block_timestamp`;
+     * `block_timestamp NULL` nunca satisfaz o `<=`. Pagine com `PageRequest.of(0, 1)`. Linhas `[blockNumber, blockTimestamp]`.
+     */
+    @Query(
+        """
+            SELECT e.blockNumber, e.blockTimestamp FROM BlockchainEventEntity e
+            WHERE e.blockTimestamp <= :instant
+            ORDER BY e.blockTimestamp DESC, e.blockNumber DESC
+        """,
+    )
+    fun findFloorBlockPoint(@Param("instant") instant: Instant, pageable: Pageable): List<Array<Any?>>
+
+    /** E33: bloco de MENOR timestamp `>= :instant` (empate: menor número). Mesmo formato de [findFloorBlockPoint]. */
+    @Query(
+        """
+            SELECT e.blockNumber, e.blockTimestamp FROM BlockchainEventEntity e
+            WHERE e.blockTimestamp >= :instant
+            ORDER BY e.blockTimestamp ASC, e.blockNumber ASC
+        """,
+    )
+    fun findCeilingBlockPoint(@Param("instant") instant: Instant, pageable: Pageable): List<Array<Any?>>
 
     /** `topic0`s distintos já ingeridos para um contrato (E6, detecção automática de interface). */
     @Query("SELECT DISTINCT e.topic0 FROM BlockchainEventEntity e WHERE e.contractAddress = :contractAddress AND e.topic0 IS NOT NULL")
@@ -97,4 +121,61 @@ interface BlockchainEventJpaRepository : JpaRepository<BlockchainEventEntity, UU
         @Param("toDate") toDate: Instant?,
         pageable: Pageable,
     ): Page<BlockchainEventEntity>
+
+    /**
+     * Discovery ciente de proxy (DEC-104), passo 1: `Upgraded` cujo emissor está em [addresses] ou cujo
+     * `topic1` (implementação) está em [addressTopics] (mesmos endereços já no formato topic de 32 bytes,
+     * lowercase). Uma linha por (emissor, topic1) com o maior (block_number, log_index).
+     *
+     * O `topic0` é **literal interpolado** (`const val` de [UpgradedEvent.TOPIC0]), não bind: o predicado
+     * dos índices parciais da `V6` é um literal, e com bind o plano genérico do Postgres não prova a
+     * implicação e perde o índice. A expressão `lower(raw_topics->>1)` deve ser idêntica à do índice.
+     * Retorna linhas `[contract_address, topic1, block_number, log_index]`.
+     */
+    @Query(
+        value = """
+            SELECT DISTINCT ON (contract_address, lower(raw_topics->>1))
+                   contract_address, lower(raw_topics->>1) AS topic1, block_number, log_index
+            FROM blockchain_event
+            WHERE topic0 = '${UpgradedEvent.TOPIC0}'
+              AND (contract_address IN (:addresses) OR lower(raw_topics->>1) IN (:addressTopics))
+            ORDER BY contract_address, lower(raw_topics->>1), block_number DESC, log_index DESC
+        """,
+        nativeQuery = true,
+    )
+    fun findUpgradedInvolving(
+        @Param("addresses") addresses: Collection<String>,
+        @Param("addressTopics") addressTopics: Collection<String>,
+    ): List<Array<Any?>>
+
+    /** Discovery ciente de proxy (DEC-104), passo 2: último `Upgraded` de cada proxy em [proxyAddresses]. */
+    @Query(
+        value = """
+            SELECT DISTINCT ON (contract_address)
+                   contract_address, lower(raw_topics->>1) AS topic1, block_number, log_index
+            FROM blockchain_event
+            WHERE topic0 = '${UpgradedEvent.TOPIC0}'
+              AND contract_address IN (:proxyAddresses)
+            ORDER BY contract_address, block_number DESC, log_index DESC
+        """,
+        nativeQuery = true,
+    )
+    fun findLatestUpgradedByProxy(@Param("proxyAddresses") proxyAddresses: Collection<String>): List<Array<Any?>>
+
+    /**
+     * DEC-105: histórico de `Upgraded` emitidos por [proxy], ordem crescente. Retorna linhas
+     * `[contract_address, topic1, block_number, log_index, tx_hash]`. `topic0` literal (mesma razão do
+     * passo 1 do discovery: índice parcial da V6).
+     */
+    @Query(
+        value = """
+            SELECT contract_address, lower(raw_topics->>1) AS topic1, block_number, log_index, tx_hash
+            FROM blockchain_event
+            WHERE topic0 = '${UpgradedEvent.TOPIC0}'
+              AND contract_address = :proxy
+            ORDER BY block_number ASC, log_index ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findUpgradeHistoryByProxy(@Param("proxy") proxy: String): List<Array<Any?>>
 }

@@ -44,6 +44,15 @@ properties:
     type: string
     nullable: true
     description: "Nome do parâmetro do evento que carrega o tokenId (ex.: ERC1155/ERC721). `null` = não aplicável (ex.: ERC20)."
+  batch:
+    type: boolean
+    default: false
+    description: >-
+      Quando true, `valueParam` (e `tokenIdParam`, se informado) referenciam parâmetros do tipo array
+      (ex.: uint256[]) e cada posição é aplicada como um lançamento independente, usando o `behavior`
+      configurado; `walletParam`/`fromParam`/`toParam` continuam escalares. Arrays de tamanhos diferentes
+      descartam o evento inteiro. Default false. Editar para true não reprojeta histórico (crie uma
+      configuração nova e rode o backfill).
   active:
     type: boolean
     description: Se esta configuração está ativa (projeta saldo a cada evento decodificado) ou pausada.
@@ -51,3 +60,11 @@ properties:
     type: string
     format: date-time
     description: Momento em que esta configuração foi cadastrada.
+  warnings:
+    type: array
+    nullable: true
+    items:
+      type: string
+    description: >-
+      Avisos de validação não bloqueantes em PT-BR (ex.: `batch` incompatível com a ABI de algumas
+      versões do contrato). Só preenchido nas respostas de `POST`/`PUT`; ausente quando não há avisos.

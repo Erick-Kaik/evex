@@ -1,0 +1,19 @@
+type: object
+description: Corpo da importação do histórico de versões de ABI de um proxy (DEC-105). Todos os campos são opcionais.
+properties:
+  historySource:
+    $ref: "../enum/abi-history-source.yaml"
+  storage:
+    $ref: "../enum/abi-storage-type.yaml"
+  expectedFingerprint:
+    type: string
+    nullable: true
+    description: >-
+      `fingerprint` do plano visto pelo usuário no dry-run. Se divergir do plano recalculado no servidor,
+      a importação é recusada com `409`.
+  replaceBlockscoutLegacy:
+    type: boolean
+    default: false
+    description: >-
+      Opt-in destrutivo: apaga, antes de importar, as versões legadas `source=BLOCKSCOUT` sem
+      implementação (ABI do proxy cadastrada antes da DEC-105). Nunca apaga `UPLOAD_*`/`AUTO_DETECTED`.

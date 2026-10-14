@@ -35,3 +35,17 @@ properties:
     type: string
     nullable: true
     description: Motivo da falha quando não houve resposta HTTP (timeout, conexão recusada, etc.).
+  enrichmentResults:
+    type: array
+    nullable: true
+    description: Resultado por chamada de enriquecimento NESTA tentativa (a Fase 2 roda a cada tentativa).
+    items:
+      $ref: "./enrichment-call-result.yaml"
+  enrichmentBlockUsed:
+    type: string
+    nullable: true
+    description: "Bloco usado nesta tentativa: número em decimal ou `latest`."
+  sentPayload:
+    type: string
+    nullable: true
+    description: Payload final efetivamente enviado nesta tentativa (após enriquecimento).

@@ -1,0 +1,21 @@
+type: object
+description: Uma parte da chave de correlação de um contribuinte de Modelo de Entidade.
+required:
+  - type
+properties:
+  type:
+    type: string
+    minLength: 1
+    description: >-
+      Tipo da parte (código extensível, não é enum fechado; tipo desconhecido é rejeitado com 400 no
+      cadastro/edição). Valores iniciais: `PARAM` (valor do parâmetro decodificado `arg`),
+      `EMITTER_ADDRESS` (endereço do contrato emissor do log, minúsculo), `TX_HASH` (hash da transação),
+      `BLOCK_NUMBER` (número do bloco, decimal) e `LITERAL` (a constante `arg`).
+    example: PARAM
+  arg:
+    type: string
+    nullable: true
+    description: >-
+      `PARAM`: nome do parâmetro decodificado (obrigatório); `LITERAL`: valor constante (obrigatório);
+      demais tipos: ausente/ignorado.
+    example: id

@@ -1,0 +1,21 @@
+type: object
+description: Reexecução de uma chamada que falhou num bloco de referência (diagnóstico comparativo).
+required:
+  - block
+  - ok
+properties:
+  block:
+    type: string
+    description: Número em decimal ou `latest`.
+  ok:
+    type: boolean
+  code:
+    type: string
+    nullable: true
+  message:
+    type: string
+    nullable: true
+  rpcCode:
+    type: integer
+    format: int32
+    nullable: true

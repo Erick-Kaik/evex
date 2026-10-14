@@ -1,14 +1,27 @@
 type: object
 description: Um campo decodificado de um evento contribuinte mapeado para um nome de campo do modelo acumulado.
 required:
-  - decodedParam
   - modelField
 properties:
   decodedParam:
     type: string
     minLength: 1
-    description: Nome do parâmetro decodificado do evento contribuinte.
+    nullable: true
+    description: >-
+      Nome do parâmetro decodificado do evento contribuinte. Obrigatório quando `source` é `PARAM`
+      (ou omitido); ignorado nas demais fontes.
   modelField:
     type: string
     minLength: 1
     description: Nome do campo no registro acumulado do modelo de entidade.
+  source:
+    type: string
+    nullable: true
+    description: >-
+      Fonte do valor do campo (código extensível, não é enum fechado; desconhecida = 400 no
+      cadastro/edição). Omitido = `PARAM` (comportamento original: lê o parâmetro `decodedParam`).
+      Valores iniciais: `PARAM`, `EMITTER_ADDRESS` (endereço do contrato emissor, minúsculo),
+      `TX_HASH`, `BLOCK_NUMBER` (número) e `BLOCK_TIMESTAMP` (instante ISO-8601 do bloco; só existe se o
+      timestamp já foi gravado no evento — senão o campo é omitido nesse evento, com aviso no log).
+    default: PARAM
+    example: EMITTER_ADDRESS

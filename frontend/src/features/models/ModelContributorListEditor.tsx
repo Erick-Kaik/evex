@@ -2,6 +2,7 @@ import { Box, Button, Stack, Typography } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import type { ModelContributor, Network } from '../../api/api'
 import { ModelContributorRow } from './ModelContributorRow'
+import { validateCorrelationKeys } from './correlationKey'
 
 interface ModelContributorListEditorProps {
   contributors: ModelContributor[]
@@ -12,7 +13,7 @@ interface ModelContributorListEditorProps {
 const EMPTY_CONTRIBUTOR: ModelContributor = {
   contractAddress: '',
   eventName: '',
-  correlationParam: '',
+  correlationKey: [{ type: 'PARAM', arg: '' }],
   fieldMappings: [],
 }
 
@@ -22,7 +23,7 @@ const EMPTY_CONTRIBUTOR: ModelContributor = {
  */
 export function ModelContributorListEditor({ contributors, network, onChange }: ModelContributorListEditorProps) {
   function addContributor() {
-    onChange([...contributors, { ...EMPTY_CONTRIBUTOR, fieldMappings: [] }])
+    onChange([...contributors, { ...EMPTY_CONTRIBUTOR, correlationKey: [{ type: 'PARAM', arg: '' }], fieldMappings: [] }])
   }
 
   function updateContributor(index: number, next: ModelContributor) {
@@ -60,6 +61,12 @@ export function ModelContributorListEditor({ contributors, network, onChange }: 
           />
         ))}
       </Stack>
+
+      {validateCorrelationKeys(contributors).map((issue) => (
+        <Typography key={issue} variant="caption" color="error" component="div" sx={{ mt: 0.5 }}>
+          {issue}
+        </Typography>
+      ))}
     </Box>
   )
 }

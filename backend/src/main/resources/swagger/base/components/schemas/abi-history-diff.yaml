@@ -1,0 +1,26 @@
+type: object
+description: >-
+  Diferença de interface entre a ABI de um item do histórico e a do item anterior da linha do tempo.
+  Itens são assinaturas canônicas `nome(tipos)`; tuplas aparecem como `tuple`, sem expandir componentes.
+required:
+  - eventsAdded
+  - eventsRemoved
+  - methodsAdded
+  - methodsRemoved
+properties:
+  eventsAdded:
+    type: array
+    items:
+      type: string
+  eventsRemoved:
+    type: array
+    items:
+      type: string
+  methodsAdded:
+    type: array
+    items:
+      type: string
+  methodsRemoved:
+    type: array
+    items:
+      type: string

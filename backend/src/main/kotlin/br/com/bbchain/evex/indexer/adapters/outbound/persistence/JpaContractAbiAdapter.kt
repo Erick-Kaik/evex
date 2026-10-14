@@ -3,7 +3,9 @@ package br.com.bbchain.evex.indexer.adapters.outbound.persistence
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbi
 import br.com.bbchain.evex.indexer.domain.abi.ContractAbiPort
 import br.com.bbchain.evex.indexer.domain.abi.StorageLocation
+import br.com.bbchain.evex.indexer.domain.abi.AbiSource
 import org.springframework.stereotype.Component
+import org.springframework.transaction.annotation.Transactional
 
 /** Implementação JPA/Postgres de [ContractAbiPort] — mesmo padrão de [JpaMonitoredContractAdapter]. */
 @Component
@@ -25,6 +27,10 @@ class JpaContractAbiAdapter(
 
     override fun findAll(): List<ContractAbi> = repository.findAll().map { it.toDomain() }
 
+    @Transactional
+    override fun deleteLegacyBlockscoutVersions(address: String): Int =
+        repository.deleteLegacyBySource(address, AbiSource.BLOCKSCOUT)
+
     private fun ContractAbi.toEntity(isNew: Boolean) = ContractAbiEntity(
         id = id,
         contractAddress = contractAddress,
@@ -36,6 +42,7 @@ class JpaContractAbiAdapter(
         validFromBlock = validFromBlock,
         validToBlock = validToBlock,
         createdAt = createdAt,
+        implementationAddress = implementationAddress,
         new = isNew,
     )
 
@@ -49,5 +56,6 @@ class JpaContractAbiAdapter(
         validFromBlock = validFromBlock,
         validToBlock = validToBlock,
         createdAt = createdAt,
+        implementationAddress = implementationAddress,
     )
 }
